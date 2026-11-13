@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install all dependencies including build tools (uses glibc for sharp, rolldown, oxide & baileys)
 COPY package.json ./
-RUN npm install --include=dev --no-audit --no-fund
+RUN npm install --include=dev --legacy-peer-deps --no-audit --no-fund
 
 # Copy application source and build the Vite frontend
 COPY . .
