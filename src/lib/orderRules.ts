@@ -1,14 +1,13 @@
-import type { AppSettings, OrderMetrics, OrderRecord, PollStatus } from './types';
+import type { AppSettings, OrderMetrics, OrderRecord, PollStatus } from './types.js';
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  shopName: 'UrbanCraft India',
+  shopName: 'Broomies Bakery',
   shopifyStoreDomain: '',
+  shopifyClientId: '',
+  shopifyClientSecret: '',
   shopifyAccessToken: '',
   shopifyWebhookSecret: '',
   whatsappMode: 'baileys_qr',
-  whatsappWorkerUrl: '',
-  cloudApiToken: '',
-  cloudApiPhoneNumberId: '',
   defaultCountryCode: '91',
   autoSendPollOnNewOrder: true,
   autoCancelInShopify: false,

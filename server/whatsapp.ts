@@ -1,31 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import makeWASocket, {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  getAggregateVotesInPollMessage,
-  makeCacheableSignalKeyStore,
-  useMultiFileAuthState,
-  type WAMessage,
-  type WASocket,
-} from '@whiskeysockets/baileys';
-import pino from 'pino';
-import QRCode from 'qrcode';
+import type { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import {
   formatJidToDisplayPhone,
   formatPollPayload,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
-} from '../src/lib/orderRules';
-import type { OrderRecord, WhatsAppEngineMode, WhatsAppState } from '../src/lib/types';
-import { updateShopifyOrderTags } from './shopify';
-import { store } from './store';
+} from '../src/lib/orderRules.js';
+import type { OrderRecord, WhatsAppEngineMode, WhatsAppState } from '../src/lib/types.js';
+import { hasLiveShopifyCredentials, updateShopifyOrderTags } from './shopify.js';
+import { store } from './store.js';
 
 const AUTH_DIR = process.env.VERCEL
   ? '/tmp/orderpulse-data/wa-auth'
   : path.resolve(process.cwd(), 'data', 'wa-auth');
-const logger = pino({ level: 'silent' });
 
 class WhatsAppManager {
   private sock: WASocket | null = null;
@@ -52,26 +41,20 @@ class WhatsAppManager {
     if (meta.mode === 'sandbox' && meta.sandboxConnected) {
       this.status = 'connected';
       this.lastHeartbeatAt = new Date().toISOString();
-      this.startHeartbeat();
-      return;
-    }
-
-    if (meta.mode === 'cloud_api') {
-      const settings = store.getSettings();
-      if (settings.cloudApiToken && settings.cloudApiPhoneNumberId) {
-        this.status = 'connected';
-        this.lastHeartbeatAt = new Date().toISOString();
+      if (!process.env.VERCEL) {
+        this.startHeartbeat();
       }
       return;
     }
 
-    if (this.hasSavedAuth()) {
+    if (!process.env.VERCEL && this.hasSavedAuth()) {
       // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
       void this.connect('baileys_qr');
     }
   }
 
   private startHeartbeat() {
+    if (process.env.VERCEL) return;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(async () => {
       if (this.status !== 'connected') return;
@@ -140,30 +123,6 @@ class WhatsAppManager {
       return this.getState();
     }
 
-    if (mode === 'cloud_api') {
-      await this.closeSocketOnly();
-      const settings = store.getSettings();
-      if (!settings.cloudApiToken || !settings.cloudApiPhoneNumberId) {
-        this.status = 'error';
-        this.lastError =
-          'Enter your Meta Cloud API Token and Phone Number ID in Automation & Shopify settings.';
-        return this.getState();
-      }
-      const now = new Date().toISOString();
-      this.status = 'connected';
-      this.qrDataUrl = null;
-      this.qrRaw = null;
-      this.lastHeartbeatAt = now;
-      store.updateWhatsAppMeta({
-        mode: 'cloud_api',
-        sandboxConnected: false,
-        connectedAt: now,
-        phoneNumber: settings.cloudApiPhoneNumberId,
-        pushName: 'Meta Official Cloud API',
-      });
-      return this.getState();
-    }
-
     // Real Baileys WhatsApp Web QR Multi-Device Session
     if (this.isInitializing) return this.getState();
     this.isInitializing = true;
@@ -185,6 +144,22 @@ class WhatsAppManager {
       if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       }
+
+      const [baileys, pinoMod, qrMod] = await Promise.all([
+        import('@whiskeysockets/baileys'),
+        import('pino'),
+        import('qrcode'),
+      ]);
+      const makeWASocket = baileys.default;
+      const {
+        DisconnectReason,
+        fetchLatestBaileysVersion,
+        getAggregateVotesInPollMessage,
+        makeCacheableSignalKeyStore,
+        useMultiFileAuthState,
+      } = baileys;
+      const logger = pinoMod.default({ level: 'silent' });
+      const QRCode = qrMod.default;
 
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
       let version: [number, number, number] | undefined;
@@ -273,7 +248,7 @@ class WhatsAppManager {
               phoneNumber: null,
               pushName: null,
             });
-          } else if (store.getWhatsAppMeta().mode === 'baileys_qr') {
+          } else if (!process.env.VERCEL && store.getWhatsAppMeta().mode === 'baileys_qr') {
             // Auto-reconnect 24/7 for transient drops, stream errors (515), or timeouts
             this.reconnectCount += 1;
             this.status = 'connecting';
@@ -428,100 +403,7 @@ class WhatsAppManager {
 
     const meta = store.getWhatsAppMeta();
 
-    // If external worker URL is configured (e.g., Vercel frontend calling Railway/Render Baileys worker)
-    if (settings.whatsappWorkerUrl.trim()) {
-      try {
-        const workerBase = settings.whatsappWorkerUrl.trim().replace(/\/$/, '');
-        const res = await fetch(`${workerBase}/send-poll`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(process.env.WHATSAPP_WORKER_SECRET
-              ? { Authorization: `Bearer ${process.env.WHATSAPP_WORKER_SECRET}` }
-              : {}),
-          },
-          body: JSON.stringify({
-            jid,
-            question,
-            options,
-            orderId: order.id,
-          }),
-        });
-        if (res.ok) {
-          const data = (await res.json()) as { messageId?: string };
-          order.whatsappMessageId = data.messageId || `WORKER-${Date.now()}`;
-          order.pollStatus = 'poll_sent';
-          order.pollSentAt = new Date().toISOString();
-          store.upsertOrder(order);
-          store.appendOrderEvent(order.id, {
-            actor: 'whatsapp',
-            message: `WhatsApp Poll dispatched via 24/7 Worker to ${order.customerPhone}`,
-          });
-          return store.getOrderById(order.id) || order;
-        }
-      } catch (err) {
-        store.appendOrderEvent(order.id, {
-          actor: 'system',
-          message: `Worker dispatch failed: ${err instanceof Error ? err.message : 'unknown error'}`,
-        });
-      }
-    }
-
-    // Mode 1: Meta Official WhatsApp Cloud API (interactive reply buttons)
-    if (meta.mode === 'cloud_api' && settings.cloudApiToken && settings.cloudApiPhoneNumberId) {
-      try {
-        const toNumber = jid.split('@')[0];
-        const res = await fetch(
-          `https://graph.facebook.com/v21.0/${settings.cloudApiPhoneNumberId}/messages`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${settings.cloudApiToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              messaging_product: 'whatsapp',
-              to: toNumber,
-              type: 'interactive',
-              interactive: {
-                type: 'button',
-                body: { text: question },
-                action: {
-                  buttons: [
-                    { type: 'reply', reply: { id: 'confirm_order', title: options[0].slice(0, 20) } },
-                    { type: 'reply', reply: { id: 'cancel_order', title: options[1].slice(0, 20) } },
-                  ],
-                },
-              },
-            }),
-          }
-        );
-        if (!res.ok) {
-          const body = await res.text();
-          throw new Error(`Cloud API ${res.status}: ${body.slice(0, 140)}`);
-        }
-        const data = (await res.json()) as { messages?: Array<{ id?: string }> };
-        order.whatsappMessageId = data.messages?.[0]?.id || `CLOUD-${Date.now()}`;
-        order.pollStatus = 'poll_sent';
-        order.pollSentAt = new Date().toISOString();
-        store.upsertOrder(order);
-        store.appendOrderEvent(order.id, {
-          actor: 'whatsapp',
-          message: `WhatsApp Interactive Poll sent via Cloud API to ${order.customerPhone}`,
-        });
-        return store.getOrderById(order.id) || order;
-      } catch (err) {
-        order.pollStatus = 'failed';
-        store.upsertOrder(order);
-        store.appendOrderEvent(order.id, {
-          actor: 'system',
-          message: err instanceof Error ? err.message : 'Cloud API dispatch failed',
-        });
-        return store.getOrderById(order.id) || order;
-      }
-    }
-
-    // Mode 2: Live Baileys WhatsApp Web Socket
+    // Mode 1: Live Baileys WhatsApp Web Socket
     if (this.sock && this.status === 'connected' && meta.mode === 'baileys_qr') {
       try {
         const sent = await this.sock.sendMessage(jid, {
@@ -606,11 +488,12 @@ class WhatsAppManager {
       shouldCancelInShopify
     );
 
+    const hasLiveShopify = hasLiveShopifyCredentials(settings);
     order.shopifyTags = updatedTags;
     order.pollStatus = resolution.newStatus;
     order.respondedAt = new Date().toISOString();
     order.responseChannel = channel;
-    order.shopifySynced = shopifyResult.synced || !settings.shopifyAccessToken;
+    order.shopifySynced = shopifyResult.synced || !hasLiveShopify;
     store.upsertOrder(order);
 
     const optionDisplay =
@@ -627,7 +510,7 @@ class WhatsAppManager {
       actor: 'shopify',
       message: shopifyResult.error
         ? `Local tag updated to "${resolution.tagToAdd}", Shopify API sync failed: ${shopifyResult.error}`
-        : settings.shopifyAccessToken
+        : hasLiveShopify
           ? `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}" via Admin API`
           : `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}"`,
     });

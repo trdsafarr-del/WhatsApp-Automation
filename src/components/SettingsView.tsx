@@ -28,7 +28,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
     setSaveNotice(null);
     const ok = await onSave(form);
     setIsSaving(false);
-    setSaveNotice(ok ? 'Automation rules and Shopify settings saved.' : 'Failed to save settings.');
+    setSaveNotice(ok ? 'Shopify credentials and poll rules saved.' : 'Failed to save settings.');
   };
 
   const handleTest = async () => {
@@ -57,17 +57,17 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
         </div>
       )}
 
-      {/* Shopify Admin API Credentials */}
+      {/* Shopify Dev Dashboard Credentials */}
       <section className="rounded-xl border border-slate-200 bg-white p-6">
         <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2.5">
             <Store className="h-5 w-5 text-emerald-700" aria-hidden="true" />
             <div>
               <h2 className="text-base font-semibold text-slate-900">
-                Shopify Store & Admin API
+                Shopify Store &amp; Dev Dashboard Credentials
               </h2>
               <p className="text-xs text-slate-500">
-                Required so OrderPulse can write &ldquo;{form.confirmTag}&rdquo; and &ldquo;{form.cancelTag}&rdquo; tags onto real Shopify orders.
+                Paste your Client ID &amp; Client Secret from dev.shopify.com so OrderPulse can tag orders automatically.
               </p>
             </div>
           </div>
@@ -102,13 +102,14 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label htmlFor="shop-name" className="block text-sm font-medium text-slate-700">
-              Brand / Store Display Name
+              Store Display Name
             </label>
             <input
               id="shop-name"
               type="text"
               value={form.shopName}
               onChange={(e) => setForm({ ...form, shopName: e.target.value })}
+              placeholder="Broomies Bakery"
               className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
             />
           </div>
@@ -122,35 +123,63 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
               type="text"
               value={form.shopifyStoreDomain}
               onChange={(e) => setForm({ ...form, shopifyStoreDomain: e.target.value })}
-              placeholder="your-store.myshopify.com"
+              placeholder="broomies-bakery.myshopify.com"
               className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
             />
           </div>
 
           <div>
-            <label htmlFor="shopify-token" className="block text-sm font-medium text-slate-700">
-              Admin API Access Token
+            <label htmlFor="shopify-client-id" className="block text-sm font-medium text-slate-700">
+              App Client ID (from dev.shopify.com)
             </label>
             <input
-              id="shopify-token"
+              id="shopify-client-id"
+              type="text"
+              value={form.shopifyClientId}
+              onChange={(e) => setForm({ ...form, shopifyClientId: e.target.value })}
+              placeholder="Paste Client ID"
+              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="shopify-client-secret" className="block text-sm font-medium text-slate-700">
+              App Client Secret (from dev.shopify.com)
+            </label>
+            <input
+              id="shopify-client-secret"
               type="password"
-              value={form.shopifyAccessToken}
-              onChange={(e) => setForm({ ...form, shopifyAccessToken: e.target.value })}
-              placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
+              value={form.shopifyClientSecret}
+              onChange={(e) => setForm({ ...form, shopifyClientSecret: e.target.value })}
+              placeholder="shpss_xxxxxxxxxxxxxxxxxxxxxxxx"
               className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
             />
           </div>
 
           <div>
             <label htmlFor="shopify-secret" className="block text-sm font-medium text-slate-700">
-              Webhook Signing Secret (HMAC)
+              Webhook Signing Secret (from Shopify Admin Webhooks)
             </label>
             <input
               id="shopify-secret"
               type="password"
               value={form.shopifyWebhookSecret}
               onChange={(e) => setForm({ ...form, shopifyWebhookSecret: e.target.value })}
-              placeholder="Shopify webhook signing secret"
+              placeholder="Optional if using Client Secret"
+              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="shopify-token" className="block text-sm font-medium text-slate-700">
+              Direct Admin Token (Optional, Legacy shpat_ only)
+            </label>
+            <input
+              id="shopify-token"
+              type="password"
+              value={form.shopifyAccessToken}
+              onChange={(e) => setForm({ ...form, shopifyAccessToken: e.target.value })}
+              placeholder="Leave blank when using Client ID + Secret"
               className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
             />
           </div>
@@ -161,7 +190,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
       <section className="rounded-xl border border-slate-200 bg-white p-6">
         <div className="border-b border-slate-200 pb-4">
           <h2 className="text-base font-semibold text-slate-900">
-            WhatsApp Poll Template & Auto-Tag Rules
+            WhatsApp Poll Template &amp; Auto-Tag Rules
           </h2>
           <p className="mt-1 text-xs text-slate-500">
             Customize the poll sent to every new Shopify order and the exact tags written back to Shopify.
@@ -239,34 +268,18 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label htmlFor="country-code" className="block text-sm font-medium text-slate-700">
-                Default Country Code (for 10-digit phones)
-              </label>
-              <input
-                id="country-code"
-                type="text"
-                value={form.defaultCountryCode}
-                onChange={(e) => setForm({ ...form, defaultCountryCode: e.target.value })}
-                placeholder="91"
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="worker-url" className="block text-sm font-medium text-slate-700">
-                External 24/7 QR Worker URL (Optional for Vercel)
-              </label>
-              <input
-                id="worker-url"
-                type="text"
-                value={form.whatsappWorkerUrl}
-                onChange={(e) => setForm({ ...form, whatsappWorkerUrl: e.target.value })}
-                placeholder="https://your-qr-worker.onrender.com"
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
-              />
-            </div>
+          <div className="max-w-xs">
+            <label htmlFor="country-code" className="block text-sm font-medium text-slate-700">
+              Default Country Code (for 10-digit phones)
+            </label>
+            <input
+              id="country-code"
+              type="text"
+              value={form.defaultCountryCode}
+              onChange={(e) => setForm({ ...form, defaultCountryCode: e.target.value })}
+              placeholder="91"
+              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+            />
           </div>
 
           <div className="space-y-3 border-t border-slate-200 pt-4">
@@ -293,46 +306,6 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
               />
               <span>Also mark the order as Cancelled inside Shopify when customer clicks Cancel Order</span>
             </label>
-          </div>
-        </div>
-      </section>
-
-      {/* Optional Meta Cloud API Credentials */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6">
-        <div className="border-b border-slate-200 pb-4">
-          <h2 className="text-base font-semibold text-slate-900">
-            Meta Official WhatsApp Cloud API (Optional for Vercel Serverless)
-          </h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Use this if you want 100% serverless operation on Vercel without running a separate Node QR worker.
-          </p>
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div>
-            <label htmlFor="cloud-phone-id" className="block text-sm font-medium text-slate-700">
-              Phone Number ID
-            </label>
-            <input
-              id="cloud-phone-id"
-              type="text"
-              value={form.cloudApiPhoneNumberId}
-              onChange={(e) => setForm({ ...form, cloudApiPhoneNumberId: e.target.value })}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="cloud-token" className="block text-sm font-medium text-slate-700">
-              Permanent System User Access Token
-            </label>
-            <input
-              id="cloud-token"
-              type="password"
-              value={form.cloudApiToken}
-              onChange={(e) => setForm({ ...form, cloudApiToken: e.target.value })}
-              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
-            />
           </div>
         </div>
       </section>

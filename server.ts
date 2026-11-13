@@ -2,17 +2,17 @@ import 'dotenv/config';
 import express, { type Request, type Response } from 'express';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
-import { computeOrderMetrics } from './src/lib/orderRules';
-import type { AppSettings, OrderRecord } from './src/lib/types';
+import { computeOrderMetrics } from './src/lib/orderRules.js';
+import type { AppSettings, OrderRecord } from './src/lib/types.js';
 import {
   fetchShopifyOrders,
   parseShopifyRawOrder,
   testShopifyConnection,
   verifyShopifyWebhookHmac,
   type ShopifyRawOrder,
-} from './server/shopify';
-import { store } from './server/store';
-import { whatsappManager } from './server/whatsapp';
+} from './server/shopify.js';
+import { store } from './server/store.js';
+import { whatsappManager } from './server/whatsapp.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -73,30 +73,29 @@ async function startServer() {
   // Save Shopify & Poll automation settings
   app.post('/api/settings', (req: Request, res: Response) => {
     const body = (req.body || {}) as Partial<AppSettings>;
+    const cur = store.getSettings();
     const updated = store.updateSettings({
-      shopName: body.shopName ?? store.getSettings().shopName,
-      shopifyStoreDomain: body.shopifyStoreDomain ?? store.getSettings().shopifyStoreDomain,
-      shopifyAccessToken: body.shopifyAccessToken ?? store.getSettings().shopifyAccessToken,
-      shopifyWebhookSecret: body.shopifyWebhookSecret ?? store.getSettings().shopifyWebhookSecret,
-      whatsappMode: body.whatsappMode ?? store.getSettings().whatsappMode,
-      whatsappWorkerUrl: body.whatsappWorkerUrl ?? store.getSettings().whatsappWorkerUrl,
-      cloudApiToken: body.cloudApiToken ?? store.getSettings().cloudApiToken,
-      cloudApiPhoneNumberId:
-        body.cloudApiPhoneNumberId ?? store.getSettings().cloudApiPhoneNumberId,
-      defaultCountryCode: body.defaultCountryCode ?? store.getSettings().defaultCountryCode,
+      shopName: body.shopName ?? cur.shopName,
+      shopifyStoreDomain: body.shopifyStoreDomain ?? cur.shopifyStoreDomain,
+      shopifyClientId: body.shopifyClientId ?? cur.shopifyClientId,
+      shopifyClientSecret: body.shopifyClientSecret ?? cur.shopifyClientSecret,
+      shopifyAccessToken: body.shopifyAccessToken ?? cur.shopifyAccessToken,
+      shopifyWebhookSecret: body.shopifyWebhookSecret ?? cur.shopifyWebhookSecret,
+      whatsappMode: body.whatsappMode ?? cur.whatsappMode,
+      defaultCountryCode: body.defaultCountryCode ?? cur.defaultCountryCode,
       autoSendPollOnNewOrder:
         typeof body.autoSendPollOnNewOrder === 'boolean'
           ? body.autoSendPollOnNewOrder
-          : store.getSettings().autoSendPollOnNewOrder,
+          : cur.autoSendPollOnNewOrder,
       autoCancelInShopify:
         typeof body.autoCancelInShopify === 'boolean'
           ? body.autoCancelInShopify
-          : store.getSettings().autoCancelInShopify,
-      pollMessageTemplate: body.pollMessageTemplate ?? store.getSettings().pollMessageTemplate,
-      confirmOptionLabel: body.confirmOptionLabel ?? store.getSettings().confirmOptionLabel,
-      cancelOptionLabel: body.cancelOptionLabel ?? store.getSettings().cancelOptionLabel,
-      confirmTag: body.confirmTag ?? store.getSettings().confirmTag,
-      cancelTag: body.cancelTag ?? store.getSettings().cancelTag,
+          : cur.autoCancelInShopify,
+      pollMessageTemplate: body.pollMessageTemplate ?? cur.pollMessageTemplate,
+      confirmOptionLabel: body.confirmOptionLabel ?? cur.confirmOptionLabel,
+      cancelOptionLabel: body.cancelOptionLabel ?? cur.cancelOptionLabel,
+      confirmTag: body.confirmTag ?? cur.confirmTag,
+      cancelTag: body.cancelTag ?? cur.cancelTag,
     });
     res.json({ settings: updated });
   });
@@ -143,8 +142,9 @@ async function startServer() {
     const settings = store.getSettings();
     const hmac = req.header('X-Shopify-Hmac-Sha256');
     const rawBody = req.rawBody || JSON.stringify(req.body || {});
+    const secret = settings.shopifyWebhookSecret || settings.shopifyClientSecret;
 
-    if (!verifyShopifyWebhookHmac(rawBody, hmac, settings.shopifyWebhookSecret)) {
+    if (!verifyShopifyWebhookHmac(rawBody, hmac, secret)) {
       res.status(401).json({ error: 'Invalid Shopify HMAC signature' });
       return;
     }
@@ -169,43 +169,6 @@ async function startServer() {
     }
 
     res.status(200).json({ ok: true, order: store.getOrderById(order.id) });
-  });
-
-  // Meta WhatsApp Cloud API Webhook (verification + button click handler)
-  app.get('/api/webhooks/whatsapp-cloud', (req: Request, res: Response) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-    if (mode === 'subscribe' && token === (process.env.WHATSAPP_VERIFY_TOKEN || 'orderpulse_verify')) {
-      res.status(200).send(challenge);
-      return;
-    }
-    res.sendStatus(403);
-  });
-
-  app.post('/api/webhooks/whatsapp-cloud', async (req: Request, res: Response) => {
-    try {
-      const entry = req.body?.entry?.[0]?.changes?.[0]?.value;
-      const messages = entry?.messages;
-      if (Array.isArray(messages)) {
-        for (const msg of messages) {
-          const from = String(msg.from || '').replace(/\D/g, '');
-          const replyTitle =
-            msg.interactive?.button_reply?.title ||
-            msg.text?.body ||
-            '';
-          if (from && replyTitle) {
-            const order = store.findLatestPendingOrderByPhone(from);
-            if (order) {
-              await whatsappManager.applyVoteToOrder(order.id, replyTitle, 'whatsapp_poll');
-            }
-          }
-        }
-      }
-    } catch {
-      // Acknowledge webhook to prevent Meta retry storm
-    }
-    res.sendStatus(200);
   });
 
   // Simulate an incoming Shopify Order & auto-dispatch WhatsApp Poll

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { AppSettings, OrderRecord } from '../src/lib/types';
+import type { AppSettings, OrderRecord } from '../src/lib/types.js';
 
 export interface ShopifyRawOrder {
   id: number | string;
@@ -35,6 +35,13 @@ export interface ShopifyRawOrder {
 
 const SHOPIFY_API_VERSION = '2025-01';
 
+// In-memory cache for Dev Dashboard 24h client_credentials access tokens
+let cachedToken: {
+  cacheKey: string;
+  accessToken: string;
+  expiresAtMs: number;
+} | null = null;
+
 export function normalizeShopifyDomain(domain: string): string {
   return domain
     .trim()
@@ -48,7 +55,6 @@ export function verifyShopifyWebhookHmac(
   secret: string
 ): boolean {
   if (!secret.trim()) {
-    // Allow unverified test webhooks only when user has not configured a secret
     return true;
   }
   if (!hmacHeader) return false;
@@ -131,28 +137,98 @@ export function parseShopifyRawOrder(raw: ShopifyRawOrder): OrderRecord {
 }
 
 export function hasLiveShopifyCredentials(settings: AppSettings): boolean {
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  if (!domain) return false;
   return Boolean(
-    normalizeShopifyDomain(settings.shopifyStoreDomain) &&
-      settings.shopifyAccessToken.trim()
+    settings.shopifyAccessToken.trim() ||
+      (settings.shopifyClientId.trim() && settings.shopifyClientSecret.trim())
   );
+}
+
+/**
+ * Resolves an Admin API access token either from direct `shpat_` token
+ * or automatically via Shopify Dev Dashboard `client_credentials` exchange.
+ */
+async function resolveShopifyAccessToken(
+  settings: AppSettings
+): Promise<{ token?: string; error?: string }> {
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  if (!domain) {
+    return { error: 'Enter your Shopify Store Domain (e.g. your-store.myshopify.com).' };
+  }
+
+  if (settings.shopifyAccessToken.trim()) {
+    return { token: settings.shopifyAccessToken.trim() };
+  }
+
+  const clientId = settings.shopifyClientId.trim();
+  const clientSecret = settings.shopifyClientSecret.trim();
+  if (!clientId || !clientSecret) {
+    return {
+      error:
+        'Enter your App Client ID and Client Secret from dev.shopify.com (or a direct Admin API token).',
+    };
+  }
+
+  const cacheKey = `${domain}:${clientId}:${clientSecret}`;
+  if (
+    cachedToken &&
+    cachedToken.cacheKey === cacheKey &&
+    Date.now() < cachedToken.expiresAtMs - 60_000
+  ) {
+    return { token: cachedToken.accessToken };
+  }
+
+  try {
+    const res = await fetch(`https://${domain}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: 'client_credentials',
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      return {
+        error: `Shopify OAuth token exchange failed (${res.status}): ${body.slice(0, 180)}`,
+      };
+    }
+
+    const data = (await res.json()) as { access_token?: string; expires_in?: number };
+    if (!data.access_token) {
+      return { error: 'Shopify did not return an access_token. Make sure the app is installed on your store.' };
+    }
+
+    const ttlMs = (data.expires_in ?? 86400) * 1000;
+    cachedToken = {
+      cacheKey,
+      accessToken: data.access_token,
+      expiresAtMs: Date.now() + ttlMs,
+    };
+    return { token: data.access_token };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Network error exchanging Shopify credentials',
+    };
+  }
 }
 
 export async function testShopifyConnection(
   settings: AppSettings
 ): Promise<{ ok: boolean; shopName?: string; error?: string }> {
   const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
-  const token = settings.shopifyAccessToken.trim();
-  if (!domain || !token) {
-    return {
-      ok: false,
-      error: 'Enter both your Shopify Store Domain (my-store.myshopify.com) and Admin API Access Token.',
-    };
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { ok: false, error: auth.error };
   }
 
   try {
     const res = await fetch(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
       headers: {
-        'X-Shopify-Access-Token': token,
+        'X-Shopify-Access-Token': auth.token,
         'Content-Type': 'application/json',
       },
     });
@@ -179,13 +255,9 @@ export async function fetchShopifyOrders(
   settings: AppSettings
 ): Promise<{ ok: boolean; orders: ShopifyRawOrder[]; error?: string }> {
   const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
-  const token = settings.shopifyAccessToken.trim();
-  if (!domain || !token) {
-    return {
-      ok: false,
-      orders: [],
-      error: 'Shopify credentials are not configured yet.',
-    };
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { ok: false, orders: [], error: auth.error };
   }
 
   try {
@@ -193,7 +265,7 @@ export async function fetchShopifyOrders(
       `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders.json?status=any&limit=25`,
       {
         headers: {
-          'X-Shopify-Access-Token': token,
+          'X-Shopify-Access-Token': auth.token,
           'Content-Type': 'application/json',
         },
       }
@@ -225,12 +297,14 @@ export async function updateShopifyOrderTags(
   newTags: string,
   shouldCancelOrder: boolean
 ): Promise<{ synced: boolean; error?: string }> {
-  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
-  const token = settings.shopifyAccessToken.trim();
-
-  // If live Shopify credentials aren't configured yet, keep local simulation synced cleanly
-  if (!domain || !token) {
+  if (!hasLiveShopifyCredentials(settings)) {
     return { synced: false };
+  }
+
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { synced: false, error: auth.error };
   }
 
   try {
@@ -239,7 +313,7 @@ export async function updateShopifyOrderTags(
       {
         method: 'PUT',
         headers: {
-          'X-Shopify-Access-Token': token,
+          'X-Shopify-Access-Token': auth.token,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -265,7 +339,7 @@ export async function updateShopifyOrderTags(
         {
           method: 'POST',
           headers: {
-            'X-Shopify-Access-Token': token,
+            'X-Shopify-Access-Token': auth.token,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ reason: 'customer' }),

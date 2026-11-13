@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_SETTINGS } from '../src/lib/orderRules';
-import type { AppSettings, OrderEvent, OrderRecord, WhatsAppState } from '../src/lib/types';
+import { DEFAULT_SETTINGS } from '../src/lib/orderRules.js';
+import type { AppSettings, OrderEvent, OrderRecord, WhatsAppState } from '../src/lib/types.js';
 
 const DATA_DIR = process.env.VERCEL
   ? '/tmp/orderpulse-data'
@@ -221,16 +221,14 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
     ...settings,
     shopifyStoreDomain:
       settings.shopifyStoreDomain || process.env.SHOPIFY_STORE_DOMAIN || '',
+    shopifyClientId:
+      settings.shopifyClientId || process.env.SHOPIFY_CLIENT_ID || '',
+    shopifyClientSecret:
+      settings.shopifyClientSecret || process.env.SHOPIFY_CLIENT_SECRET || '',
     shopifyAccessToken:
       settings.shopifyAccessToken || process.env.SHOPIFY_ACCESS_TOKEN || '',
     shopifyWebhookSecret:
       settings.shopifyWebhookSecret || process.env.SHOPIFY_WEBHOOK_SECRET || '',
-    whatsappWorkerUrl:
-      settings.whatsappWorkerUrl || process.env.WHATSAPP_WORKER_URL || '',
-    cloudApiToken:
-      settings.cloudApiToken || process.env.WHATSAPP_CLOUD_TOKEN || '',
-    cloudApiPhoneNumberId:
-      settings.cloudApiPhoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || '',
   };
 }
 

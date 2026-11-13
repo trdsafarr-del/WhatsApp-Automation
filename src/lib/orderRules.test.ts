@@ -7,8 +7,8 @@ import {
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
-} from './orderRules';
-import type { OrderRecord } from './types';
+} from './orderRules.js';
+import type { OrderRecord } from './types.js';
 
 test('normalizePhoneToWhatsAppJid formats Indian and international numbers', () => {
   assert.equal(normalizePhoneToWhatsAppJid('+91 98765-43210'), '919876543210@s.whatsapp.net');

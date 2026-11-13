@@ -1,15 +1,15 @@
-import express, { type Request, type Response } from 'express';
-import { computeOrderMetrics } from '../src/lib/orderRules';
-import type { AppSettings, OrderRecord } from '../src/lib/types';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { computeOrderMetrics } from '../src/lib/orderRules.js';
+import type { AppSettings, OrderRecord } from '../src/lib/types.js';
 import {
   fetchShopifyOrders,
   parseShopifyRawOrder,
   testShopifyConnection,
   verifyShopifyWebhookHmac,
   type ShopifyRawOrder,
-} from '../server/shopify';
-import { store } from '../server/store';
-import { whatsappManager } from '../server/whatsapp';
+} from '../server/shopify.js';
+import { store } from '../server/store.js';
+import { whatsappManager } from '../server/whatsapp.js';
 
 interface RawBodyRequest extends Request {
   rawBody?: Buffer;
@@ -106,8 +106,9 @@ app.post('/api/webhooks/shopify/orders-create', async (req: RawBodyRequest, res:
   const settings = store.getSettings();
   const hmac = req.header('X-Shopify-Hmac-Sha256');
   const rawBody = req.rawBody || JSON.stringify(req.body || {});
+  const secret = settings.shopifyWebhookSecret || settings.shopifyClientSecret;
 
-  if (!verifyShopifyWebhookHmac(rawBody, hmac, settings.shopifyWebhookSecret)) {
+  if (!verifyShopifyWebhookHmac(rawBody, hmac, secret)) {
     res.status(401).json({ error: 'Invalid Shopify HMAC signature' });
     return;
   }
@@ -132,42 +133,6 @@ app.post('/api/webhooks/shopify/orders-create', async (req: RawBodyRequest, res:
   }
 
   res.status(200).json({ ok: true, order: store.getOrderById(order.id) });
-});
-
-app.get('/api/webhooks/whatsapp-cloud', (req: Request, res: Response) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-  if (mode === 'subscribe' && token === (process.env.WHATSAPP_VERIFY_TOKEN || 'orderpulse_verify')) {
-    res.status(200).send(challenge);
-    return;
-  }
-  res.sendStatus(403);
-});
-
-app.post('/api/webhooks/whatsapp-cloud', async (req: Request, res: Response) => {
-  try {
-    const entry = req.body?.entry?.[0]?.changes?.[0]?.value;
-    const messages = entry?.messages;
-    if (Array.isArray(messages)) {
-      for (const msg of messages) {
-        const from = String(msg.from || '').replace(/\D/g, '');
-        const replyTitle =
-          msg.interactive?.button_reply?.title ||
-          msg.text?.body ||
-          '';
-        if (from && replyTitle) {
-          const order = store.findLatestPendingOrderByPhone(from);
-          if (order) {
-            await whatsappManager.applyVoteToOrder(order.id, replyTitle, 'whatsapp_poll');
-          }
-        }
-      }
-    }
-  } catch {
-    // Acknowledge
-  }
-  res.sendStatus(200);
 });
 
 app.post('/api/orders/simulate', async (req: Request, res: Response) => {
@@ -257,6 +222,11 @@ app.post('/api/orders/:id/vote', async (req: Request, res: Response) => {
     orders: allOrders,
     metrics: computeOrderMetrics(allOrders),
   });
+});
+
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  const message = err instanceof Error ? err.message : 'Internal server error';
+  res.status(500).json({ error: message });
 });
 
 export default app;

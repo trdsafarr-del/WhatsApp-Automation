@@ -52,7 +52,6 @@ export function WhatsAppQrView({
               [
                 { id: 'baileys_qr', label: 'WhatsApp Web QR' },
                 { id: 'sandbox', label: 'Sandbox Test Device' },
-                { id: 'cloud_api', label: 'Meta Cloud API' },
               ] as const
             ).map((item) => (
               <button
@@ -85,9 +84,7 @@ export function WhatsAppQrView({
               <h3 className="text-base font-semibold text-slate-900">
                 {whatsapp.mode === 'baileys_qr'
                   ? 'Scan Official WhatsApp QR'
-                  : whatsapp.mode === 'sandbox'
-                    ? 'Sandbox Test Device'
-                    : 'Meta Official Cloud API'}
+                  : 'Sandbox Test Device'}
               </h3>
             </div>
             <span
@@ -287,10 +284,10 @@ export function WhatsAppQrView({
 
             <div className="border-t border-slate-200 pt-4">
               <p className="text-xs font-semibold text-slate-800">
-                Vercel Serverless Note
+                24/7 Hosting Note
               </p>
               <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                Vercel serverless functions sleep after 60s, so a pure Vercel deployment cannot hold a 24/7 WhatsApp Web socket. See the <span className="font-medium text-slate-900">Install & Deploy</span> tab for the recommended Vercel + 24/7 Node Worker setup or Meta Official Cloud API mode.
+                For 24/7 QR uptime without logging out, run this app on a persistent Node host (Render / Railway / Fly.io / VPS) where <span className="font-mono text-slate-800">data/wa-auth</span> stays saved on disk. See the <span className="font-medium text-slate-900">Install &amp; Deploy</span> tab for exact steps.
               </p>
             </div>
           </div>

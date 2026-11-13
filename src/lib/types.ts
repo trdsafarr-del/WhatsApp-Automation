@@ -12,7 +12,7 @@ export type WhatsAppConnectionStatus =
   | 'connected'
   | 'error';
 
-export type WhatsAppEngineMode = 'baileys_qr' | 'sandbox' | 'cloud_api';
+export type WhatsAppEngineMode = 'baileys_qr' | 'sandbox';
 
 export interface OrderEvent {
   id: string;
@@ -47,12 +47,11 @@ export interface OrderRecord {
 export interface AppSettings {
   shopName: string;
   shopifyStoreDomain: string;
+  shopifyClientId: string;
+  shopifyClientSecret: string;
   shopifyAccessToken: string;
   shopifyWebhookSecret: string;
   whatsappMode: WhatsAppEngineMode;
-  whatsappWorkerUrl: string;
-  cloudApiToken: string;
-  cloudApiPhoneNumberId: string;
   defaultCountryCode: string;
   autoSendPollOnNewOrder: boolean;
   autoCancelInShopify: boolean;
