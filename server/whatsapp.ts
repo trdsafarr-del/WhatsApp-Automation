@@ -8,6 +8,7 @@ import {
   formatOrderTemplate,
   formatPollPayload,
   isTransientWhatsAppError,
+  isWhatsAppConnectionReplaced,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
@@ -43,7 +44,9 @@ function decodeBinaryBuffer(val: unknown): Buffer | null {
 
 const AUTH_DIR = process.env.VERCEL
   ? '/tmp/orderpulse-data/wa-auth'
-  : path.resolve(process.cwd(), 'data', 'wa-auth');
+  : process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR, 'wa-auth')
+    : path.resolve(process.cwd(), 'data', 'wa-auth');
 
 class WhatsAppManager {
   private sock: WASocket | null = null;
@@ -147,7 +150,9 @@ class WhatsAppManager {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(async () => {
       if (this.status !== 'connected') return;
-      this.lastHeartbeatAt = new Date().toISOString();
+      const now = new Date().toISOString();
+      this.lastHeartbeatAt = now;
+      store.updateWhatsAppMeta({ lastHeartbeatAt: now });
       if (this.sock) {
         try {
           await this.sock.sendPresenceUpdate('available');
@@ -179,7 +184,7 @@ class WhatsAppManager {
       pairingCode: this.pairingCode,
       isServerless: Boolean(process.env.VERCEL),
       connectedAt: meta.connectedAt,
-      lastHeartbeatAt: this.lastHeartbeatAt,
+      lastHeartbeatAt: this.lastHeartbeatAt || meta.lastHeartbeatAt || null,
       reconnectCount: this.reconnectCount,
       sessionPersisted: localRegistered || remoteSessionActive,
       remoteSessionActive,
@@ -240,6 +245,7 @@ class WhatsAppManager {
         store.updateWhatsAppMeta({
           mode: 'baileys_qr',
           connectedAt: null,
+          lastHeartbeatAt: null,
           phoneNumber: null,
           pushName: null,
         });
@@ -341,6 +347,7 @@ class WhatsAppManager {
           store.updateWhatsAppMeta({
             mode: 'baileys_qr',
             connectedAt: now,
+            lastHeartbeatAt: now,
             phoneNumber: userId ? formatJidToDisplayPhone(userId) : 'Linked Device',
             pushName: sock.user?.name || 'WhatsApp Business',
           });
@@ -366,6 +373,9 @@ class WhatsAppManager {
             !this.isAuthRegistered() &&
             (errMessage.toLowerCase().includes('qr refs attempts ended') ||
               statusCode === DisconnectReason.timedOut);
+          const isConnectionReplaced =
+            statusCode === DisconnectReason.connectionReplaced ||
+            isWhatsAppConnectionReplaced(statusCode);
           const isBadSession =
             statusCode === DisconnectReason.badSession ||
             statusCode === DisconnectReason.multideviceMismatch;
@@ -382,9 +392,19 @@ class WhatsAppManager {
               : 'Session expired or mismatched. Click Generate WhatsApp QR to link fresh.';
             store.updateWhatsAppMeta({
               connectedAt: null,
+              lastHeartbeatAt: null,
               phoneNumber: null,
               pushName: null,
             });
+            this.notifyWaiters();
+          } else if (isConnectionReplaced) {
+            // Another persistent host (e.g. Railway) took over this WhatsApp session; pause without wiping Redis auth
+            this.status = 'disconnected';
+            this.qrDataUrl = null;
+            this.qrRaw = null;
+            this.pairingCode = null;
+            this.lastError =
+              'WhatsApp session is active on another server host (e.g. Railway). Keep only one 24/7 host socket active at a time, or click Restore Saved Session when ready.';
             this.notifyWaiters();
           } else if (isRestartRequired) {
             // Normal post-QR-scan handshake: flush creds.json and reconnect immediately without error flash
@@ -621,6 +641,7 @@ class WhatsAppManager {
     this.lastError = null;
     store.updateWhatsAppMeta({
       connectedAt: null,
+      lastHeartbeatAt: null,
       phoneNumber: null,
       pushName: null,
     });

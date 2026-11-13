@@ -9,10 +9,13 @@ import {
   formatOrderTemplate,
   formatPollPayload,
   getSyncStartCutoffIso,
+  getWhatsAppDisplayState,
   hasConfiguredShopify,
   inferInitialPollStatus,
+  isHostHeartbeatRecent,
   isOrderOnOrAfterStartDate,
   isTransientWhatsAppError,
+  isWhatsAppConnectionReplaced,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
@@ -392,4 +395,63 @@ test('hasConfiguredShopify and buildDeployEnvSnippet prepare clean deploy variab
   assert.match(snippet, /SYNC_START_DATE=2026-11-13/);
 });
 
+test('isHostHeartbeatRecent and getWhatsAppDisplayState handle cloud-synced Vercel host sessions', () => {
+  const now = Date.parse('2026-11-13T12:00:00.000Z');
+  assert.equal(isHostHeartbeatRecent('2026-11-13T11:58:30.000Z', now), true);
+  assert.equal(isHostHeartbeatRecent('2026-11-13T11:50:00.000Z', now), false);
+  assert.equal(isHostHeartbeatRecent(null, now), false);
 
+  const remoteLive = getWhatsAppDisplayState(
+    {
+      status: 'disconnected',
+      phoneNumber: '+919266424088',
+      connectedAt: '2026-11-13T10:30:00.000Z',
+      lastHeartbeatAt: '2026-11-13T11:59:10.000Z',
+      remoteSessionActive: true,
+      sessionPersisted: true,
+      isServerless: true,
+    },
+    now
+  );
+  assert.equal(remoteLive.isLinked, true);
+  assert.equal(remoteLive.isRemoteLinked, true);
+  assert.equal(remoteLive.isLocalConnected, false);
+  assert.equal(remoteLive.isHostLive, true);
+  assert.equal(remoteLive.statusLabel, 'Connected on Host · Live');
+  assert.equal(remoteLive.sidebarLabel, 'Connected (Host)');
+
+  const remoteStale = getWhatsAppDisplayState(
+    {
+      status: 'disconnected',
+      phoneNumber: '+919266424088',
+      connectedAt: '2026-11-13T10:30:00.000Z',
+      lastHeartbeatAt: '2026-11-13T11:40:00.000Z',
+      remoteSessionActive: true,
+      sessionPersisted: true,
+      isServerless: true,
+    },
+    now
+  );
+  assert.equal(remoteStale.isLinked, true);
+  assert.equal(remoteStale.isHostLive, false);
+  assert.equal(remoteStale.statusLabel, 'Session Saved · Cloud Synced');
+  assert.equal(remoteStale.sidebarLabel, 'Synced (Host Session)');
+
+  const unlinked = getWhatsAppDisplayState(
+    {
+      status: 'disconnected',
+      phoneNumber: null,
+      connectedAt: null,
+      remoteSessionActive: false,
+      isServerless: true,
+    },
+    now
+  );
+  assert.equal(unlinked.isLinked, false);
+  assert.equal(unlinked.statusLabel, 'Not Linked');
+  assert.equal(unlinked.sidebarLabel, 'Unlinked');
+
+  assert.equal(isWhatsAppConnectionReplaced(440), true);
+  assert.equal(isWhatsAppConnectionReplaced(515), false);
+  assert.equal(isWhatsAppConnectionReplaced(undefined), false);
+});

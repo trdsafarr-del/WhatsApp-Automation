@@ -215,36 +215,53 @@ export function SetupGuideView({
         </ol>
       </section>
 
-      {/* Part 3: GitHub + 24/7 Node Hosting */}
+      {/* Part 3: GitHub + 24/7 Node Hosting (Railway / Vercel) */}
       <section className="rounded-xl border border-slate-200 bg-white p-6">
         <div className="flex items-center gap-2.5 border-b border-slate-200 pb-4">
           <GitBranch className="h-5 w-5 text-emerald-700" aria-hidden="true" />
           <div>
             <h2 className="text-base font-semibold text-slate-900">
-              03. GitHub Push &amp; 24/7 Background Hosting (When Laptop Is Off)
+              03. GitHub Push &amp; 24/7 Railway + Vercel Hosting (When Laptop Is Off)
             </h2>
             <p className="text-xs text-slate-500">
-              Includes <span className="font-mono">vercel.json</span> for Vercel and <span className="font-mono">npm start</span> for 24/7 Node hosting.
+              Includes <span className="font-mono">railway.json</span> for 24/7 Railway hosting and <span className="font-mono">vercel.json</span> for Vercel dashboard sync.
             </p>
           </div>
         </div>
 
         <div className="mt-5 space-y-4 text-sm text-slate-700">
           <CopyField
-            label="Push to GitHub"
-            value="git init && git add . && git commit -m 'OrderPulse Shopify WhatsApp' && git branch -M main && git remote add origin <YOUR_GITHUB_REPO_URL> && git push -u origin main"
+            label="Push Latest Code to GitHub"
+            value="git add . && git commit -m 'OrderPulse 24/7 Railway + Vercel sync' && git push"
           />
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs leading-relaxed text-slate-700">
+            <p className="font-semibold text-slate-900">
+              Railway 24/7 Setup Steps (Takes ~3 Minutes):
+            </p>
+            <ol className="mt-2 list-decimal space-y-1.5 pl-4">
+              <li>
+                Open <span className="font-mono text-slate-900">railway.app</span> → <span className="font-medium text-slate-900">New Project → Deploy from GitHub Repo</span> → select this repository.
+              </li>
+              <li>
+                In your Railway Service → <span className="font-medium text-slate-900">Variables</span> tab, add: <span className="font-mono">NODE_ENV=production</span>, <span className="font-mono">UPSTASH_REDIS_REST_URL</span>, and <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> (same 2 Redis values as Vercel — Shopify &amp; WhatsApp session load automatically!).
+              </li>
+              <li>
+                Go to <span className="font-medium text-slate-900">Settings → Networking → Generate Domain</span> to get your live <span className="font-mono">*.up.railway.app</span> URL. Optionally add a <span className="font-medium text-slate-900">Volume</span> mounted at <span className="font-mono">/app/data</span>.
+              </li>
+              <li>
+                Update your Shopify Store Admin webhooks (<span className="font-mono">orders/create</span> &amp; <span className="font-mono">orders/updated</span>) to your Railway URL so new orders and tracking links trigger 24/7 even with your laptop off.
+              </li>
+            </ol>
+          </div>
 
           <div className="rounded-lg bg-amber-50/80 p-4 text-xs leading-relaxed text-amber-950">
             <p className="font-semibold">
-              Multi-Device Data + 24/7 Never-Logout WhatsApp Hosting (Important):
+              Important Rule (Railway + Vercel Together):
             </p>
             <ul className="mt-1.5 list-disc space-y-1.5 pl-4">
               <li>
-                <span className="font-semibold">24/7 WhatsApp + Background Sync Even When Laptop Is Off:</span> Deploy this repo on a persistent Node host (<span className="font-semibold">Railway, Render, Fly.io, or VPS</span>) with start command <span className="font-mono">npm start</span> and persistent disk at <span className="font-mono">/app/data</span>. All phones/laptops share the same database and WhatsApp stays connected 24/7.
-              </li>
-              <li>
-                <span className="font-semibold">Vercel Note:</span> Vercel serverless functions stop after each request, so a live WhatsApp QR socket cannot stay open 24/7 on <span className="font-mono">vercel.app</span> alone. Connect Upstash Redis on both Vercel &amp; Railway/Render so Vercel always stays in sync with your 24/7 Node host.
+                <span className="font-semibold">Keep Railway as your 1 Always-On WhatsApp Socket:</span> WhatsApp allows only one active Baileys socket per linked device session at a time. Once Railway is live, your Vercel dashboard (<span className="font-mono">vercel.app</span>) safely mirrors live orders and status via Upstash Redis without disconnecting Railway.
               </li>
             </ul>
           </div>

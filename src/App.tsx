@@ -12,7 +12,7 @@ import { OrdersView } from './components/OrdersView';
 import { SettingsView } from './components/SettingsView';
 import { SetupGuideView } from './components/SetupGuideView';
 import { WhatsAppQrView } from './components/WhatsAppQrView';
-import { DEFAULT_SETTINGS } from './lib/orderRules';
+import { DEFAULT_SETTINGS, getWhatsAppDisplayState } from './lib/orderRules';
 import type {
   AppSettings,
   DashboardPayload,
@@ -297,16 +297,7 @@ export default function App() {
         (settings.shopifyClientId.trim() && settings.shopifyClientSecret.trim()))
   );
 
-  const whatsappLabel =
-    whatsapp.status === 'connected'
-      ? 'Connected'
-      : whatsapp.remoteSessionActive && whatsapp.isServerless
-        ? 'Synced (Host Session)'
-        : whatsapp.status === 'qr_ready'
-          ? 'Scan QR'
-          : whatsapp.status === 'connecting'
-            ? 'Connecting...'
-            : 'Unlinked';
+  const whatsappLabel = getWhatsAppDisplayState(whatsapp).sidebarLabel;
 
   const connectionSummary = (
     <div className="border-t border-slate-800 px-5 py-4 text-xs text-slate-400">

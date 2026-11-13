@@ -10,7 +10,9 @@ import type { AppSettings, OrderEvent, OrderRecord, WhatsAppState } from '../src
 
 const DATA_DIR = process.env.VERCEL
   ? '/tmp/orderpulse-data'
-  : path.resolve(process.cwd(), 'data');
+  : process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.resolve(process.cwd(), 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const DB_BACKUP_PATH = path.join(DATA_DIR, 'db.backup.json');
 const POLL_CACHE_PATH = path.join(DATA_DIR, 'poll-messages.json');
@@ -28,6 +30,7 @@ export interface DatabaseState {
   whatsappMeta: {
     mode: WhatsAppState['mode'];
     connectedAt: string | null;
+    lastHeartbeatAt?: string | null;
     phoneNumber: string | null;
     pushName: string | null;
   };
@@ -215,6 +218,7 @@ class PersistentStore {
             whatsappMeta: {
               mode: 'baileys_qr',
               connectedAt: parsed.whatsappMeta?.connectedAt || null,
+              lastHeartbeatAt: parsed.whatsappMeta?.lastHeartbeatAt || null,
               phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
               pushName: parsed.whatsappMeta?.pushName || null,
             },
@@ -274,6 +278,7 @@ class PersistentStore {
         whatsappMeta: {
           mode: 'baileys_qr',
           connectedAt: parsed.whatsappMeta?.connectedAt || null,
+          lastHeartbeatAt: parsed.whatsappMeta?.lastHeartbeatAt || null,
           phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
           pushName: parsed.whatsappMeta?.pushName || null,
         },
@@ -309,6 +314,7 @@ class PersistentStore {
       whatsappMeta: {
         mode: 'baileys_qr',
         connectedAt: null,
+        lastHeartbeatAt: null,
         phoneNumber: null,
         pushName: null,
       },
