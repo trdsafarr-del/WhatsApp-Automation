@@ -43,10 +43,15 @@ let cachedToken: {
 } | null = null;
 
 export function normalizeShopifyDomain(domain: string): string {
-  return domain
-    .trim()
+  const trimmed = domain.trim();
+  const adminMatch = trimmed.match(/admin\.shopify\.com\/store\/([a-zA-Z0-9-]+)/i);
+  if (adminMatch) {
+    return `${adminMatch[1].toLowerCase()}.myshopify.com`;
+  }
+  return trimmed
     .replace(/^https?:\/\//i, '')
-    .replace(/\/.*$/, '');
+    .replace(/\/.*$/, '')
+    .toLowerCase();
 }
 
 export function verifyShopifyWebhookHmac(
@@ -157,6 +162,12 @@ async function resolveShopifyAccessToken(
     return { error: 'Enter your Shopify Store Domain (e.g. your-store.myshopify.com).' };
   }
 
+  if (!domain.endsWith('.myshopify.com')) {
+    return {
+      error: `Custom storefront domain "${domain}" cannot be used for Shopify Admin API. Enter your ".myshopify.com" domain instead (look at your Shopify Admin URL: admin.shopify.com/store/YOUR-HANDLE → YOUR-HANDLE.myshopify.com).`,
+    };
+  }
+
   if (settings.shopifyAccessToken.trim()) {
     return { token: settings.shopifyAccessToken.trim() };
   }
@@ -192,6 +203,11 @@ async function resolveShopifyAccessToken(
 
     if (!res.ok) {
       const body = await res.text();
+      if (body.includes('<!DOCTYPE') || body.includes('<html')) {
+        return {
+          error: `Shopify rejected the request (${res.status}). Check that "${domain}" is your exact .myshopify.com domain and the app is installed on that store.`,
+        };
+      }
       return {
         error: `Shopify OAuth token exchange failed (${res.status}): ${body.slice(0, 180)}`,
       };

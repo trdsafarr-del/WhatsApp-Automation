@@ -3,15 +3,14 @@ import {
   BookOpen,
   LayoutList,
   Menu,
-  Plus,
   QrCode,
+  RefreshCw,
   SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { OrdersView } from './components/OrdersView';
 import { SettingsView } from './components/SettingsView';
 import { SetupGuideView } from './components/SetupGuideView';
-import { SimulateOrderModal } from './components/SimulateOrderModal';
 import { WhatsAppQrView } from './components/WhatsAppQrView';
 import { DEFAULT_SETTINGS } from './lib/orderRules';
 import type {
@@ -67,8 +66,6 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
   const [whatsappBusy, setWhatsappBusy] = useState(false);
-  const [simulateModalOpen, setSimulateModalOpen] = useState(false);
-  const [isSimulating, setIsSimulating] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
@@ -106,35 +103,6 @@ export default function App() {
     }, intervalMs);
     return () => clearInterval(timer);
   }, [fetchDashboard, whatsapp.status, activeTab]);
-
-  const handleSimulateOrder = async (payload: {
-    customerName: string;
-    customerPhone: string;
-    lineItemsSummary: string;
-    totalPrice: string;
-  }) => {
-    setIsSimulating(true);
-    try {
-      const res = await fetch('/api/orders/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error('Failed to create test order');
-      const data = (await res.json()) as {
-        order: OrderRecord;
-        orders: OrderRecord[];
-        metrics: OrderMetrics;
-      };
-      setOrders(data.orders);
-      setMetrics(data.metrics);
-      setSelectedOrderId(data.order.id);
-      setSimulateModalOpen(false);
-      setActiveTab('orders');
-    } finally {
-      setIsSimulating(false);
-    }
-  };
 
   const handleVoteOrder = async (orderId: string, option: string) => {
     setBusyOrderId(orderId);
@@ -397,11 +365,15 @@ export default function App() {
 
           <button
             type="button"
-            onClick={() => setSimulateModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-800 whitespace-nowrap shrink-0 sm:text-sm"
+            disabled={isSyncing}
+            onClick={() => {
+              setActiveTab('orders');
+              void handleSyncShopify();
+            }}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-800 disabled:opacity-50 whitespace-nowrap shrink-0 sm:text-sm"
           >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Simulate Order
+            <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} aria-hidden="true" />
+            {isSyncing ? 'Syncing...' : 'Sync Shopify'}
           </button>
         </header>
 
@@ -429,8 +401,8 @@ export default function App() {
                 onSelectOrder={setSelectedOrderId}
                 onVoteOrder={handleVoteOrder}
                 onResendPoll={handleResendPoll}
-                onOpenSimulate={() => setSimulateModalOpen(true)}
                 onSyncShopify={handleSyncShopify}
+                onOpenSettings={() => setActiveTab('settings')}
                 busyOrderId={busyOrderId}
                 isSyncing={isSyncing}
                 syncMessage={syncMessage}
@@ -455,13 +427,6 @@ export default function App() {
           </div>
         </main>
       </div>
-
-      <SimulateOrderModal
-        isOpen={simulateModalOpen}
-        onClose={() => setSimulateModalOpen(false)}
-        onSubmit={handleSimulateOrder}
-        isSubmitting={isSimulating}
-      />
     </div>
   );
 }

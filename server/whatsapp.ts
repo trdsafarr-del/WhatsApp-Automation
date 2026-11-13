@@ -37,16 +37,6 @@ class WhatsAppManager {
   }
 
   private restorePersistedSession() {
-    const meta = store.getWhatsAppMeta();
-    if (meta.mode === 'sandbox' && meta.sandboxConnected) {
-      this.status = 'connected';
-      this.lastHeartbeatAt = new Date().toISOString();
-      if (!process.env.VERCEL) {
-        this.startHeartbeat();
-      }
-      return;
-    }
-
     if (!process.env.VERCEL && this.hasSavedAuth()) {
       // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
       void this.connect('baileys_qr');
@@ -88,14 +78,13 @@ class WhatsAppManager {
       connectedAt: meta.connectedAt,
       lastHeartbeatAt: this.lastHeartbeatAt,
       reconnectCount: this.reconnectCount,
-      sessionPersisted: meta.mode === 'sandbox' ? meta.sandboxConnected : this.hasSavedAuth(),
+      sessionPersisted: this.hasSavedAuth(),
       lastError: this.lastError,
     };
   }
 
   async connect(requestedMode?: WhatsAppEngineMode): Promise<WhatsAppState> {
-    const meta = store.getWhatsAppMeta();
-    const mode = requestedMode || meta.mode || 'baileys_qr';
+    const mode: WhatsAppEngineMode = requestedMode || 'baileys_qr';
     store.updateWhatsAppMeta({ mode });
     store.updateSettings({ whatsappMode: mode });
     this.lastError = null;
@@ -103,24 +92,6 @@ class WhatsAppManager {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
-    }
-
-    if (mode === 'sandbox') {
-      await this.closeSocketOnly();
-      const now = new Date().toISOString();
-      this.status = 'connected';
-      this.qrDataUrl = null;
-      this.qrRaw = null;
-      this.lastHeartbeatAt = now;
-      store.updateWhatsAppMeta({
-        mode: 'sandbox',
-        sandboxConnected: true,
-        connectedAt: meta.connectedAt || now,
-        phoneNumber: '+91 98765 00000',
-        pushName: `${store.getSettings().shopName || 'Store'} (Sandbox Device)`,
-      });
-      this.startHeartbeat();
-      return this.getState();
     }
 
     // Real Baileys WhatsApp Web QR Multi-Device Session
@@ -132,7 +103,6 @@ class WhatsAppManager {
     if (!this.hasSavedAuth()) {
       store.updateWhatsAppMeta({
         mode: 'baileys_qr',
-        sandboxConnected: false,
         connectedAt: null,
         phoneNumber: null,
         pushName: null,
@@ -217,7 +187,6 @@ class WhatsAppManager {
           const userId = sock.user?.id || '';
           store.updateWhatsAppMeta({
             mode: 'baileys_qr',
-            sandboxConnected: false,
             connectedAt: now,
             phoneNumber: userId ? formatJidToDisplayPhone(userId) : 'Linked Device',
             pushName: sock.user?.name || 'WhatsApp Business',
@@ -373,7 +342,6 @@ class WhatsAppManager {
     this.lastHeartbeatAt = null;
     this.lastError = null;
     store.updateWhatsAppMeta({
-      sandboxConnected: false,
       connectedAt: null,
       phoneNumber: null,
       pushName: null,
@@ -401,10 +369,8 @@ class WhatsAppManager {
       return store.getOrderById(order.id) || order;
     }
 
-    const meta = store.getWhatsAppMeta();
-
-    // Mode 1: Live Baileys WhatsApp Web Socket
-    if (this.sock && this.status === 'connected' && meta.mode === 'baileys_qr') {
+    // Live Baileys WhatsApp Web Socket
+    if (this.sock && this.status === 'connected') {
       try {
         const sent = await this.sock.sendMessage(jid, {
           poll: {
@@ -437,25 +403,12 @@ class WhatsAppManager {
       }
     }
 
-    // Mode 3: Sandbox Device (or queued if QR not scanned yet)
-    if (meta.mode === 'sandbox' && this.status === 'connected') {
-      order.whatsappMessageId = `SANDBOX-POLL-${Date.now()}`;
-      order.pollStatus = 'poll_sent';
-      order.pollSentAt = new Date().toISOString();
-      store.upsertOrder(order);
-      store.appendOrderEvent(order.id, {
-        actor: 'whatsapp',
-        message: `WhatsApp Poll ("${options[0]}" / "${options[1]}") dispatched via Sandbox Device to ${order.customerPhone}`,
-      });
-      return store.getOrderById(order.id) || order;
-    }
-
-    // If WhatsApp isn't connected yet, keep order queued so user can see why & resend after linking
+    // If WhatsApp isn't connected yet, keep order queued so user can resend after linking QR
     order.pollStatus = 'queued';
     store.upsertOrder(order);
     store.appendOrderEvent(order.id, {
       actor: 'system',
-      message: 'WhatsApp not linked yet — order queued. Connect WhatsApp QR or Sandbox Device to dispatch.',
+      message: 'WhatsApp QR not linked yet — order queued. Scan WhatsApp QR to dispatch.',
     });
     return store.getOrderById(order.id) || order;
   }
@@ -463,7 +416,7 @@ class WhatsAppManager {
   async applyVoteToOrder(
     orderId: string,
     selectedOption: string,
-    channel: 'whatsapp_poll' | 'whatsapp_text' | 'simulator'
+    channel: 'whatsapp_poll' | 'whatsapp_text' | 'manual'
   ): Promise<OrderRecord | null> {
     const order = store.getOrderById(orderId);
     if (!order) return null;

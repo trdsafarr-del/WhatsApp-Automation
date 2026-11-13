@@ -131,7 +131,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
 
           <div>
             <label htmlFor="shopify-domain" className="block text-sm font-medium text-slate-700">
-              Shopify Store Domain
+              Shopify Store Domain (.myshopify.com)
             </label>
             <input
               id="shopify-domain"
@@ -141,6 +141,13 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
               placeholder="broomies-bakery.myshopify.com"
               className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
             />
+            {form.shopifyStoreDomain.trim() &&
+              !form.shopifyStoreDomain.toLowerCase().includes('.myshopify.com') &&
+              !form.shopifyStoreDomain.toLowerCase().includes('admin.shopify.com/store/') && (
+                <p className="mt-1 text-xs text-amber-700">
+                  Use your <span className="font-mono">.myshopify.com</span> domain (not your custom website URL like .in/.com).
+                </p>
+              )}
           </div>
 
           <div>

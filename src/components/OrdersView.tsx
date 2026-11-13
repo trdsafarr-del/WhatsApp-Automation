@@ -19,8 +19,8 @@ interface OrdersViewProps {
   onSelectOrder: (id: string) => void;
   onVoteOrder: (orderId: string, option: string) => Promise<void>;
   onResendPoll: (orderId: string) => Promise<void>;
-  onOpenSimulate: () => void;
   onSyncShopify: () => Promise<void>;
+  onOpenSettings: () => void;
   busyOrderId: string | null;
   isSyncing: boolean;
   syncMessage: string | null;
@@ -83,8 +83,8 @@ export function OrdersView({
   onSelectOrder,
   onVoteOrder,
   onResendPoll,
-  onOpenSimulate,
   onSyncShopify,
+  onOpenSettings,
   busyOrderId,
   isSyncing,
   syncMessage,
@@ -236,17 +236,33 @@ export function OrdersView({
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white xl:col-span-7">
           {filteredOrders.length === 0 ? (
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-              <p className="text-sm font-medium text-slate-900">No matching orders found</p>
-              <p className="mt-1 max-w-sm text-sm text-slate-500">
-                Simulate an incoming Shopify order or clear your search filter to see the WhatsApp poll queue.
+              <p className="text-sm font-medium text-slate-900">
+                {orders.length === 0 ? 'No Shopify orders yet' : 'No matching orders found'}
               </p>
-              <button
-                type="button"
-                onClick={onOpenSimulate}
-                className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-800 whitespace-nowrap"
-              >
-                Simulate Test Order
-              </button>
+              <p className="mt-1 max-w-sm text-sm text-slate-500">
+                {orders.length === 0
+                  ? 'Save your Shopify .myshopify.com credentials in Automation & Shopify, then click Sync Shopify Orders or receive a live order webhook.'
+                  : 'Try clearing your search or status filter to view all synced Shopify orders.'}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  disabled={isSyncing}
+                  onClick={() => void onSyncShopify()}
+                  className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-800 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {isSyncing ? 'Syncing...' : 'Sync Shopify Orders'}
+                </button>
+                {orders.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={onOpenSettings}
+                    className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap"
+                  >
+                    Configure Shopify
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -420,7 +436,7 @@ export function OrdersView({
                   </div>
 
                   <p className="mt-3 text-xs text-slate-500">
-                    Tap either option above to simulate the customer&apos;s WhatsApp Poll vote and trigger the automatic Shopify tag update.
+                    Manual override: click either option above to update the Shopify order tag immediately.
                   </p>
                 </div>
               </div>

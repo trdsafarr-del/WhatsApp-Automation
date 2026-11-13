@@ -12,7 +12,7 @@ export type WhatsAppConnectionStatus =
   | 'connected'
   | 'error';
 
-export type WhatsAppEngineMode = 'baileys_qr' | 'sandbox';
+export type WhatsAppEngineMode = 'baileys_qr';
 
 export interface OrderEvent {
   id: string;
@@ -38,7 +38,7 @@ export interface OrderRecord {
   pollQuestion: string;
   pollSentAt: string | null;
   respondedAt: string | null;
-  responseChannel: 'whatsapp_poll' | 'whatsapp_text' | 'simulator' | null;
+  responseChannel: 'whatsapp_poll' | 'whatsapp_text' | 'manual' | null;
   shopifySynced: boolean;
   createdAt: string;
   events: OrderEvent[];

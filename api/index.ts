@@ -135,59 +135,6 @@ app.post('/api/webhooks/shopify/orders-create', async (req: RawBodyRequest, res:
   res.status(200).json({ ok: true, order: store.getOrderById(order.id) });
 });
 
-app.post('/api/orders/simulate', async (req: Request, res: Response) => {
-  const orders = store.getOrders();
-  const highestNum = orders.reduce((max, o) => {
-    const n = Number(o.orderNumber.replace(/\D/g, ''));
-    return Number.isFinite(n) && n > max ? n : max;
-  }, 1052);
-  const nextNum = highestNum + 1;
-  const customerName =
-    (typeof req.body?.customerName === 'string' && req.body.customerName.trim()) ||
-    'Vikramaditya Rao';
-  const customerPhone =
-    (typeof req.body?.customerPhone === 'string' && req.body.customerPhone.trim()) ||
-    '+91 98450 91234';
-  const rawItemsInput =
-    (typeof req.body?.lineItemsSummary === 'string' && req.body.lineItemsSummary.trim()) ||
-    'Selvedge Denim Jacket (L)';
-  const qtyMatch = rawItemsInput.match(/^(\d+)\s*x\s+(.+)$/i);
-  const parsedQty = qtyMatch ? Math.max(1, Number(qtyMatch[1])) : 1;
-  const parsedTitle = qtyMatch ? qtyMatch[2].trim() : rawItemsInput;
-  const totalPrice =
-    (typeof req.body?.totalPrice === 'string' && req.body.totalPrice.trim()) || '2799.00';
-
-  const raw: ShopifyRawOrder = {
-    id: Date.now(),
-    name: `#${nextNum}`,
-    order_number: nextNum,
-    created_at: new Date().toISOString(),
-    total_price: totalPrice,
-    currency: 'INR',
-    financial_status: 'pending',
-    tags: 'COD',
-    customer: {
-      first_name: customerName.split(' ')[0],
-      last_name: customerName.split(' ').slice(1).join(' '),
-      phone: customerPhone,
-      email: `${customerName.toLowerCase().replace(/\s+/g, '.')}@example.com`,
-    },
-    shipping_address: { name: customerName, phone: customerPhone },
-    line_items: [{ title: parsedTitle, quantity: parsedQty }],
-  };
-
-  const parsed = parseShopifyRawOrder(raw);
-  store.upsertOrder(parsed);
-  const updated = await whatsappManager.dispatchOrderPoll(parsed);
-  const allOrders = store.getOrders();
-  res.json({
-    ok: true,
-    order: updated,
-    orders: allOrders,
-    metrics: computeOrderMetrics(allOrders),
-  });
-});
-
 app.post('/api/orders/:id/resend-poll', async (req: Request, res: Response) => {
   const order = store.getOrderById(String(req.params.id));
   if (!order) {
@@ -209,7 +156,7 @@ app.post('/api/orders/:id/vote', async (req: Request, res: Response) => {
   const updated = await whatsappManager.applyVoteToOrder(
     String(req.params.id),
     option,
-    'simulator'
+    'manual'
   );
   if (!updated) {
     res.status(404).json({ error: 'Order not found' });

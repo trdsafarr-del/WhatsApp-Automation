@@ -14,200 +14,13 @@ export interface DatabaseState {
   orders: OrderRecord[];
   whatsappMeta: {
     mode: WhatsAppState['mode'];
-    sandboxConnected: boolean;
     connectedAt: string | null;
     phoneNumber: string | null;
     pushName: string | null;
   };
 }
 
-function createSeedOrders(): OrderRecord[] {
-  const now = Date.now();
-  const iso = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
-
-  return [
-    {
-      id: 'ord-1052',
-      shopifyOrderId: '58912041052',
-      orderNumber: '#1052',
-      customerName: 'Riya Sharma',
-      customerPhone: '+91 98201 44120',
-      customerEmail: 'riya.sharma@example.com',
-      totalPrice: '1890.00',
-      currency: 'INR',
-      lineItemsSummary: '1x Handloom Cotton Kurta (M)',
-      financialStatus: 'pending',
-      shopifyTags: 'COD',
-      pollStatus: 'poll_sent',
-      whatsappMessageId: 'WA-POLL-1052',
-      pollQuestion:
-        'Hi Riya Sharma, thank you for your order #1052 (INR 1890.00) at UrbanCraft India for 1x Handloom Cotton Kurta (M). Please tap an option below to confirm or cancel your order:',
-      pollSentAt: iso(8),
-      respondedAt: null,
-      responseChannel: null,
-      shopifySynced: true,
-      createdAt: iso(9),
-      events: [
-        {
-          id: 'evt-1052-1',
-          timestamp: iso(9),
-          actor: 'shopify',
-          message: 'Shopify webhook orders/create received (#1052 · COD)',
-        },
-        {
-          id: 'evt-1052-2',
-          timestamp: iso(8),
-          actor: 'whatsapp',
-          message: 'WhatsApp Poll dispatched to +91 98201 44120 (awaiting customer tap)',
-        },
-      ],
-    },
-    {
-      id: 'ord-1051',
-      shopifyOrderId: '58912041051',
-      orderNumber: '#1051',
-      customerName: 'Kabir Verma',
-      customerPhone: '+91 98112 77091',
-      customerEmail: 'kabir.verma@example.com',
-      totalPrice: '3450.00',
-      currency: 'INR',
-      lineItemsSummary: '2x Merino Crewneck Tee, 1x Canvas Tote',
-      financialStatus: 'pending',
-      shopifyTags: 'COD, confirm',
-      pollStatus: 'confirmed',
-      whatsappMessageId: 'WA-POLL-1051',
-      pollQuestion:
-        'Hi Kabir Verma, thank you for your order #1051 (INR 3450.00) at UrbanCraft India for 2x Merino Crewneck Tee, 1x Canvas Tote. Please tap an option below to confirm or cancel your order:',
-      pollSentAt: iso(42),
-      respondedAt: iso(39),
-      responseChannel: 'whatsapp_poll',
-      shopifySynced: true,
-      createdAt: iso(43),
-      events: [
-        {
-          id: 'evt-1051-1',
-          timestamp: iso(43),
-          actor: 'shopify',
-          message: 'Shopify webhook orders/create received (#1051 · COD)',
-        },
-        {
-          id: 'evt-1051-2',
-          timestamp: iso(42),
-          actor: 'whatsapp',
-          message: 'WhatsApp Poll dispatched to +91 98112 77091',
-        },
-        {
-          id: 'evt-1051-3',
-          timestamp: iso(39),
-          actor: 'customer',
-          message: 'Customer voted "Confirm Order" in WhatsApp Poll',
-        },
-        {
-          id: 'evt-1051-4',
-          timestamp: iso(39),
-          actor: 'shopify',
-          message: 'Shopify order #1051 tagged with "confirm"',
-        },
-      ],
-    },
-    {
-      id: 'ord-1050',
-      shopifyOrderId: '58912041050',
-      orderNumber: '#1050',
-      customerName: 'Ananya Nair',
-      customerPhone: '+91 99450 31822',
-      customerEmail: 'ananya.nair@example.com',
-      totalPrice: '1299.00',
-      currency: 'INR',
-      lineItemsSummary: '1x Brass Desk Lamp',
-      financialStatus: 'pending',
-      shopifyTags: 'COD, cancelled by user',
-      pollStatus: 'cancelled_by_user',
-      whatsappMessageId: 'WA-POLL-1050',
-      pollQuestion:
-        'Hi Ananya Nair, thank you for your order #1050 (INR 1299.00) at UrbanCraft India for 1x Brass Desk Lamp. Please tap an option below to confirm or cancel your order:',
-      pollSentAt: iso(115),
-      respondedAt: iso(111),
-      responseChannel: 'whatsapp_poll',
-      shopifySynced: true,
-      createdAt: iso(116),
-      events: [
-        {
-          id: 'evt-1050-1',
-          timestamp: iso(116),
-          actor: 'shopify',
-          message: 'Shopify webhook orders/create received (#1050 · COD)',
-        },
-        {
-          id: 'evt-1050-2',
-          timestamp: iso(115),
-          actor: 'whatsapp',
-          message: 'WhatsApp Poll dispatched to +91 99450 31822',
-        },
-        {
-          id: 'evt-1050-3',
-          timestamp: iso(111),
-          actor: 'customer',
-          message: 'Customer voted "Cancel Order" in WhatsApp Poll',
-        },
-        {
-          id: 'evt-1050-4',
-          timestamp: iso(111),
-          actor: 'shopify',
-          message: 'Shopify order #1050 tagged with "cancelled by user"',
-        },
-      ],
-    },
-    {
-      id: 'ord-1049',
-      shopifyOrderId: '58912041049',
-      orderNumber: '#1049',
-      customerName: 'Devansh Kapoor',
-      customerPhone: '+91 97118 60442',
-      customerEmail: 'devansh.k@example.com',
-      totalPrice: '4250.00',
-      currency: 'INR',
-      lineItemsSummary: '1x Leather Messenger Bag',
-      financialStatus: 'paid',
-      shopifyTags: 'Prepaid, confirm',
-      pollStatus: 'confirmed',
-      whatsappMessageId: 'WA-POLL-1049',
-      pollQuestion:
-        'Hi Devansh Kapoor, thank you for your order #1049 (INR 4250.00) at UrbanCraft India for 1x Leather Messenger Bag. Please tap an option below to confirm or cancel your order:',
-      pollSentAt: iso(240),
-      respondedAt: iso(235),
-      responseChannel: 'whatsapp_poll',
-      shopifySynced: true,
-      createdAt: iso(241),
-      events: [
-        {
-          id: 'evt-1049-1',
-          timestamp: iso(241),
-          actor: 'shopify',
-          message: 'Shopify webhook orders/create received (#1049 · Prepaid)',
-        },
-        {
-          id: 'evt-1049-2',
-          timestamp: iso(240),
-          actor: 'whatsapp',
-          message: 'WhatsApp Poll dispatched to +91 97118 60442',
-        },
-        {
-          id: 'evt-1049-3',
-          timestamp: iso(235),
-          actor: 'customer',
-          message: 'Customer voted "Confirm Order" in WhatsApp Poll',
-        },
-        {
-          id: 'evt-1049-4',
-          timestamp: iso(235),
-          actor: 'shopify',
-          message: 'Shopify order #1049 tagged with "confirm"',
-        },
-      ],
-    },
-  ];
-}
+const LEGACY_SEED_ORDER_IDS = new Set(['ord-1049', 'ord-1050', 'ord-1051', 'ord-1052']);
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -247,31 +60,37 @@ class PersistentStore {
       try {
         const raw = fs.readFileSync(DB_PATH, 'utf8');
         const parsed = JSON.parse(raw) as Partial<DatabaseState>;
-        return {
+        const cleanedOrders = Array.isArray(parsed.orders)
+          ? parsed.orders.filter((o) => !LEGACY_SEED_ORDER_IDS.has(o.id))
+          : [];
+        const loaded: DatabaseState = {
           settings: hydrateEnvDefaults({
             ...DEFAULT_SETTINGS,
             ...(parsed.settings || {}),
+            whatsappMode: 'baileys_qr',
           }),
-          orders: Array.isArray(parsed.orders) ? parsed.orders : createSeedOrders(),
+          orders: cleanedOrders,
           whatsappMeta: {
-            mode: parsed.whatsappMeta?.mode || 'baileys_qr',
-            sandboxConnected: Boolean(parsed.whatsappMeta?.sandboxConnected),
+            mode: 'baileys_qr',
             connectedAt: parsed.whatsappMeta?.connectedAt || null,
             phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
             pushName: parsed.whatsappMeta?.pushName || null,
           },
         };
+        if (Array.isArray(parsed.orders) && cleanedOrders.length !== parsed.orders.length) {
+          this.persistState(loaded);
+        }
+        return loaded;
       } catch {
-        // Fallback cleanly to fresh seed state if file is corrupted
+        // Fallback cleanly to empty state if file is corrupted
       }
     }
 
     const initial: DatabaseState = {
       settings: hydrateEnvDefaults(DEFAULT_SETTINGS),
-      orders: createSeedOrders(),
+      orders: [],
       whatsappMeta: {
         mode: 'baileys_qr',
-        sandboxConnected: false,
         connectedAt: null,
         phoneNumber: null,
         pushName: null,
