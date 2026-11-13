@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   hasConfiguredShopify,
   isOrderOnOrAfterStartDate,
+  readCleanEnvVar,
   selectPriorityAuthFiles,
 } from '../src/lib/orderRules.js';
 import type { AppSettings, OrderEvent, OrderRecord, WhatsAppState } from '../src/lib/types.js';
@@ -64,18 +65,14 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
 }
 
 function getUpstashConfig(): { url: string; token: string } | null {
-  const url = (
-    process.env.UPSTASH_REDIS_REST_URL ||
-    process.env.KV_REST_API_URL ||
-    ''
-  )
-    .trim()
-    .replace(/\/+$/, '');
-  const token = (
-    process.env.UPSTASH_REDIS_REST_TOKEN ||
-    process.env.KV_REST_API_TOKEN ||
-    ''
-  ).trim();
+  const url = readCleanEnvVar(process.env, [
+    'UPSTASH_REDIS_REST_URL',
+    'KV_REST_API_URL',
+  ]).replace(/\/+$/, '');
+  const token = readCleanEnvVar(process.env, [
+    'UPSTASH_REDIS_REST_TOKEN',
+    'KV_REST_API_TOKEN',
+  ]);
   if (!url || !token) return null;
   return { url, token };
 }

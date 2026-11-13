@@ -18,6 +18,7 @@ import {
   isWhatsAppConnectionReplaced,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
+  readCleanEnvVar,
   resolvePollVoteAction,
   selectPriorityAuthFiles,
   shouldAutoDispatchPoll,
@@ -454,4 +455,20 @@ test('isHostHeartbeatRecent and getWhatsAppDisplayState handle cloud-synced Verc
   assert.equal(isWhatsAppConnectionReplaced(440), true);
   assert.equal(isWhatsAppConnectionReplaced(515), false);
   assert.equal(isWhatsAppConnectionReplaced(undefined), false);
+
+  assert.equal(
+    readCleanEnvVar(
+      { ' UPSTASH_REDIS_REST_URL ': '"https://demo.upstash.io/"' },
+      ['UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL']
+    ),
+    'https://demo.upstash.io/'
+  );
+  assert.equal(
+    readCleanEnvVar(
+      { KV_REST_API_TOKEN: " 'tok_123' " },
+      ['UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN']
+    ),
+    'tok_123'
+  );
+  assert.equal(readCleanEnvVar({}, ['UPSTASH_REDIS_REST_URL']), '');
 });

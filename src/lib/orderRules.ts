@@ -764,3 +764,30 @@ export function getWhatsAppDisplayState(
 export function isWhatsAppConnectionReplaced(statusCode?: number | null): boolean {
   return statusCode === 440;
 }
+
+/**
+ * Safely reads an environment variable while handling accidental surrounding quotes
+ * or leading/trailing whitespace in key names or values pasted into hosting dashboards.
+ */
+export function readCleanEnvVar(
+  env: Record<string, string | undefined>,
+  candidateKeys: string[]
+): string {
+  for (const targetKey of candidateKeys) {
+    let raw = env[targetKey];
+    if (raw === undefined) {
+      const matchedKey = Object.keys(env).find((k) => k.trim() === targetKey);
+      if (matchedKey) raw = env[matchedKey];
+    }
+    if (typeof raw !== 'string') continue;
+    let cleaned = raw.trim();
+    if (
+      (cleaned.startsWith('"') && cleaned.endsWith('"') && cleaned.length >= 2) ||
+      (cleaned.startsWith("'") && cleaned.endsWith("'") && cleaned.length >= 2)
+    ) {
+      cleaned = cleaned.slice(1, -1).trim();
+    }
+    if (cleaned) return cleaned;
+  }
+  return '';
+}
