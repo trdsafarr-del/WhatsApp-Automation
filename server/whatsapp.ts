@@ -1,0 +1,639 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import makeWASocket, {
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  getAggregateVotesInPollMessage,
+  makeCacheableSignalKeyStore,
+  useMultiFileAuthState,
+  type WAMessage,
+  type WASocket,
+} from '@whiskeysockets/baileys';
+import pino from 'pino';
+import QRCode from 'qrcode';
+import {
+  formatJidToDisplayPhone,
+  formatPollPayload,
+  mergeShopifyTags,
+  normalizePhoneToWhatsAppJid,
+  resolvePollVoteAction,
+} from '../src/lib/orderRules';
+import type { OrderRecord, WhatsAppEngineMode, WhatsAppState } from '../src/lib/types';
+import { updateShopifyOrderTags } from './shopify';
+import { store } from './store';
+
+const AUTH_DIR = process.env.VERCEL
+  ? '/tmp/orderpulse-data/wa-auth'
+  : path.resolve(process.cwd(), 'data', 'wa-auth');
+const logger = pino({ level: 'silent' });
+
+class WhatsAppManager {
+  private sock: WASocket | null = null;
+  private status: WhatsAppState['status'] = 'disconnected';
+  private qrDataUrl: string | null = null;
+  private qrRaw: string | null = null;
+  private lastHeartbeatAt: string | null = null;
+  private reconnectCount = 0;
+  private lastError: string | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private isInitializing = false;
+
+  constructor() {
+    this.restorePersistedSession();
+  }
+
+  private hasSavedAuth(): boolean {
+    return fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
+  }
+
+  private restorePersistedSession() {
+    const meta = store.getWhatsAppMeta();
+    if (meta.mode === 'sandbox' && meta.sandboxConnected) {
+      this.status = 'connected';
+      this.lastHeartbeatAt = new Date().toISOString();
+      this.startHeartbeat();
+      return;
+    }
+
+    if (meta.mode === 'cloud_api') {
+      const settings = store.getSettings();
+      if (settings.cloudApiToken && settings.cloudApiPhoneNumberId) {
+        this.status = 'connected';
+        this.lastHeartbeatAt = new Date().toISOString();
+      }
+      return;
+    }
+
+    if (this.hasSavedAuth()) {
+      // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
+      void this.connect('baileys_qr');
+    }
+  }
+
+  private startHeartbeat() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = setInterval(async () => {
+      if (this.status !== 'connected') return;
+      this.lastHeartbeatAt = new Date().toISOString();
+      if (this.sock) {
+        try {
+          await this.sock.sendPresenceUpdate('available');
+        } catch {
+          // Connection listener handles reconnect if socket dropped
+        }
+      }
+    }, 45_000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  getState(): WhatsAppState {
+    const meta = store.getWhatsAppMeta();
+    return {
+      status: this.status,
+      mode: meta.mode,
+      phoneNumber: meta.phoneNumber,
+      pushName: meta.pushName,
+      qrDataUrl: this.qrDataUrl,
+      qrRaw: this.qrRaw,
+      connectedAt: meta.connectedAt,
+      lastHeartbeatAt: this.lastHeartbeatAt,
+      reconnectCount: this.reconnectCount,
+      sessionPersisted: meta.mode === 'sandbox' ? meta.sandboxConnected : this.hasSavedAuth(),
+      lastError: this.lastError,
+    };
+  }
+
+  async connect(requestedMode?: WhatsAppEngineMode): Promise<WhatsAppState> {
+    const meta = store.getWhatsAppMeta();
+    const mode = requestedMode || meta.mode || 'baileys_qr';
+    store.updateWhatsAppMeta({ mode });
+    store.updateSettings({ whatsappMode: mode });
+    this.lastError = null;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (mode === 'sandbox') {
+      await this.closeSocketOnly();
+      const now = new Date().toISOString();
+      this.status = 'connected';
+      this.qrDataUrl = null;
+      this.qrRaw = null;
+      this.lastHeartbeatAt = now;
+      store.updateWhatsAppMeta({
+        mode: 'sandbox',
+        sandboxConnected: true,
+        connectedAt: meta.connectedAt || now,
+        phoneNumber: '+91 98765 00000',
+        pushName: `${store.getSettings().shopName || 'Store'} (Sandbox Device)`,
+      });
+      this.startHeartbeat();
+      return this.getState();
+    }
+
+    if (mode === 'cloud_api') {
+      await this.closeSocketOnly();
+      const settings = store.getSettings();
+      if (!settings.cloudApiToken || !settings.cloudApiPhoneNumberId) {
+        this.status = 'error';
+        this.lastError =
+          'Enter your Meta Cloud API Token and Phone Number ID in Automation & Shopify settings.';
+        return this.getState();
+      }
+      const now = new Date().toISOString();
+      this.status = 'connected';
+      this.qrDataUrl = null;
+      this.qrRaw = null;
+      this.lastHeartbeatAt = now;
+      store.updateWhatsAppMeta({
+        mode: 'cloud_api',
+        sandboxConnected: false,
+        connectedAt: now,
+        phoneNumber: settings.cloudApiPhoneNumberId,
+        pushName: 'Meta Official Cloud API',
+      });
+      return this.getState();
+    }
+
+    // Real Baileys WhatsApp Web QR Multi-Device Session
+    if (this.isInitializing) return this.getState();
+    this.isInitializing = true;
+    this.status = 'connecting';
+    this.qrDataUrl = null;
+    this.qrRaw = null;
+    if (!this.hasSavedAuth()) {
+      store.updateWhatsAppMeta({
+        mode: 'baileys_qr',
+        sandboxConnected: false,
+        connectedAt: null,
+        phoneNumber: null,
+        pushName: null,
+      });
+    }
+
+    try {
+      await this.closeSocketOnly();
+      if (!fs.existsSync(AUTH_DIR)) {
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      }
+
+      const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+      let version: [number, number, number] | undefined;
+      try {
+        const fetched = await fetchLatestBaileysVersion();
+        version = fetched.version;
+      } catch {
+        // Fallback to Baileys default version if version check endpoint is unreachable
+      }
+
+      const sock = makeWASocket({
+        version,
+        logger,
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys, logger),
+        },
+        printQRInTerminal: false,
+        markOnlineOnConnect: true,
+        syncFullHistory: false,
+        browser: ['OrderPulse Shopify', 'Chrome', '128.0.0'],
+        keepAliveIntervalMs: 30_000,
+        getMessage: async (key) => {
+          if (!key.id) return undefined;
+          const cached = store.getPollMessage(key.id) as WAMessage | undefined;
+          return cached?.message || undefined;
+        },
+      });
+
+      this.sock = sock;
+
+      sock.ev.on('creds.update', saveCreds);
+
+      sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+          this.qrRaw = qr;
+          this.qrDataUrl = await QRCode.toDataURL(qr, {
+            width: 320,
+            margin: 2,
+            color: { dark: '#0f172a', light: '#ffffff' },
+          });
+          this.status = 'qr_ready';
+          this.lastError = null;
+        }
+
+        if (connection === 'open') {
+          const now = new Date().toISOString();
+          this.status = 'connected';
+          this.qrDataUrl = null;
+          this.qrRaw = null;
+          this.lastHeartbeatAt = now;
+          this.lastError = null;
+          const userId = sock.user?.id || '';
+          store.updateWhatsAppMeta({
+            mode: 'baileys_qr',
+            sandboxConnected: false,
+            connectedAt: now,
+            phoneNumber: userId ? formatJidToDisplayPhone(userId) : 'Linked Device',
+            pushName: sock.user?.name || 'WhatsApp Business',
+          });
+          this.startHeartbeat();
+        }
+
+        if (connection === 'close') {
+          this.stopHeartbeat();
+          const statusCode = (
+            lastDisconnect?.error as { output?: { statusCode?: number } } | undefined
+          )?.output?.statusCode;
+          const errMessage =
+            lastDisconnect?.error instanceof Error
+              ? lastDisconnect.error.message
+              : 'WhatsApp socket closed';
+
+          const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+
+          if (isLoggedOut) {
+            this.clearAuthFiles();
+            this.status = 'disconnected';
+            this.qrDataUrl = null;
+            this.qrRaw = null;
+            this.lastError = 'Device logged out from WhatsApp phone. Scan QR again to relink.';
+            store.updateWhatsAppMeta({
+              connectedAt: null,
+              phoneNumber: null,
+              pushName: null,
+            });
+          } else if (store.getWhatsAppMeta().mode === 'baileys_qr') {
+            // Auto-reconnect 24/7 for transient drops, stream errors (515), or timeouts
+            this.reconnectCount += 1;
+            this.status = 'connecting';
+            this.lastError = errMessage;
+            const delayMs = Math.min(30_000, 3_000 * Math.min(this.reconnectCount, 6));
+            if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = setTimeout(() => {
+              if (store.getWhatsAppMeta().mode === 'baileys_qr') {
+                void this.connect('baileys_qr');
+              }
+            }, delayMs);
+          }
+        }
+      });
+
+      // Listen for native WhatsApp Poll vote updates
+      sock.ev.on('messages.update', async (updates) => {
+        for (const { key, update } of updates) {
+          if (!update.pollUpdates || !key.id) continue;
+          const pollCreationMsg = store.getPollMessage(key.id) as WAMessage | undefined;
+          if (!pollCreationMsg) continue;
+
+          try {
+            const votes = getAggregateVotesInPollMessage(
+              {
+                message: pollCreationMsg.message,
+                pollUpdates: update.pollUpdates,
+              },
+              sock.user?.id
+            );
+
+            // Pick the option that currently has a voter
+            const selected = votes.find((v) => v.voters && v.voters.length > 0);
+            if (!selected) continue;
+
+            const order = store.getOrderByWhatsAppMessageId(key.id);
+            if (order) {
+              await this.applyVoteToOrder(order.id, selected.name, 'whatsapp_poll');
+            }
+          } catch {
+            // Ignore undecryptable duplicate vote events
+          }
+        }
+      });
+
+      // Listen for fallback text replies ("1", "2", "confirm", "cancel")
+      sock.ev.on('messages.upsert', async ({ messages }) => {
+        for (const msg of messages) {
+          if (msg.key.fromMe || !msg.message || !msg.key.remoteJid) continue;
+          const text =
+            msg.message.conversation ||
+            msg.message.extendedTextMessage?.text ||
+            '';
+          if (!text.trim()) continue;
+
+          const settings = store.getSettings();
+          const resolution = resolvePollVoteAction(text, settings);
+          if (!resolution) continue;
+
+          const senderDigits = msg.key.remoteJid.split('@')[0].replace(/\D/g, '');
+          if (!senderDigits) continue;
+          const order = store.findLatestPendingOrderByPhone(senderDigits);
+          if (order) {
+            await this.applyVoteToOrder(order.id, text, 'whatsapp_text');
+          }
+        }
+      });
+    } catch (err) {
+      this.status = 'error';
+      this.lastError =
+        err instanceof Error
+          ? err.message
+          : 'Unable to start WhatsApp Web QR socket in this network environment.';
+    } finally {
+      this.isInitializing = false;
+    }
+
+    return this.getState();
+  }
+
+  private async closeSocketOnly() {
+    this.stopHeartbeat();
+    if (this.sock) {
+      try {
+        this.sock.ev.removeAllListeners('connection.update');
+        this.sock.ev.removeAllListeners('creds.update');
+        this.sock.ev.removeAllListeners('messages.update');
+        this.sock.ev.removeAllListeners('messages.upsert');
+        this.sock.end(undefined);
+      } catch {
+        // Ignore close errors
+      }
+      this.sock = null;
+    }
+  }
+
+  private clearAuthFiles() {
+    if (fs.existsSync(AUTH_DIR)) {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    }
+  }
+
+  async disconnect(clearAuth = true): Promise<WhatsAppState> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (clearAuth && this.sock) {
+      try {
+        await this.sock.logout();
+      } catch {
+        // Proceed with local cleanup
+      }
+    }
+    await this.closeSocketOnly();
+    if (clearAuth) {
+      this.clearAuthFiles();
+    }
+    this.status = 'disconnected';
+    this.qrDataUrl = null;
+    this.qrRaw = null;
+    this.lastHeartbeatAt = null;
+    this.lastError = null;
+    store.updateWhatsAppMeta({
+      sandboxConnected: false,
+      connectedAt: null,
+      phoneNumber: null,
+      pushName: null,
+    });
+    return this.getState();
+  }
+
+  async dispatchOrderPoll(order: OrderRecord): Promise<OrderRecord> {
+    const settings = store.getSettings();
+    const { question, options } = formatPollPayload(order, settings);
+    const jid = normalizePhoneToWhatsAppJid(
+      order.customerPhone,
+      settings.defaultCountryCode
+    );
+
+    order.pollQuestion = question;
+
+    if (!jid) {
+      order.pollStatus = 'failed';
+      store.upsertOrder(order);
+      store.appendOrderEvent(order.id, {
+        actor: 'system',
+        message: `Cannot send WhatsApp Poll: invalid phone number "${order.customerPhone || 'empty'}"`,
+      });
+      return store.getOrderById(order.id) || order;
+    }
+
+    const meta = store.getWhatsAppMeta();
+
+    // If external worker URL is configured (e.g., Vercel frontend calling Railway/Render Baileys worker)
+    if (settings.whatsappWorkerUrl.trim()) {
+      try {
+        const workerBase = settings.whatsappWorkerUrl.trim().replace(/\/$/, '');
+        const res = await fetch(`${workerBase}/send-poll`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.WHATSAPP_WORKER_SECRET
+              ? { Authorization: `Bearer ${process.env.WHATSAPP_WORKER_SECRET}` }
+              : {}),
+          },
+          body: JSON.stringify({
+            jid,
+            question,
+            options,
+            orderId: order.id,
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { messageId?: string };
+          order.whatsappMessageId = data.messageId || `WORKER-${Date.now()}`;
+          order.pollStatus = 'poll_sent';
+          order.pollSentAt = new Date().toISOString();
+          store.upsertOrder(order);
+          store.appendOrderEvent(order.id, {
+            actor: 'whatsapp',
+            message: `WhatsApp Poll dispatched via 24/7 Worker to ${order.customerPhone}`,
+          });
+          return store.getOrderById(order.id) || order;
+        }
+      } catch (err) {
+        store.appendOrderEvent(order.id, {
+          actor: 'system',
+          message: `Worker dispatch failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+        });
+      }
+    }
+
+    // Mode 1: Meta Official WhatsApp Cloud API (interactive reply buttons)
+    if (meta.mode === 'cloud_api' && settings.cloudApiToken && settings.cloudApiPhoneNumberId) {
+      try {
+        const toNumber = jid.split('@')[0];
+        const res = await fetch(
+          `https://graph.facebook.com/v21.0/${settings.cloudApiPhoneNumberId}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${settings.cloudApiToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messaging_product: 'whatsapp',
+              to: toNumber,
+              type: 'interactive',
+              interactive: {
+                type: 'button',
+                body: { text: question },
+                action: {
+                  buttons: [
+                    { type: 'reply', reply: { id: 'confirm_order', title: options[0].slice(0, 20) } },
+                    { type: 'reply', reply: { id: 'cancel_order', title: options[1].slice(0, 20) } },
+                  ],
+                },
+              },
+            }),
+          }
+        );
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`Cloud API ${res.status}: ${body.slice(0, 140)}`);
+        }
+        const data = (await res.json()) as { messages?: Array<{ id?: string }> };
+        order.whatsappMessageId = data.messages?.[0]?.id || `CLOUD-${Date.now()}`;
+        order.pollStatus = 'poll_sent';
+        order.pollSentAt = new Date().toISOString();
+        store.upsertOrder(order);
+        store.appendOrderEvent(order.id, {
+          actor: 'whatsapp',
+          message: `WhatsApp Interactive Poll sent via Cloud API to ${order.customerPhone}`,
+        });
+        return store.getOrderById(order.id) || order;
+      } catch (err) {
+        order.pollStatus = 'failed';
+        store.upsertOrder(order);
+        store.appendOrderEvent(order.id, {
+          actor: 'system',
+          message: err instanceof Error ? err.message : 'Cloud API dispatch failed',
+        });
+        return store.getOrderById(order.id) || order;
+      }
+    }
+
+    // Mode 2: Live Baileys WhatsApp Web Socket
+    if (this.sock && this.status === 'connected' && meta.mode === 'baileys_qr') {
+      try {
+        const sent = await this.sock.sendMessage(jid, {
+          poll: {
+            name: question,
+            values: options,
+            selectableCount: 1,
+          },
+        });
+        const msgId = sent?.key?.id || `WA-${Date.now()}`;
+        if (sent && sent.key?.id) {
+          store.savePollMessage(sent.key.id, sent);
+        }
+        order.whatsappMessageId = msgId;
+        order.pollStatus = 'poll_sent';
+        order.pollSentAt = new Date().toISOString();
+        store.upsertOrder(order);
+        store.appendOrderEvent(order.id, {
+          actor: 'whatsapp',
+          message: `WhatsApp Poll ("${options[0]}" / "${options[1]}") sent to ${order.customerPhone}`,
+        });
+        return store.getOrderById(order.id) || order;
+      } catch (err) {
+        order.pollStatus = 'failed';
+        store.upsertOrder(order);
+        store.appendOrderEvent(order.id, {
+          actor: 'system',
+          message: `Baileys send error: ${err instanceof Error ? err.message : 'failed'}`,
+        });
+        return store.getOrderById(order.id) || order;
+      }
+    }
+
+    // Mode 3: Sandbox Device (or queued if QR not scanned yet)
+    if (meta.mode === 'sandbox' && this.status === 'connected') {
+      order.whatsappMessageId = `SANDBOX-POLL-${Date.now()}`;
+      order.pollStatus = 'poll_sent';
+      order.pollSentAt = new Date().toISOString();
+      store.upsertOrder(order);
+      store.appendOrderEvent(order.id, {
+        actor: 'whatsapp',
+        message: `WhatsApp Poll ("${options[0]}" / "${options[1]}") dispatched via Sandbox Device to ${order.customerPhone}`,
+      });
+      return store.getOrderById(order.id) || order;
+    }
+
+    // If WhatsApp isn't connected yet, keep order queued so user can see why & resend after linking
+    order.pollStatus = 'queued';
+    store.upsertOrder(order);
+    store.appendOrderEvent(order.id, {
+      actor: 'system',
+      message: 'WhatsApp not linked yet — order queued. Connect WhatsApp QR or Sandbox Device to dispatch.',
+    });
+    return store.getOrderById(order.id) || order;
+  }
+
+  async applyVoteToOrder(
+    orderId: string,
+    selectedOption: string,
+    channel: 'whatsapp_poll' | 'whatsapp_text' | 'simulator'
+  ): Promise<OrderRecord | null> {
+    const order = store.getOrderById(orderId);
+    if (!order) return null;
+
+    const settings = store.getSettings();
+    const resolution = resolvePollVoteAction(selectedOption, settings);
+    if (!resolution) return order;
+
+    const updatedTags = mergeShopifyTags(
+      order.shopifyTags,
+      resolution.tagToAdd,
+      resolution.opposingTag
+    );
+
+    const shouldCancelInShopify =
+      resolution.decision === 'cancel' && settings.autoCancelInShopify;
+
+    const shopifyResult = await updateShopifyOrderTags(
+      settings,
+      order.shopifyOrderId,
+      updatedTags,
+      shouldCancelInShopify
+    );
+
+    order.shopifyTags = updatedTags;
+    order.pollStatus = resolution.newStatus;
+    order.respondedAt = new Date().toISOString();
+    order.responseChannel = channel;
+    order.shopifySynced = shopifyResult.synced || !settings.shopifyAccessToken;
+    store.upsertOrder(order);
+
+    const optionDisplay =
+      resolution.decision === 'confirm'
+        ? settings.confirmOptionLabel
+        : settings.cancelOptionLabel;
+
+    store.appendOrderEvent(order.id, {
+      actor: 'customer',
+      message: `Customer clicked "${optionDisplay}" (${channel.replace('_', ' ')})`,
+    });
+
+    store.appendOrderEvent(order.id, {
+      actor: 'shopify',
+      message: shopifyResult.error
+        ? `Local tag updated to "${resolution.tagToAdd}", Shopify API sync failed: ${shopifyResult.error}`
+        : settings.shopifyAccessToken
+          ? `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}" via Admin API`
+          : `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}"`,
+    });
+
+    return store.getOrderById(order.id) || order;
+  }
+}
+
+export const whatsappManager = new WhatsAppManager();

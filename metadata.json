@@ -1,0 +1,6 @@
+{
+  "name": "OrderPulse — Shopify & WhatsApp Order Confirmation",
+  "description": "Automated Shopify order confirmation and cancellation dashboard with persistent WhatsApp QR login, customer poll dispatch, and automatic Shopify order tagging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
