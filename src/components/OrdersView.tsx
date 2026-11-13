@@ -6,6 +6,7 @@ import {
   Search,
   Send,
   Tag,
+  Truck,
   XCircle,
   AlertCircle,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ interface OrdersViewProps {
   onSelectOrder: (id: string) => void;
   onVoteOrder: (orderId: string, option: string) => Promise<void>;
   onResendPoll: (orderId: string) => Promise<void>;
+  onSendTracking: (orderId: string) => Promise<void>;
   onSyncShopify: () => Promise<void>;
   onOpenSettings: () => void;
   busyOrderId: string | null;
@@ -83,6 +85,7 @@ export function OrdersView({
   onSelectOrder,
   onVoteOrder,
   onResendPoll,
+  onSendTracking,
   onSyncShopify,
   onOpenSettings,
   busyOrderId,
@@ -349,18 +352,31 @@ export function OrdersView({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => void onResendPoll(selectedOrder.id)}
-                  disabled={busyOrderId === selectedOrder.id}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap shrink-0"
-                >
-                  <Send className="h-3.5 w-3.5" aria-hidden="true" />
-                  Resend Poll
-                </button>
+                <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                  {(selectedOrder.trackingUrl || selectedOrder.trackingNumber) && (
+                    <button
+                      type="button"
+                      onClick={() => void onSendTracking(selectedOrder.id)}
+                      disabled={busyOrderId === selectedOrder.id}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 transition-colors hover:bg-emerald-100 disabled:opacity-50 whitespace-nowrap shrink-0"
+                    >
+                      <Truck className="h-3.5 w-3.5" aria-hidden="true" />
+                      {selectedOrder.trackingSentAt ? 'Resend Tracking' : 'Send Tracking'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void onResendPoll(selectedOrder.id)}
+                    disabled={busyOrderId === selectedOrder.id}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap shrink-0"
+                  >
+                    <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                    Resend Poll
+                  </button>
+                </div>
               </div>
 
-              {/* Order Items, Delivery, Note & Current Shopify Tag */}
+              {/* Order Items, Delivery, Note, Tracking & Current Shopify Tag */}
               <div className="mt-4 space-y-2 border-b border-slate-200 pb-4 text-sm">
                 <div className="flex items-start justify-between gap-4">
                   <span className="text-slate-500">Items</span>
@@ -382,6 +398,33 @@ export function OrdersView({
                     <span className="text-right text-xs text-slate-700">
                       {selectedOrder.deliverySummary}
                     </span>
+                  </div>
+                )}
+                {(selectedOrder.trackingUrl || selectedOrder.trackingNumber) && (
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-slate-500">Tracking</span>
+                    <div className="text-right text-xs">
+                      <p className="font-mono font-medium text-slate-800">
+                        {[selectedOrder.trackingCompany, selectedOrder.trackingNumber]
+                          .filter(Boolean)
+                          .join(' · ') || 'Fulfilled'}
+                      </p>
+                      {selectedOrder.trackingUrl && (
+                        <a
+                          href={selectedOrder.trackingUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-0.5 inline-block break-all text-emerald-700 underline-offset-2 hover:underline"
+                        >
+                          {selectedOrder.trackingUrl}
+                        </a>
+                      )}
+                      {selectedOrder.trackingSentAt && (
+                        <p className="mt-0.5 text-[11px] text-emerald-700">
+                          WhatsApp tracking sent at {formatRelativeTime(selectedOrder.trackingSentAt)}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
                 {selectedOrder.orderNote && (

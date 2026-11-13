@@ -304,18 +304,91 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
             </div>
           </div>
 
-          <div className="max-w-xs">
-            <label htmlFor="country-code" className="block text-sm font-medium text-slate-700">
-              Default Country Code (for 10-digit phones)
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+              <label htmlFor="waiting-tag" className="block text-sm font-medium text-slate-700">
+                Shopify Tag When Poll Sent
+              </label>
+              <input
+                id="waiting-tag"
+                type="text"
+                value={form.waitingTag}
+                onChange={(e) => updateField('waitingTag', e.target.value)}
+                placeholder="waiting for confirmation"
+                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="sync-start-date" className="block text-sm font-medium text-slate-700">
+                Start From Date (Skip Older Orders)
+              </label>
+              <input
+                id="sync-start-date"
+                type="date"
+                value={form.syncStartDate || '2026-11-13'}
+                onChange={(e) => updateField('syncStartDate', e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="country-code" className="block text-sm font-medium text-slate-700">
+                Default Country Code (for 10-digit phones)
+              </label>
+              <input
+                id="country-code"
+                type="text"
+                value={form.defaultCountryCode}
+                onChange={(e) => updateField('defaultCountryCode', e.target.value)}
+                placeholder="91"
+                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label htmlFor="confirm-reply-msg" className="block text-sm font-medium text-slate-700">
+                Confirmation WhatsApp Reply (When Customer Clicks Confirm)
+              </label>
+              <textarea
+                id="confirm-reply-msg"
+                rows={2}
+                value={form.confirmReplyMessage}
+                onChange={(e) => updateField('confirmReplyMessage', e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="cancel-reply-msg" className="block text-sm font-medium text-slate-700">
+                Cancellation WhatsApp Reply (When Customer Clicks Cancel)
+              </label>
+              <textarea
+                id="cancel-reply-msg"
+                rows={2}
+                value={form.cancelReplyMessage}
+                onChange={(e) => updateField('cancelReplyMessage', e.target.value)}
+                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="tracking-template" className="block text-sm font-medium text-slate-700">
+              Tracking Link WhatsApp Message (When Tracking Added in Shopify)
             </label>
-            <input
-              id="country-code"
-              type="text"
-              value={form.defaultCountryCode}
-              onChange={(e) => updateField('defaultCountryCode', e.target.value)}
-              placeholder="91"
-              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+            <textarea
+              id="tracking-template"
+              rows={2}
+              value={form.trackingMessageTemplate}
+              onChange={(e) => updateField('trackingMessageTemplate', e.target.value)}
+              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
             />
+            <p className="mt-1.5 font-mono text-xs text-slate-500">
+              Variables: {'{{tracking_link}}'} · {'{{tracking_url}}'} · {'{{tracking_number}}'} · {'{{tracking_company}}'} · {'{{order_number}}'} · {'{{customer_name}}'}
+            </p>
           </div>
 
           <div className="space-y-3 border-t border-slate-200 pt-4">
@@ -329,6 +402,18 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
                 className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-700"
               />
               <span>Automatically dispatch WhatsApp Poll when a new Shopify order arrives</span>
+            </label>
+
+            <label className="flex items-center gap-3 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.autoSendTrackingMessage}
+                onChange={(e) =>
+                  updateField('autoSendTrackingMessage', e.target.checked)
+                }
+                className="h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-700"
+              />
+              <span>Automatically send WhatsApp message with tracking link when tracking is added in Shopify</span>
             </label>
 
             <label className="flex items-center gap-3 text-sm text-slate-700">

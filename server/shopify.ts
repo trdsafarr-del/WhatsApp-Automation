@@ -2,7 +2,10 @@ import crypto from 'node:crypto';
 import {
   DEFAULT_SETTINGS,
   extractShopifyCustomerPhone,
+  extractShopifyTrackingInfo,
+  getSyncStartCutoffIso,
   inferInitialPollStatus,
+  type ShopifyFulfillmentSource,
 } from '../src/lib/orderRules.js';
 import type { AppSettings, OrderRecord } from '../src/lib/types.js';
 
@@ -50,6 +53,7 @@ export interface ShopifyRawOrder {
     quantity?: number;
     variant_title?: string | null;
   }>;
+  fulfillments?: ShopifyFulfillmentSource[] | null;
 }
 
 const SHOPIFY_API_VERSION = '2025-01';
@@ -150,6 +154,7 @@ export function parseShopifyRawOrder(
   const deliverySummary = deliveryParts.join(', ');
   const paymentMethod = inferPaymentMethod(raw);
   const orderNote = raw.note?.trim() || '';
+  const tracking = extractShopifyTrackingInfo(raw);
   const initialPollStatus = inferInitialPollStatus(raw, settings);
 
   const now = new Date().toISOString();
@@ -169,9 +174,15 @@ export function parseShopifyRawOrder(
     paymentMethod,
     deliverySummary,
     orderNote,
+    trackingNumber: tracking.trackingNumber || undefined,
+    trackingUrl: tracking.trackingUrl || undefined,
+    trackingCompany: tracking.trackingCompany || undefined,
+    trackingSentAt: null,
+    trackingSentValue: null,
     shopifyTags: raw.tags || '',
     pollStatus: initialPollStatus,
     whatsappMessageId: null,
+    whatsappTargetJid: null,
     pollQuestion: '',
     pollSentAt: null,
     respondedAt: null,
@@ -325,8 +336,12 @@ export async function fetchShopifyOrders(
   }
 
   try {
+    const cutoffIso = getSyncStartCutoffIso(settings.syncStartDate);
+    const createdAtParam = cutoffIso
+      ? `&created_at_min=${encodeURIComponent(cutoffIso)}`
+      : '';
     const res = await fetch(
-      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders.json?status=any&limit=25`,
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders.json?status=any&limit=50${createdAtParam}`,
       {
         headers: {
           'X-Shopify-Access-Token': auth.token,

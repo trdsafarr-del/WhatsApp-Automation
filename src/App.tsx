@@ -68,6 +68,7 @@ export default function App() {
   const [whatsappBusy, setWhatsappBusy] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -77,10 +78,13 @@ export default function App() {
       setOrders(data.orders);
       setMetrics(data.metrics);
       setWhatsapp(data.whatsapp);
+      setCloudSyncEnabled(Boolean(data.cloudSyncEnabled));
       setSettings((prev) =>
         JSON.stringify(prev) === JSON.stringify(data.settings) ? prev : data.settings
       );
-      setSelectedOrderId((prev) => prev || data.orders[0]?.id || null);
+      setSelectedOrderId((prev) =>
+        prev && data.orders.some((o) => o.id === prev) ? prev : data.orders[0]?.id || null
+      );
       setLoadError(null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Unable to reach server');
@@ -92,6 +96,26 @@ export default function App() {
   useEffect(() => {
     void fetchDashboard();
   }, [fetchDashboard]);
+
+  // Refresh immediately when returning to the app on phone/desktop
+  useEffect(() => {
+    const handleFocus = () => {
+      if (activeTab !== 'settings') {
+        void fetchDashboard();
+      }
+    };
+    const handleVisibility = () => {
+      if (!document.hidden && activeTab !== 'settings') {
+        void fetchDashboard();
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [fetchDashboard, activeTab]);
 
   // Poll backend smoothly while QR is waiting or on live views, pausing while editing Settings
   useEffect(() => {
@@ -129,6 +153,25 @@ export default function App() {
     setBusyOrderId(orderId);
     try {
       const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/resend-poll`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          orders: OrderRecord[];
+          metrics: OrderMetrics;
+        };
+        setOrders(data.orders);
+        setMetrics(data.metrics);
+      }
+    } finally {
+      setBusyOrderId(null);
+    }
+  };
+
+  const handleSendTracking = async (orderId: string) => {
+    setBusyOrderId(orderId);
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/send-tracking`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -239,6 +282,7 @@ export default function App() {
     if (!res.ok) return false;
     const data = (await res.json()) as { settings: AppSettings };
     setSettings(data.settings);
+    void fetchDashboard();
     return true;
   };
 
@@ -246,6 +290,48 @@ export default function App() {
     const res = await fetch('/api/shopify/test', { method: 'POST' });
     return (await res.json()) as { ok: boolean; shopName?: string; error?: string };
   };
+
+  const isShopifyLinked = Boolean(
+    settings.shopifyStoreDomain.trim() &&
+      (settings.shopifyAccessToken.trim() ||
+        (settings.shopifyClientId.trim() && settings.shopifyClientSecret.trim()))
+  );
+
+  const whatsappLabel =
+    whatsapp.status === 'connected'
+      ? 'Connected'
+      : whatsapp.remoteSessionActive && whatsapp.isServerless
+        ? 'Synced (Host Session)'
+        : whatsapp.status === 'qr_ready'
+          ? 'Scan QR'
+          : whatsapp.status === 'connecting'
+            ? 'Connecting...'
+            : 'Unlinked';
+
+  const connectionSummary = (
+    <div className="border-t border-slate-800 px-5 py-4 text-xs text-slate-400">
+      <p className="font-medium text-slate-200">WhatsApp: {whatsappLabel}</p>
+      <p className="mt-0.5 font-mono text-[11px] text-slate-400">
+        {whatsapp.phoneNumber || 'Tap WhatsApp QR to link'}
+      </p>
+      <p className="mt-2.5 font-medium text-slate-200">
+        Shopify: {isShopifyLinked ? 'Linked' : 'Not Configured'}
+      </p>
+      <p className="mt-0.5 truncate font-mono text-[11px] text-slate-400">
+        {isShopifyLinked
+          ? settings.shopifyStoreDomain.replace(/^https?:\/\//i, '')
+          : 'Open Automation & Shopify'}
+      </p>
+      <p className="mt-2.5 text-[11px] text-slate-500">
+        Storage:{' '}
+        {cloudSyncEnabled
+          ? 'Cloud Redis Synced'
+          : whatsapp.isServerless
+            ? 'Temporary Serverless (/tmp)'
+            : 'Persistent Server Disk'}
+      </p>
+    </div>
+  );
 
   const pageMeta: Record<ActiveTab, { breadcrumb: string; title: string }> = {
     orders: {
@@ -269,7 +355,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 lg:flex">
       {/* Desktop Sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-900 text-slate-100 lg:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-900 text-slate-100 lg:sticky lg:top-0 lg:flex lg:h-screen">
         <div className="flex h-16 items-center border-b border-slate-800 px-6">
           <span className="font-display text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0">
             OrderPulse
@@ -298,19 +384,7 @@ export default function App() {
           })}
         </nav>
 
-        <div className="border-t border-slate-800 px-5 py-4 text-xs text-slate-400">
-          <p className="font-medium text-slate-200">
-            WhatsApp:{' '}
-            {whatsapp.status === 'connected'
-              ? 'Connected'
-              : whatsapp.status === 'qr_ready'
-                ? 'Scan QR'
-                : 'Unlinked'}
-          </p>
-          <p className="mt-1 font-mono text-[11px] text-slate-400">
-            {whatsapp.phoneNumber || 'Tap WhatsApp QR to link'}
-          </p>
-        </div>
+        {connectionSummary}
       </aside>
 
       {/* Mobile Navigation Drawer */}
@@ -354,6 +428,7 @@ export default function App() {
                 );
               })}
             </nav>
+            {connectionSummary}
           </aside>
         </div>
       )}
@@ -395,7 +470,21 @@ export default function App() {
         </header>
 
         <main className="flex-1 p-4 sm:p-8">
-          <div className="mx-auto max-w-7xl">
+          <div className="mx-auto max-w-7xl space-y-4">
+            {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && (
+              <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950 sm:flex-row sm:items-center">
+                <p className="leading-relaxed">
+                  <span className="font-semibold">Vercel Temporary Storage Active:</span> Without Redis (<span className="font-mono">KV_REST_API_URL</span> or <span className="font-mono">UPSTASH_REDIS_REST_URL</span>), refreshing resets temporary data and WhatsApp cannot stay connected 24/7 on Vercel alone. Connect free Upstash Redis in Vercel Env Vars or deploy on Railway/Render.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('setup')}
+                  className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-100 whitespace-nowrap"
+                >
+                  Open Setup Guide
+                </button>
+              </div>
+            )}
             {isLoading ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
                 {[1, 2, 3, 4].map((n) => (
@@ -418,6 +507,7 @@ export default function App() {
                 onSelectOrder={setSelectedOrderId}
                 onVoteOrder={handleVoteOrder}
                 onResendPoll={handleResendPoll}
+                onSendTracking={handleSendTracking}
                 onSyncShopify={handleSyncShopify}
                 onOpenSettings={() => setActiveTab('settings')}
                 busyOrderId={busyOrderId}

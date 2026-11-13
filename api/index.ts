@@ -1,5 +1,10 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { computeOrderMetrics, shouldAutoDispatchPoll } from '../src/lib/orderRules.js';
+import {
+  computeOrderMetrics,
+  extractShopifyTrackingInfo,
+  shouldAutoDispatchPoll,
+  shouldAutoSendTracking,
+} from '../src/lib/orderRules.js';
 import type { AppSettings, OrderRecord } from '../src/lib/types.js';
 import {
   hasLiveShopifyCredentials,
@@ -40,6 +45,7 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
   await store.ensureHydrated();
   if (hasLiveShopifyCredentials(store.getSettings())) {
     await syncShopifyOrdersNow('auto');
+    await store.flushRemote();
   }
   const orders = store.getOrders();
   res.json({
@@ -82,7 +88,40 @@ app.post('/api/whatsapp/disconnect', async (_req: Request, res: Response) => {
 app.post('/api/settings', async (req: Request, res: Response) => {
   await store.ensureHydrated();
   const body = (req.body || {}) as Partial<AppSettings>;
-  const updated = store.updateSettings(body);
+  const cur = store.getSettings();
+  const updated = store.updateSettings({
+    shopName: body.shopName ?? cur.shopName,
+    shopifyStoreDomain: body.shopifyStoreDomain ?? cur.shopifyStoreDomain,
+    shopifyClientId: body.shopifyClientId ?? cur.shopifyClientId,
+    shopifyClientSecret: body.shopifyClientSecret ?? cur.shopifyClientSecret,
+    shopifyAccessToken: body.shopifyAccessToken ?? cur.shopifyAccessToken,
+    shopifyWebhookSecret: body.shopifyWebhookSecret ?? cur.shopifyWebhookSecret,
+    whatsappMode: body.whatsappMode ?? cur.whatsappMode,
+    defaultCountryCode: body.defaultCountryCode ?? cur.defaultCountryCode,
+    autoSendPollOnNewOrder:
+      typeof body.autoSendPollOnNewOrder === 'boolean'
+        ? body.autoSendPollOnNewOrder
+        : cur.autoSendPollOnNewOrder,
+    autoCancelInShopify:
+      typeof body.autoCancelInShopify === 'boolean'
+        ? body.autoCancelInShopify
+        : cur.autoCancelInShopify,
+    autoSendTrackingMessage:
+      typeof body.autoSendTrackingMessage === 'boolean'
+        ? body.autoSendTrackingMessage
+        : cur.autoSendTrackingMessage,
+    pollMessageTemplate: body.pollMessageTemplate ?? cur.pollMessageTemplate,
+    confirmOptionLabel: body.confirmOptionLabel ?? cur.confirmOptionLabel,
+    cancelOptionLabel: body.cancelOptionLabel ?? cur.cancelOptionLabel,
+    waitingTag: body.waitingTag ?? cur.waitingTag,
+    confirmTag: body.confirmTag ?? cur.confirmTag,
+    cancelTag: body.cancelTag ?? cur.cancelTag,
+    confirmReplyMessage: body.confirmReplyMessage ?? cur.confirmReplyMessage,
+    cancelReplyMessage: body.cancelReplyMessage ?? cur.cancelReplyMessage,
+    trackingMessageTemplate: body.trackingMessageTemplate ?? cur.trackingMessageTemplate,
+    syncStartDate: body.syncStartDate ?? cur.syncStartDate,
+  });
+  await store.flushRemote();
   res.json({ settings: updated });
 });
 
@@ -94,6 +133,7 @@ app.post('/api/shopify/test', async (_req: Request, res: Response) => {
 
 app.post('/api/shopify/sync', async (_req: Request, res: Response) => {
   const result = await syncShopifyOrdersNow('manual');
+  await store.flushRemote();
   if (!result.ok) {
     res.status(400).json(result);
     return;
@@ -139,8 +179,63 @@ app.post('/api/webhooks/shopify/orders-create', async (req: RawBodyRequest, res:
   if (shouldAutoDispatchPoll(order, settings)) {
     await whatsappManager.dispatchOrderPoll(order);
   }
+  await store.flushRemote();
 
   res.status(200).json({ ok: true, order: store.getOrderById(order.id) });
+});
+
+app.post('/api/webhooks/shopify/orders-updated', async (req: RawBodyRequest, res: Response) => {
+  await store.ensureHydrated();
+  const settings = store.getSettings();
+  const hmac = req.header('X-Shopify-Hmac-Sha256');
+  const rawBody = req.rawBody || JSON.stringify(req.body || {});
+  const secret = settings.shopifyWebhookSecret || settings.shopifyClientSecret;
+
+  if (!verifyShopifyWebhookHmac(rawBody, hmac, secret)) {
+    res.status(401).json({ error: 'Invalid Shopify HMAC signature' });
+    return;
+  }
+
+  const payload = (req.body || {}) as ShopifyRawOrder;
+  if (!payload.id) {
+    res.status(400).json({ error: 'Missing Shopify order id' });
+    return;
+  }
+
+  const tracking = extractShopifyTrackingInfo(payload);
+  const parsed = parseShopifyRawOrder(payload, settings);
+  const existing = store.getOrderByShopifyId(String(payload.id));
+
+  if (!existing) {
+    store.upsertOrder(parsed);
+    if (whatsappManager.isConnected() && shouldAutoSendTracking(undefined, parsed, settings, tracking.fulfilledAt)) {
+      await whatsappManager.dispatchTrackingMessage(parsed);
+    }
+    await store.flushRemote();
+    res.status(200).json({ ok: true, order: store.getOrderById(parsed.id) });
+    return;
+  }
+
+  const prevSnapshot = {
+    trackingUrl: existing.trackingUrl,
+    trackingNumber: existing.trackingNumber,
+    trackingSentValue: existing.trackingSentValue,
+  };
+  if (payload.tags !== undefined) existing.shopifyTags = payload.tags;
+  if (parsed.trackingUrl) existing.trackingUrl = parsed.trackingUrl;
+  if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;
+  if (parsed.trackingCompany) existing.trackingCompany = parsed.trackingCompany;
+  store.upsertOrder(existing);
+
+  if (
+    whatsappManager.isConnected() &&
+    shouldAutoSendTracking(prevSnapshot, existing, settings, tracking.fulfilledAt)
+  ) {
+    await whatsappManager.dispatchTrackingMessage(existing);
+  }
+
+  await store.flushRemote();
+  res.status(200).json({ ok: true, order: store.getOrderById(existing.id) });
 });
 
 app.post('/api/orders/:id/resend-poll', async (req: Request, res: Response) => {
@@ -151,6 +246,29 @@ app.post('/api/orders/:id/resend-poll', async (req: Request, res: Response) => {
     return;
   }
   const updated = await whatsappManager.dispatchOrderPoll(order);
+  await store.flushRemote();
+  const allOrders = store.getOrders();
+  res.json({
+    ok: true,
+    order: updated,
+    orders: allOrders,
+    metrics: computeOrderMetrics(allOrders),
+  });
+});
+
+app.post('/api/orders/:id/send-tracking', async (req: Request, res: Response) => {
+  await store.ensureHydrated();
+  const order = store.getOrderById(String(req.params.id));
+  if (!order) {
+    res.status(404).json({ error: 'Order not found' });
+    return;
+  }
+  if (!order.trackingUrl && !order.trackingNumber) {
+    res.status(400).json({ error: 'No tracking link or tracking number found on this order yet.' });
+    return;
+  }
+  const updated = await whatsappManager.dispatchTrackingMessage(order);
+  await store.flushRemote();
   const allOrders = store.getOrders();
   res.json({
     ok: true,
@@ -172,6 +290,7 @@ app.post('/api/orders/:id/vote', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Order not found' });
     return;
   }
+  await store.flushRemote();
   const allOrders = store.getOrders();
   res.json({
     ok: true,

@@ -2,7 +2,12 @@ import 'dotenv/config';
 import express, { type Request, type Response } from 'express';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
-import { computeOrderMetrics, shouldAutoDispatchPoll } from './src/lib/orderRules.js';
+import {
+  computeOrderMetrics,
+  extractShopifyTrackingInfo,
+  shouldAutoDispatchPoll,
+  shouldAutoSendTracking,
+} from './src/lib/orderRules.js';
 import type { AppSettings } from './src/lib/types.js';
 import {
   hasLiveShopifyCredentials,
@@ -112,11 +117,20 @@ async function startServer() {
         typeof body.autoCancelInShopify === 'boolean'
           ? body.autoCancelInShopify
           : cur.autoCancelInShopify,
+      autoSendTrackingMessage:
+        typeof body.autoSendTrackingMessage === 'boolean'
+          ? body.autoSendTrackingMessage
+          : cur.autoSendTrackingMessage,
       pollMessageTemplate: body.pollMessageTemplate ?? cur.pollMessageTemplate,
       confirmOptionLabel: body.confirmOptionLabel ?? cur.confirmOptionLabel,
       cancelOptionLabel: body.cancelOptionLabel ?? cur.cancelOptionLabel,
+      waitingTag: body.waitingTag ?? cur.waitingTag,
       confirmTag: body.confirmTag ?? cur.confirmTag,
       cancelTag: body.cancelTag ?? cur.cancelTag,
+      confirmReplyMessage: body.confirmReplyMessage ?? cur.confirmReplyMessage,
+      cancelReplyMessage: body.cancelReplyMessage ?? cur.cancelReplyMessage,
+      trackingMessageTemplate: body.trackingMessageTemplate ?? cur.trackingMessageTemplate,
+      syncStartDate: body.syncStartDate ?? cur.syncStartDate,
     });
     res.json({ settings: updated });
   });
@@ -181,6 +195,59 @@ async function startServer() {
     res.status(200).json({ ok: true, order: store.getOrderById(order.id) });
   });
 
+  // Official Shopify Webhook: orders/updated or orders/fulfilled (instant tracking link detection)
+  app.post('/api/webhooks/shopify/orders-updated', async (req: RawBodyRequest, res: Response) => {
+    await store.ensureHydrated();
+    const settings = store.getSettings();
+    const hmac = req.header('X-Shopify-Hmac-Sha256');
+    const rawBody = req.rawBody || JSON.stringify(req.body || {});
+    const secret = settings.shopifyWebhookSecret || settings.shopifyClientSecret;
+
+    if (!verifyShopifyWebhookHmac(rawBody, hmac, secret)) {
+      res.status(401).json({ error: 'Invalid Shopify HMAC signature' });
+      return;
+    }
+
+    const payload = (req.body || {}) as ShopifyRawOrder;
+    if (!payload.id) {
+      res.status(400).json({ error: 'Missing Shopify order id' });
+      return;
+    }
+
+    const tracking = extractShopifyTrackingInfo(payload);
+    const parsed = parseShopifyRawOrder(payload, settings);
+    const existing = store.getOrderByShopifyId(String(payload.id));
+
+    if (!existing) {
+      store.upsertOrder(parsed);
+      if (whatsappManager.isConnected() && shouldAutoSendTracking(undefined, parsed, settings, tracking.fulfilledAt)) {
+        await whatsappManager.dispatchTrackingMessage(parsed);
+      }
+      res.status(200).json({ ok: true, order: store.getOrderById(parsed.id) });
+      return;
+    }
+
+    const prevSnapshot = {
+      trackingUrl: existing.trackingUrl,
+      trackingNumber: existing.trackingNumber,
+      trackingSentValue: existing.trackingSentValue,
+    };
+    if (payload.tags !== undefined) existing.shopifyTags = payload.tags;
+    if (parsed.trackingUrl) existing.trackingUrl = parsed.trackingUrl;
+    if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;
+    if (parsed.trackingCompany) existing.trackingCompany = parsed.trackingCompany;
+    store.upsertOrder(existing);
+
+    if (
+      whatsappManager.isConnected() &&
+      shouldAutoSendTracking(prevSnapshot, existing, settings, tracking.fulfilledAt)
+    ) {
+      await whatsappManager.dispatchTrackingMessage(existing);
+    }
+
+    res.status(200).json({ ok: true, order: store.getOrderById(existing.id) });
+  });
+
   // Resend WhatsApp Poll for an order
   app.post('/api/orders/:id/resend-poll', async (req: Request, res: Response) => {
     await store.ensureHydrated();
@@ -190,6 +257,28 @@ async function startServer() {
       return;
     }
     const updated = await whatsappManager.dispatchOrderPoll(order);
+    const allOrders = store.getOrders();
+    res.json({
+      ok: true,
+      order: updated,
+      orders: allOrders,
+      metrics: computeOrderMetrics(allOrders),
+    });
+  });
+
+  // Send / Resend Tracking Link on WhatsApp for an order
+  app.post('/api/orders/:id/send-tracking', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const order = store.getOrderById(String(req.params.id));
+    if (!order) {
+      res.status(404).json({ error: 'Order not found' });
+      return;
+    }
+    if (!order.trackingUrl && !order.trackingNumber) {
+      res.status(400).json({ error: 'No tracking link or tracking number found on this order yet.' });
+      return;
+    }
+    const updated = await whatsappManager.dispatchTrackingMessage(order);
     const allOrders = store.getOrders();
     res.json({
       ok: true,
@@ -236,8 +325,13 @@ async function startServer() {
     });
   }
 
-  // 24/7 automatic Shopify order sync every 30s so new orders are picked up even without webhooks
+  // 24/7 automatic Shopify order sync on boot + every 30s so new orders are picked up even without webhooks
   if (!process.env.VERCEL) {
+    setTimeout(() => {
+      if (hasLiveShopifyCredentials(store.getSettings())) {
+        void syncShopifyOrdersNow('auto');
+      }
+    }, 2_000);
     setInterval(() => {
       if (hasLiveShopifyCredentials(store.getSettings())) {
         void syncShopifyOrdersNow('auto');

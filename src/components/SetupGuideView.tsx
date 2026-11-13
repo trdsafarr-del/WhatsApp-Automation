@@ -48,6 +48,7 @@ export function SetupGuideView() {
       : 'https://your-app.vercel.app';
 
   const shopifyWebhookUrl = `${origin}/api/webhooks/shopify/orders-create`;
+  const shopifyOrderUpdatedWebhookUrl = `${origin}/api/webhooks/shopify/orders-updated`;
 
   return (
     <div className="space-y-6">
@@ -95,12 +96,13 @@ export function SetupGuideView() {
 
           <li className="space-y-2.5">
             <p className="font-semibold text-slate-900">
-              Step 4: Add Automatic Order Webhook in Shopify Store Admin
+              Step 4: Add Automatic Webhooks in Shopify Store Admin
             </p>
             <p className="leading-relaxed">
-              Open your Store Admin (<span className="font-mono text-xs text-slate-900">admin.shopify.com</span>) → <span className="font-medium text-slate-900">Settings → Notifications → Webhooks → Create webhook</span>. Choose Event: <span className="font-mono text-xs text-slate-900">Order creation</span>, Format: <span className="font-mono text-xs text-slate-900">JSON</span>, and paste this URL:
+              Open your Store Admin (<span className="font-mono text-xs text-slate-900">admin.shopify.com</span>) → <span className="font-medium text-slate-900">Settings → Notifications → Webhooks → Create webhook</span>. Add <span className="font-mono text-xs text-slate-900">Order creation</span> (JSON) and optionally <span className="font-mono text-xs text-slate-900">Order update</span> for instant tracking WhatsApp delivery (auto-sync also checks every 30s):
             </p>
             <CopyField label="Shopify Order Creation Webhook URL" value={shopifyWebhookUrl} />
+            <CopyField label="Shopify Order Update / Tracking Webhook URL (Optional)" value={shopifyOrderUpdatedWebhookUrl} />
             <p className="text-xs text-slate-500">
               Paste the signing secret shown at the bottom of Shopify&apos;s Webhooks page into <span className="font-medium text-slate-700">Webhook Signing Secret</span> in Automation &amp; Shopify settings.
             </p>
@@ -137,7 +139,7 @@ export function SetupGuideView() {
                 <span className="font-semibold">Same Data Across All Devices &amp; Zero WhatsApp Logout:</span> Deploy this repo on a persistent Node host (<span className="font-semibold">Railway, Render, Fly.io, or VPS</span>) with start command <span className="font-mono">npm start</span> and persistent disk at <span className="font-mono">/app/data</span>. All phones/laptops share the same database and WhatsApp stays connected 24/7.
               </li>
               <li>
-                <span className="font-semibold">Optional Cloud Backup Across Redeploys / Serverless:</span> Add free <span className="font-mono">UPSTASH_REDIS_REST_URL</span> and <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> environment variables (from console.upstash.com) so orders, Shopify credentials, and WhatsApp session keys automatically sync across every device and server restart.
+                <span className="font-semibold">Optional Cloud Backup Across Redeploys / Serverless:</span> Add free <span className="font-mono">UPSTASH_REDIS_REST_URL</span> + <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> (or Vercel Marketplace <span className="font-mono">KV_REST_API_URL</span> + <span className="font-mono">KV_REST_API_TOKEN</span>) environment variables so orders, Shopify credentials, and WhatsApp session keys automatically sync across every device and refresh.
               </li>
               <li>
                 <span className="font-semibold">Vercel Note:</span> Vercel serverless functions sleep after 60s, so a live WhatsApp QR socket cannot stay open 24/7 on Vercel alone — use Railway/Render/VPS for 24/7 automatic WhatsApp poll delivery &amp; reply listening.

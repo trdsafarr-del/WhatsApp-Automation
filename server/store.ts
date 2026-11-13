@@ -1,18 +1,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_SETTINGS } from '../src/lib/orderRules.js';
+import {
+  DEFAULT_SETTINGS,
+  isOrderOnOrAfterStartDate,
+  selectPriorityAuthFiles,
+} from '../src/lib/orderRules.js';
 import type { AppSettings, OrderEvent, OrderRecord, WhatsAppState } from '../src/lib/types.js';
 
 const DATA_DIR = process.env.VERCEL
   ? '/tmp/orderpulse-data'
   : path.resolve(process.cwd(), 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
+const DB_BACKUP_PATH = path.join(DATA_DIR, 'db.backup.json');
 const POLL_CACHE_PATH = path.join(DATA_DIR, 'poll-messages.json');
+const POLL_BACKUP_PATH = path.join(DATA_DIR, 'poll-messages.backup.json');
 
 const LEGACY_SEED_ORDER_IDS = new Set(['ord-1049', 'ord-1050', 'ord-1051', 'ord-1052']);
 const REDIS_DB_KEY = 'orderpulse:v1:db';
 const REDIS_POLL_KEY = 'orderpulse:v1:polls';
 const REDIS_WA_AUTH_KEY = 'orderpulse:v1:wa_auth';
+const REDIS_WA_CREDS_KEY = 'orderpulse:v1:wa_creds';
 
 export interface DatabaseState {
   settings: AppSettings;
@@ -49,10 +56,42 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
 }
 
 function getUpstashConfig(): { url: string; token: string } | null {
-  const url = (process.env.UPSTASH_REDIS_REST_URL || '').trim().replace(/\/+$/, '');
-  const token = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
+  const url = (
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.KV_REST_API_URL ||
+    ''
+  )
+    .trim()
+    .replace(/\/+$/, '');
+  const token = (
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.KV_REST_API_TOKEN ||
+    ''
+  ).trim();
   if (!url || !token) return null;
   return { url, token };
+}
+
+function dedupeOrderEvents(orders: OrderRecord[]): { cleaned: OrderRecord[]; changed: boolean } {
+  let changed = false;
+  const cleaned = orders.map((order) => {
+    if (!Array.isArray(order.events) || order.events.length <= 1) return order;
+    const deduped: OrderEvent[] = [];
+    for (const evt of order.events) {
+      const prev = deduped[deduped.length - 1];
+      if (
+        prev &&
+        prev.message.startsWith('WhatsApp QR not linked yet') &&
+        evt.message.startsWith('WhatsApp QR not linked yet')
+      ) {
+        changed = true;
+        continue;
+      }
+      deduped.push(evt);
+    }
+    return deduped.length === order.events.length ? order : { ...order, events: deduped };
+  });
+  return { cleaned, changed };
 }
 
 async function upstashGet(key: string): Promise<string | null> {
@@ -109,6 +148,7 @@ class PersistentStore {
   private pollMessages: Record<string, unknown> = {};
   private lastHydratedAtMs = 0;
   private hydratePromise: Promise<void> | null = null;
+  private remoteSyncQueue: Promise<void> = Promise.resolve();
 
   constructor() {
     ensureDataDir();
@@ -118,6 +158,10 @@ class PersistentStore {
 
   isCloudSyncEnabled(): boolean {
     return getUpstashConfig() !== null;
+  }
+
+  async flushRemote(): Promise<void> {
+    await this.remoteSyncQueue;
   }
 
   /**
@@ -139,6 +183,7 @@ class PersistentStore {
 
     this.hydratePromise = (async () => {
       try {
+        await this.flushRemote();
         const [remoteDbRaw, remotePollsRaw] = await Promise.all([
           upstashGet(REDIS_DB_KEY),
           upstashGet(REDIS_POLL_KEY),
@@ -146,15 +191,21 @@ class PersistentStore {
 
         if (remoteDbRaw) {
           const parsed = JSON.parse(remoteDbRaw) as Partial<DatabaseState>;
-          const cleanedOrders = Array.isArray(parsed.orders)
-            ? parsed.orders.filter((o) => !LEGACY_SEED_ORDER_IDS.has(o.id))
+          const mergedSettings = hydrateEnvDefaults({
+            ...DEFAULT_SETTINGS,
+            ...(parsed.settings || {}),
+            whatsappMode: 'baileys_qr',
+          });
+          const nonSeedOrders = Array.isArray(parsed.orders)
+            ? parsed.orders.filter(
+                (o) =>
+                  !LEGACY_SEED_ORDER_IDS.has(o.id) &&
+                  isOrderOnOrAfterStartDate(o.createdAt, mergedSettings.syncStartDate)
+              )
             : [];
+          const { cleaned: cleanedOrders } = dedupeOrderEvents(nonSeedOrders);
           this.state = {
-            settings: hydrateEnvDefaults({
-              ...DEFAULT_SETTINGS,
-              ...(parsed.settings || {}),
-              whatsappMode: 'baileys_qr',
-            }),
+            settings: mergedSettings,
             orders: cleanedOrders,
             whatsappMeta: {
               mode: 'baileys_qr',
@@ -184,35 +235,58 @@ class PersistentStore {
     return this.hydratePromise;
   }
 
+  private tryParseStateFile(filePath: string): { state: DatabaseState; needsRewrite: boolean } | null {
+    if (!fs.existsSync(filePath)) return null;
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const parsed = JSON.parse(raw) as Partial<DatabaseState>;
+      const mergedSettings = hydrateEnvDefaults({
+        ...DEFAULT_SETTINGS,
+        ...(parsed.settings || {}),
+        whatsappMode: 'baileys_qr',
+      });
+      const nonSeedOrders = Array.isArray(parsed.orders)
+        ? parsed.orders.filter(
+            (o) =>
+              !LEGACY_SEED_ORDER_IDS.has(o.id) &&
+              isOrderOnOrAfterStartDate(o.createdAt, mergedSettings.syncStartDate)
+          )
+        : [];
+      const { cleaned: cleanedOrders, changed: eventsDeduped } =
+        dedupeOrderEvents(nonSeedOrders);
+      const loaded: DatabaseState = {
+        settings: mergedSettings,
+        orders: cleanedOrders,
+        whatsappMeta: {
+          mode: 'baileys_qr',
+          connectedAt: parsed.whatsappMeta?.connectedAt || null,
+          phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
+          pushName: parsed.whatsappMeta?.pushName || null,
+        },
+      };
+      const needsRewrite =
+        eventsDeduped ||
+        !parsed.settings?.syncStartDate ||
+        (Array.isArray(parsed.orders) && cleanedOrders.length !== parsed.orders.length);
+      return { state: loaded, needsRewrite };
+    } catch {
+      return null;
+    }
+  }
+
   private loadState(): DatabaseState {
-    if (fs.existsSync(DB_PATH)) {
-      try {
-        const raw = fs.readFileSync(DB_PATH, 'utf8');
-        const parsed = JSON.parse(raw) as Partial<DatabaseState>;
-        const cleanedOrders = Array.isArray(parsed.orders)
-          ? parsed.orders.filter((o) => !LEGACY_SEED_ORDER_IDS.has(o.id))
-          : [];
-        const loaded: DatabaseState = {
-          settings: hydrateEnvDefaults({
-            ...DEFAULT_SETTINGS,
-            ...(parsed.settings || {}),
-            whatsappMode: 'baileys_qr',
-          }),
-          orders: cleanedOrders,
-          whatsappMeta: {
-            mode: 'baileys_qr',
-            connectedAt: parsed.whatsappMeta?.connectedAt || null,
-            phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
-            pushName: parsed.whatsappMeta?.pushName || null,
-          },
-        };
-        if (Array.isArray(parsed.orders) && cleanedOrders.length !== parsed.orders.length) {
-          this.writeLocalState(loaded);
-        }
-        return loaded;
-      } catch {
-        // Fallback cleanly to empty state if file is corrupted
+    const primary = this.tryParseStateFile(DB_PATH);
+    if (primary) {
+      if (primary.needsRewrite) {
+        this.writeLocalState(primary.state);
       }
+      return primary.state;
+    }
+
+    const backup = this.tryParseStateFile(DB_BACKUP_PATH);
+    if (backup) {
+      this.writeLocalState(backup.state);
+      return backup.state;
     }
 
     const initial: DatabaseState = {
@@ -231,24 +305,38 @@ class PersistentStore {
 
   private writeLocalState(nextState: DatabaseState) {
     ensureDataDir();
+    const serialized = JSON.stringify(nextState, null, 2);
     const tmp = `${DB_PATH}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(nextState, null, 2), 'utf8');
+    fs.writeFileSync(tmp, serialized, 'utf8');
     fs.renameSync(tmp, DB_PATH);
+
+    const backupTmp = `${DB_BACKUP_PATH}.tmp`;
+    fs.writeFileSync(backupTmp, serialized, 'utf8');
+    fs.renameSync(backupTmp, DB_BACKUP_PATH);
   }
 
   private persistState(nextState: DatabaseState) {
     this.writeLocalState(nextState);
     if (this.isCloudSyncEnabled()) {
-      void upstashSet(REDIS_DB_KEY, JSON.stringify(nextState));
+      const payload = JSON.stringify(nextState);
+      this.remoteSyncQueue = this.remoteSyncQueue
+        .then(() => upstashSet(REDIS_DB_KEY, payload))
+        .catch(() => {
+          // Keep queue healthy even if a transient network error occurs
+        });
     }
   }
 
   private loadPollCache(): Record<string, unknown> {
-    if (fs.existsSync(POLL_CACHE_PATH)) {
+    for (const filePath of [POLL_CACHE_PATH, POLL_BACKUP_PATH]) {
+      if (!fs.existsSync(filePath)) continue;
       try {
-        return JSON.parse(fs.readFileSync(POLL_CACHE_PATH, 'utf8')) as Record<string, unknown>;
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
       } catch {
-        return {};
+        // Try backup if primary poll cache was truncated mid-write
       }
     }
     return {};
@@ -256,32 +344,55 @@ class PersistentStore {
 
   private writeLocalPollCache() {
     ensureDataDir();
+    const serialized = JSON.stringify(this.pollMessages);
     const tmp = `${POLL_CACHE_PATH}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.pollMessages), 'utf8');
+    fs.writeFileSync(tmp, serialized, 'utf8');
     fs.renameSync(tmp, POLL_CACHE_PATH);
+
+    const backupTmp = `${POLL_BACKUP_PATH}.tmp`;
+    fs.writeFileSync(backupTmp, serialized, 'utf8');
+    fs.renameSync(backupTmp, POLL_BACKUP_PATH);
   }
 
   private persistPollCache() {
     this.writeLocalPollCache();
     if (this.isCloudSyncEnabled()) {
-      void upstashSet(REDIS_POLL_KEY, JSON.stringify(this.pollMessages));
+      const payload = JSON.stringify(this.pollMessages);
+      this.remoteSyncQueue = this.remoteSyncQueue
+        .then(() => upstashSet(REDIS_POLL_KEY, payload))
+        .catch(() => {
+          // Keep queue healthy
+        });
     }
   }
 
   /**
    * Backs up Baileys multi-file auth credentials (data/wa-auth/*) to Upstash Redis
-   * so WhatsApp never logs out across server redeploys or container restarts.
+   * within a safe size budget so WhatsApp stays logged in across server restarts & redeploys.
    */
   async backupAuthFiles(authDir: string): Promise<void> {
     if (!this.isCloudSyncEnabled() || !fs.existsSync(authDir)) return;
     try {
+      const credsPath = path.join(authDir, 'creds.json');
+      if (fs.existsSync(credsPath)) {
+        const credsContent = fs.readFileSync(credsPath, 'utf8');
+        await upstashSet(REDIS_WA_CREDS_KEY, credsContent);
+      }
+
       const entries = fs.readdirSync(authDir);
-      const bundle: Record<string, string> = {};
+      const fileEntries: Array<{ name: string; size: number }> = [];
       for (const name of entries) {
         const fullPath = path.join(authDir, name);
-        if (fs.statSync(fullPath).isFile()) {
-          bundle[name] = fs.readFileSync(fullPath, 'utf8');
+        const stat = fs.statSync(fullPath);
+        if (stat.isFile()) {
+          fileEntries.push({ name, size: stat.size });
         }
+      }
+
+      const pickedNames = selectPriorityAuthFiles(fileEntries, 650_000);
+      const bundle: Record<string, string> = {};
+      for (const name of pickedNames) {
+        bundle[name] = fs.readFileSync(path.join(authDir, name), 'utf8');
       }
       if (Object.keys(bundle).length > 0) {
         await upstashSet(REDIS_WA_AUTH_KEY, JSON.stringify(bundle));
@@ -294,10 +405,13 @@ class PersistentStore {
   async restoreAuthFiles(authDir: string): Promise<boolean> {
     if (!this.isCloudSyncEnabled()) return false;
     try {
-      const raw = await upstashGet(REDIS_WA_AUTH_KEY);
-      if (!raw) return false;
-      const bundle = JSON.parse(raw) as Record<string, string>;
-      if (!bundle || typeof bundle !== 'object' || !bundle['creds.json']) {
+      const [rawBundle, rawCreds] = await Promise.all([
+        upstashGet(REDIS_WA_AUTH_KEY),
+        upstashGet(REDIS_WA_CREDS_KEY),
+      ]);
+      const bundle = rawBundle ? (JSON.parse(rawBundle) as Record<string, string>) : {};
+      const credsContent = rawCreds || bundle['creds.json'];
+      if (!credsContent) {
         return false;
       }
       if (!fs.existsSync(authDir)) {
@@ -307,6 +421,7 @@ class PersistentStore {
         if (name.includes('/') || name.includes('..')) continue;
         fs.writeFileSync(path.join(authDir, name), content, 'utf8');
       }
+      fs.writeFileSync(path.join(authDir, 'creds.json'), credsContent, 'utf8');
       return true;
     } catch {
       return false;
@@ -314,7 +429,7 @@ class PersistentStore {
   }
 
   async clearRemoteAuth(): Promise<void> {
-    await upstashDel(REDIS_WA_AUTH_KEY);
+    await Promise.all([upstashDel(REDIS_WA_AUTH_KEY), upstashDel(REDIS_WA_CREDS_KEY)]);
   }
 
   getSettings(): AppSettings {
@@ -326,6 +441,11 @@ class PersistentStore {
       ...this.state.settings,
       ...partial,
     };
+    if (partial.syncStartDate !== undefined) {
+      this.state.orders = this.state.orders.filter((o) =>
+        isOrderOnOrAfterStartDate(o.createdAt, this.state.settings.syncStartDate)
+      );
+    }
     this.persistState(this.state);
     return this.state.settings;
   }

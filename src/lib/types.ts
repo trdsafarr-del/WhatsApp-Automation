@@ -35,9 +35,15 @@ export interface OrderRecord {
   paymentMethod?: string;
   deliverySummary?: string;
   orderNote?: string;
+  trackingNumber?: string;
+  trackingUrl?: string;
+  trackingCompany?: string;
+  trackingSentAt?: string | null;
+  trackingSentValue?: string | null;
   shopifyTags: string;
   pollStatus: PollStatus;
   whatsappMessageId: string | null;
+  whatsappTargetJid?: string | null;
   pollQuestion: string;
   pollSentAt: string | null;
   respondedAt: string | null;
@@ -58,11 +64,17 @@ export interface AppSettings {
   defaultCountryCode: string;
   autoSendPollOnNewOrder: boolean;
   autoCancelInShopify: boolean;
+  autoSendTrackingMessage: boolean;
   pollMessageTemplate: string;
   confirmOptionLabel: string;
   cancelOptionLabel: string;
+  waitingTag: string;
   confirmTag: string;
   cancelTag: string;
+  confirmReplyMessage: string;
+  cancelReplyMessage: string;
+  trackingMessageTemplate: string;
+  syncStartDate: string;
 }
 
 export interface WhatsAppState {
@@ -78,6 +90,7 @@ export interface WhatsAppState {
   lastHeartbeatAt: string | null;
   reconnectCount: number;
   sessionPersisted: boolean;
+  remoteSessionActive?: boolean;
   lastError: string | null;
 }
 

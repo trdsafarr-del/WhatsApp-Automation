@@ -4,12 +4,20 @@ import {
   DEFAULT_SETTINGS,
   computeOrderMetrics,
   extractShopifyCustomerPhone,
+  extractShopifyTrackingInfo,
+  formatOrderTemplate,
   formatPollPayload,
+  getSyncStartCutoffIso,
   inferInitialPollStatus,
+  isOrderOnOrAfterStartDate,
+  isTransientWhatsAppError,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
+  selectPriorityAuthFiles,
   shouldAutoDispatchPoll,
+  shouldAutoSendTracking,
+  shouldPreserveRecentLocalTags,
 } from './orderRules.js';
 import type { OrderRecord } from './types.js';
 
@@ -61,11 +69,19 @@ test('resolvePollVoteAction maps Confirm Order and Cancel Order to expected Shop
   assert.equal(resolvePollVoteAction('random message', DEFAULT_SETTINGS), null);
 });
 
-test('mergeShopifyTags preserves existing tags, avoids duplicates, and removes opposing tag', () => {
+test('mergeShopifyTags preserves existing tags, avoids duplicates, and removes multiple superseded tags', () => {
   assert.equal(mergeShopifyTags('COD, Priority', 'confirm', 'cancelled by user'), 'COD, Priority, confirm');
   assert.equal(
     mergeShopifyTags('COD, confirm, Priority', 'cancelled by user', 'confirm'),
     'COD, Priority, cancelled by user'
+  );
+  assert.equal(
+    mergeShopifyTags(
+      'COD, waiting for confirmation, Priority',
+      'confirm',
+      ['cancelled by user', 'waiting for confirmation']
+    ),
+    'COD, Priority, confirm'
   );
   assert.equal(mergeShopifyTags('confirm', 'confirm', 'cancelled by user'), 'confirm');
 });
@@ -153,6 +169,10 @@ test('inferInitialPollStatus and shouldAutoDispatchPoll handle existing tags and
     'cancelled_by_user'
   );
   assert.equal(
+    inferInitialPollStatus({ tags: 'COD, waiting for confirmation' }, DEFAULT_SETTINGS),
+    'poll_sent'
+  );
+  assert.equal(
     inferInitialPollStatus({ tags: 'COD', cancelled_at: '2026-11-12T10:00:00Z' }, DEFAULT_SETTINGS),
     'cancelled_by_user'
   );
@@ -183,4 +203,156 @@ test('inferInitialPollStatus and shouldAutoDispatchPoll handle existing tags and
     ),
     false
   );
+  assert.equal(
+    shouldAutoDispatchPoll(
+      { pollStatus: 'queued', createdAt: '2026-11-13T11:30:00.000Z', financialStatus: 'voided' },
+      DEFAULT_SETTINGS,
+      now
+    ),
+    false
+  );
+  assert.equal(
+    shouldAutoDispatchPoll(
+      { pollStatus: 'queued', createdAt: '2026-11-13T11:30:00.000Z', financialStatus: 'refunded' },
+      DEFAULT_SETTINGS,
+      now
+    ),
+    false
+  );
 });
+
+test('extractShopifyTrackingInfo, shouldAutoSendTracking, and formatOrderTemplate handle tracking updates', () => {
+  const tracking = extractShopifyTrackingInfo({
+    fulfillments: [
+      { status: 'cancelled', tracking_number: 'OLD', tracking_url: 'https://track.old/1' },
+      {
+        status: 'success',
+        tracking_company: 'BlueDart',
+        tracking_number: 'BD123456',
+        tracking_url: 'https://bluedart.com/track/BD123456',
+        created_at: '2026-11-13T11:50:00.000Z',
+      },
+    ],
+  });
+  assert.equal(tracking.trackingCompany, 'BlueDart');
+  assert.equal(tracking.trackingNumber, 'BD123456');
+  assert.equal(tracking.trackingUrl, 'https://bluedart.com/track/BD123456');
+
+  const now = Date.parse('2026-11-13T12:00:00.000Z');
+  // Adding tracking to an existing older order triggers auto-send
+  assert.equal(
+    shouldAutoSendTracking(
+      { trackingUrl: '', trackingNumber: '', trackingSentValue: null },
+      {
+        customerPhone: '+919876543210',
+        createdAt: '2026-11-05T10:00:00.000Z',
+        trackingUrl: tracking.trackingUrl,
+        trackingNumber: tracking.trackingNumber,
+        trackingSentValue: null,
+      },
+      DEFAULT_SETTINGS,
+      tracking.fulfilledAt,
+      now
+    ),
+    true
+  );
+
+  // Already sent same tracking link -> does not double-send
+  assert.equal(
+    shouldAutoSendTracking(
+      { trackingUrl: tracking.trackingUrl, trackingNumber: tracking.trackingNumber, trackingSentValue: tracking.trackingUrl },
+      {
+        customerPhone: '+919876543210',
+        createdAt: '2026-11-05T10:00:00.000Z',
+        trackingUrl: tracking.trackingUrl,
+        trackingNumber: tracking.trackingNumber,
+        trackingSentValue: tracking.trackingUrl,
+      },
+      DEFAULT_SETTINGS,
+      tracking.fulfilledAt,
+      now
+    ),
+    false
+  );
+
+  const rendered = formatOrderTemplate(
+    DEFAULT_SETTINGS.trackingMessageTemplate,
+    {
+      customerName: 'Akash Bhatt',
+      orderNumber: '#1313',
+      totalPrice: '1075.00',
+      currency: 'INR',
+      lineItemsSummary: '1x Cookies',
+      trackingCompany: 'BlueDart',
+      trackingNumber: 'BD123456',
+      trackingUrl: 'https://bluedart.com/track/BD123456',
+    },
+    DEFAULT_SETTINGS
+  );
+  assert.match(rendered, /via BlueDart/);
+  assert.match(rendered, /https:\/\/bluedart\.com\/track\/BD123456/);
+});
+
+test('getSyncStartCutoffIso and isOrderOnOrAfterStartDate filter old orders accurately', () => {
+  assert.equal(getSyncStartCutoffIso('2026-11-13'), '2026-11-12T18:30:00.000Z');
+  assert.equal(isOrderOnOrAfterStartDate('2026-11-13T13:07:51+05:30', '2026-11-13'), true);
+  assert.equal(isOrderOnOrAfterStartDate('2026-11-12T23:59:59+05:30', '2026-11-13'), false);
+
+  const now = Date.parse('2026-11-13T12:00:00.000Z');
+  assert.equal(
+    shouldAutoDispatchPoll(
+      { pollStatus: 'queued', createdAt: '2026-11-12T23:50:00+05:30' },
+      { autoSendPollOnNewOrder: true, syncStartDate: '2026-11-13' },
+      now
+    ),
+    false
+  );
+  assert.equal(
+    shouldAutoDispatchPoll(
+      { pollStatus: 'queued', createdAt: '2026-11-13T00:05:00+05:30' },
+      { autoSendPollOnNewOrder: true, syncStartDate: '2026-11-13' },
+      now
+    ),
+    true
+  );
+});
+
+test('isTransientWhatsAppError, shouldPreserveRecentLocalTags, and selectPriorityAuthFiles enforce zero data loss', () => {
+  assert.equal(isTransientWhatsAppError('Connection Closed'), true);
+  assert.equal(isTransientWhatsAppError('Timed Out waiting for socket'), true);
+  assert.equal(isTransientWhatsAppError('Recipient not on WhatsApp'), false);
+
+  const now = Date.parse('2026-11-13T12:00:00.000Z');
+  assert.equal(
+    shouldPreserveRecentLocalTags(
+      { respondedAt: '2026-11-13T11:59:10.000Z', pollSentAt: null },
+      now
+    ),
+    true
+  );
+  assert.equal(
+    shouldPreserveRecentLocalTags(
+      { respondedAt: '2026-11-13T11:50:00.000Z', pollSentAt: null },
+      now
+    ),
+    false
+  );
+
+  const picked = selectPriorityAuthFiles(
+    [
+      { name: 'pre-key-999.json', size: 400 },
+      { name: 'session-9198.json', size: 1200 },
+      { name: 'creds.json', size: 2200 },
+      { name: 'app-state-sync-key-1.json', size: 500 },
+      { name: 'lid-mapping-1.json', size: 300 },
+      { name: 'pre-key-giant.json', size: 5000 },
+    ],
+    4500
+  );
+  assert.equal(picked[0], 'creds.json');
+  assert.ok(picked.includes('app-state-sync-key-1.json'));
+  assert.ok(picked.includes('lid-mapping-1.json'));
+  assert.ok(picked.includes('session-9198.json'));
+  assert.equal(picked.includes('pre-key-giant.json'), false);
+});
+
