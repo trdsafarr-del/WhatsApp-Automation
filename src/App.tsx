@@ -80,7 +80,9 @@ export default function App() {
       setOrders(data.orders);
       setMetrics(data.metrics);
       setWhatsapp(data.whatsapp);
-      setSettings(data.settings);
+      setSettings((prev) =>
+        JSON.stringify(prev) === JSON.stringify(data.settings) ? prev : data.settings
+      );
       setSelectedOrderId((prev) => prev || data.orders[0]?.id || null);
       setLoadError(null);
     } catch (err) {
@@ -94,15 +96,16 @@ export default function App() {
     void fetchDashboard();
   }, [fetchDashboard]);
 
-  // Poll backend smoothly every 3.5s while QR is waiting to be scanned or while orders are active
+  // Poll backend smoothly while QR is waiting or on live views, pausing while editing Settings
   useEffect(() => {
+    if (activeTab === 'settings') return;
     const intervalMs =
       whatsapp.status === 'qr_ready' || whatsapp.status === 'connecting' ? 2500 : 8000;
     const timer = setInterval(() => {
       void fetchDashboard();
     }, intervalMs);
     return () => clearInterval(timer);
-  }, [fetchDashboard, whatsapp.status]);
+  }, [fetchDashboard, whatsapp.status, activeTab]);
 
   const handleSimulateOrder = async (payload: {
     customerName: string;
