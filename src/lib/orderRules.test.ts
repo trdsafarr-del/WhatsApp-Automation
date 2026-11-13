@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
+  buildDeployEnvSnippet,
   computeOrderMetrics,
   extractShopifyCustomerPhone,
   extractShopifyTrackingInfo,
   formatOrderTemplate,
   formatPollPayload,
   getSyncStartCutoffIso,
+  hasConfiguredShopify,
   inferInitialPollStatus,
   isOrderOnOrAfterStartDate,
   isTransientWhatsAppError,
@@ -355,4 +357,39 @@ test('isTransientWhatsAppError, shouldPreserveRecentLocalTags, and selectPriorit
   assert.ok(picked.includes('session-9198.json'));
   assert.equal(picked.includes('pre-key-giant.json'), false);
 });
+
+test('hasConfiguredShopify and buildDeployEnvSnippet prepare clean deploy variables', () => {
+  assert.equal(
+    hasConfiguredShopify({
+      shopifyStoreDomain: 'https://broomiesbakery.myshopify.com',
+      shopifyClientId: 'cid',
+      shopifyClientSecret: 'csec',
+      shopifyAccessToken: '',
+    }),
+    true
+  );
+  assert.equal(
+    hasConfiguredShopify({
+      shopifyStoreDomain: '',
+      shopifyClientId: 'cid',
+      shopifyClientSecret: 'csec',
+      shopifyAccessToken: '',
+    }),
+    false
+  );
+
+  const snippet = buildDeployEnvSnippet({
+    shopName: 'Broomies Bakery',
+    shopifyStoreDomain: 'https://broomiesbakery.myshopify.com/',
+    shopifyClientId: 'cid123',
+    shopifyClientSecret: 'sec456',
+    shopifyWebhookSecret: '',
+    shopifyAccessToken: '',
+    syncStartDate: '2026-11-13',
+  });
+  assert.match(snippet, /SHOPIFY_STORE_DOMAIN=broomiesbakery\.myshopify\.com/);
+  assert.match(snippet, /SHOPIFY_CLIENT_ID=cid123/);
+  assert.match(snippet, /SYNC_START_DATE=2026-11-13/);
+});
+
 

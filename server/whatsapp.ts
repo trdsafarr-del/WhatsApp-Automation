@@ -123,6 +123,9 @@ class WhatsAppManager {
       await store.restoreAuthFiles(AUTH_DIR);
     }
     if (this.hasSavedAuth() && this.isAuthRegistered()) {
+      if (store.isCloudSyncEnabled()) {
+        void store.backupAuthFiles(AUTH_DIR);
+      }
       // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
       void this.connect('baileys_qr');
     } else if (this.hasSavedAuth() && !this.isAuthRegistered()) {

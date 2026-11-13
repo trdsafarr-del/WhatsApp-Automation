@@ -602,3 +602,63 @@ export function selectPriorityAuthFiles(
   return selected;
 }
 
+/**
+ * Normalizes a store domain string for checking/displaying and builds deployment env vars.
+ */
+export function hasConfiguredShopify(
+  settings: Pick<
+    AppSettings,
+    'shopifyStoreDomain' | 'shopifyClientId' | 'shopifyClientSecret' | 'shopifyAccessToken'
+  >
+): boolean {
+  const domain = (settings.shopifyStoreDomain || '').trim();
+  if (!domain) return false;
+  return Boolean(
+    settings.shopifyAccessToken.trim() ||
+      (settings.shopifyClientId.trim() && settings.shopifyClientSecret.trim())
+  );
+}
+
+/**
+ * Generates clean Environment Variable lines for pasting into Vercel / Railway / Render
+ * so Shopify credentials and date cutoffs persist automatically after every deploy.
+ */
+export function buildDeployEnvSnippet(
+  settings: Pick<
+    AppSettings,
+    | 'shopName'
+    | 'shopifyStoreDomain'
+    | 'shopifyClientId'
+    | 'shopifyClientSecret'
+    | 'shopifyWebhookSecret'
+    | 'shopifyAccessToken'
+    | 'syncStartDate'
+  >
+): string {
+  const domain = (settings.shopifyStoreDomain || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .toLowerCase();
+
+  const lines = [
+    `SHOPIFY_SHOP_NAME=${settings.shopName || 'Broomies Bakery'}`,
+    `SHOPIFY_STORE_DOMAIN=${domain}`,
+    `SHOPIFY_CLIENT_ID=${(settings.shopifyClientId || '').trim()}`,
+    `SHOPIFY_CLIENT_SECRET=${(settings.shopifyClientSecret || '').trim()}`,
+  ];
+
+  if (settings.shopifyWebhookSecret?.trim()) {
+    lines.push(`SHOPIFY_WEBHOOK_SECRET=${settings.shopifyWebhookSecret.trim()}`);
+  }
+  if (settings.shopifyAccessToken?.trim()) {
+    lines.push(`SHOPIFY_ACCESS_TOKEN=${settings.shopifyAccessToken.trim()}`);
+  }
+  if (settings.syncStartDate?.trim()) {
+    lines.push(`SYNC_START_DATE=${settings.syncStartDate.trim()}`);
+  }
+
+  return lines.join('\n');
+}
+
+

@@ -474,7 +474,7 @@ export default function App() {
             {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && (
               <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950 sm:flex-row sm:items-center">
                 <p className="leading-relaxed">
-                  <span className="font-semibold">Vercel Temporary Storage Active:</span> Without Redis (<span className="font-mono">KV_REST_API_URL</span> or <span className="font-mono">UPSTASH_REDIS_REST_URL</span>), refreshing resets temporary data and WhatsApp cannot stay connected 24/7 on Vercel alone. Connect free Upstash Redis in Vercel Env Vars or deploy on Railway/Render.
+                  <span className="font-semibold">Fresh Vercel Deploy Detected:</span> Shopify credentials saved in AI Studio stay on that server until you add <span className="font-mono">SHOPIFY_*</span> Env Vars or free Redis (<span className="font-mono">KV_REST_API_URL</span> / <span className="font-mono">UPSTASH_REDIS_REST_URL</span>) in Vercel Project Settings.
                 </p>
                 <button
                   type="button"
@@ -530,7 +530,11 @@ export default function App() {
                 onTestShopify={handleTestShopify}
               />
             ) : (
-              <SetupGuideView />
+              <SetupGuideView
+                settings={settings}
+                cloudSyncEnabled={cloudSyncEnabled}
+                whatsapp={whatsapp}
+              />
             )}
           </div>
         </main>

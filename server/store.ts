@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   DEFAULT_SETTINGS,
+  hasConfiguredShopify,
   isOrderOnOrAfterStartDate,
   selectPriorityAuthFiles,
 } from '../src/lib/orderRules.js';
@@ -42,6 +43,8 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
+    shopName:
+      settings.shopName || process.env.SHOPIFY_SHOP_NAME || DEFAULT_SETTINGS.shopName,
     shopifyStoreDomain:
       settings.shopifyStoreDomain || process.env.SHOPIFY_STORE_DOMAIN || '',
     shopifyClientId:
@@ -52,6 +55,8 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
       settings.shopifyAccessToken || process.env.SHOPIFY_ACCESS_TOKEN || '',
     shopifyWebhookSecret:
       settings.shopifyWebhookSecret || process.env.SHOPIFY_WEBHOOK_SECRET || '',
+    syncStartDate:
+      settings.syncStartDate || process.env.SYNC_START_DATE || DEFAULT_SETTINGS.syncStartDate,
   };
 }
 
@@ -215,6 +220,13 @@ class PersistentStore {
             },
           };
           this.writeLocalState(this.state);
+        } else if (
+          hasConfiguredShopify(this.state.settings) ||
+          this.state.orders.length > 0 ||
+          this.state.whatsappMeta.phoneNumber
+        ) {
+          // First time Redis is connected on an already-configured host: seed Redis immediately
+          await upstashSet(REDIS_DB_KEY, JSON.stringify(this.state));
         }
 
         if (remotePollsRaw) {
@@ -223,6 +235,8 @@ class PersistentStore {
             this.pollMessages = parsedPolls;
             this.writeLocalPollCache();
           }
+        } else if (Object.keys(this.pollMessages).length > 0) {
+          await upstashSet(REDIS_POLL_KEY, JSON.stringify(this.pollMessages));
         }
         this.lastHydratedAtMs = Date.now();
       } catch {
