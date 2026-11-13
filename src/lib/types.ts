@@ -72,6 +72,8 @@ export interface WhatsAppState {
   pushName: string | null;
   qrDataUrl: string | null;
   qrRaw: string | null;
+  pairingCode?: string | null;
+  isServerless?: boolean;
   connectedAt: string | null;
   lastHeartbeatAt: string | null;
   reconnectCount: number;

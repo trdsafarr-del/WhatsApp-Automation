@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   CheckCircle2,
+  KeyRound,
   Power,
   QrCode,
   RefreshCw,
@@ -12,7 +13,8 @@ import type { WhatsAppEngineMode, WhatsAppState } from '../lib/types';
 
 interface WhatsAppQrViewProps {
   whatsapp: WhatsAppState;
-  onConnect: (mode: WhatsAppEngineMode) => Promise<void>;
+  onConnect: (mode: WhatsAppEngineMode, fresh?: boolean) => Promise<void>;
+  onRequestPairingCode: (phoneNumber: string) => Promise<void>;
   onRestart: () => Promise<void>;
   onDisconnect: () => Promise<void>;
   isBusy: boolean;
@@ -21,13 +23,21 @@ interface WhatsAppQrViewProps {
 export function WhatsAppQrView({
   whatsapp,
   onConnect,
+  onRequestPairingCode,
   onRestart,
   onDisconnect,
   isBusy,
 }: WhatsAppQrViewProps) {
+  const [pairingPhone, setPairingPhone] = useState('');
   const isConnected = whatsapp.status === 'connected';
   const isQrReady = whatsapp.status === 'qr_ready' && Boolean(whatsapp.qrDataUrl);
   const isConnecting = whatsapp.status === 'connecting';
+
+  const formattedPairingCode = whatsapp.pairingCode
+    ? whatsapp.pairingCode.length === 8
+      ? `${whatsapp.pairingCode.slice(0, 4)}-${whatsapp.pairingCode.slice(4)}`
+      : whatsapp.pairingCode
+    : null;
 
   return (
     <div className="space-y-6">
@@ -38,9 +48,23 @@ export function WhatsAppQrView({
             Official WhatsApp Web QR Connection
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Link once via official WhatsApp Linked Devices QR. Credentials stay saved on disk so you never have to re-scan on server restarts.
+            Link once via official WhatsApp Linked Devices QR or 8-digit phone pairing code. Credentials stay saved so you never have to re-scan on server restarts.
           </p>
         </div>
+
+        {whatsapp.isServerless && (
+          <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+            <div>
+              <p className="font-semibold">
+                Serverless Environment Detected (Vercel)
+              </p>
+              <p className="mt-0.5 leading-relaxed">
+                Vercel stops serverless functions after each request, so live WhatsApp QR pairing and 24/7 message listening cannot stay open on <span className="font-mono">vercel.app</span> alone. Run this app on Railway, Render, Fly.io, or a VPS (<span className="font-mono">npm start</span>) to link WhatsApp QR permanently.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 2-Column QR Scanner & 24/7 Session Persistence Panel */}
@@ -69,7 +93,7 @@ export function WhatsAppQrView({
                 : isQrReady
                   ? 'Scan QR Now'
                   : isConnecting
-                    ? 'Generating QR...'
+                    ? 'Connecting...'
                     : 'Not Linked'}
             </span>
           </div>
@@ -144,42 +168,49 @@ export function WhatsAppQrView({
                   </button>
                 </div>
               </div>
-            ) : isQrReady && whatsapp.qrDataUrl ? (
-              <div className="space-y-4">
-                <div className="inline-block rounded-xl border border-slate-200 bg-white p-3">
-                  <img
-                    src={whatsapp.qrDataUrl}
-                    alt="Official WhatsApp Web QR Code"
-                    referrerPolicy="no-referrer"
-                    className="h-60 w-60 object-contain"
-                  />
-                </div>
-                <div className="max-w-sm space-y-1 text-sm text-slate-600">
-                  <p className="font-medium text-slate-900">
-                    Open WhatsApp → Settings → Linked Devices → Link a Device
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Scan once. Your session credentials stay saved automatically for 24/7 operation.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void onConnect('baileys_qr')}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                  Regenerate QR
-                </button>
-              </div>
             ) : (
-              <div className="w-full space-y-5 py-4">
-                <div className="mx-auto flex h-44 w-44 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
-                  <Smartphone className="h-8 w-8 text-slate-400" aria-hidden="true" />
-                  <p className="mt-2 text-xs font-medium text-slate-600">
-                    {isConnecting ? 'Connecting to WhatsApp...' : 'QR Session Idle'}
-                  </p>
-                </div>
+              <div className="w-full space-y-5">
+                {formattedPairingCode ? (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-5">
+                    <p className="text-xs font-medium text-emerald-900">
+                      Enter this 8-character code in WhatsApp → Linked Devices → Link with phone number instead:
+                    </p>
+                    <p
+                      data-testid="whatsapp-pairing-code"
+                      className="mt-3 font-mono text-3xl font-bold tracking-[0.2em] text-slate-900"
+                    >
+                      {formattedPairingCode}
+                    </p>
+                  </div>
+                ) : isQrReady && whatsapp.qrDataUrl ? (
+                  <div className="space-y-4">
+                    <div className="inline-block rounded-xl border border-slate-200 bg-white p-3">
+                      <img
+                        src={whatsapp.qrDataUrl}
+                        alt="Official WhatsApp Web QR Code"
+                        referrerPolicy="no-referrer"
+                        className="h-60 w-60 object-contain"
+                      />
+                    </div>
+                    <div className="mx-auto max-w-sm space-y-1 text-sm text-slate-600">
+                      <p className="font-medium text-slate-900">
+                        Open WhatsApp → Settings → Linked Devices → Link a Device
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        After scanning, wait 3–5 seconds while the secure session completes.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-2">
+                    <div className="mx-auto flex h-44 w-44 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                      <Smartphone className="h-8 w-8 text-slate-400" aria-hidden="true" />
+                      <p className="mt-2 text-xs font-medium text-slate-600">
+                        {isConnecting ? 'Completing WhatsApp handshake...' : 'QR Session Idle'}
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {whatsapp.lastError && (
                   <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-xs text-amber-800">
@@ -192,12 +223,48 @@ export function WhatsAppQrView({
                   <button
                     type="button"
                     disabled={isBusy}
-                    onClick={() => void onConnect('baileys_qr')}
+                    onClick={() => void onConnect('baileys_qr', true)}
                     className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-800 disabled:opacity-50 whitespace-nowrap shrink-0"
                   >
                     <QrCode className="h-4 w-4" aria-hidden="true" />
-                    {isConnecting ? 'Waiting for QR...' : 'Generate WhatsApp QR'}
+                    {isBusy
+                      ? 'Generating...'
+                      : isQrReady
+                        ? 'Reset & Fresh QR'
+                        : 'Generate WhatsApp QR'}
                   </button>
+                </div>
+
+                {/* Alternative 8-digit Pairing Code Option */}
+                <div className="border-t border-slate-200 pt-4 text-left">
+                  <label
+                    htmlFor="wa-pairing-phone"
+                    className="flex items-center gap-1.5 text-xs font-semibold text-slate-700"
+                  >
+                    <KeyRound className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                    Or link using your phone number (8-digit pairing code)
+                  </label>
+                  <p className="mt-1 text-xs text-slate-500">
+                    If camera QR scan is not working on your phone, enter your WhatsApp number with country code (e.g. <span className="font-mono">919876543210</span>).
+                  </p>
+                  <div className="mt-2.5 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      id="wa-pairing-phone"
+                      type="tel"
+                      value={pairingPhone}
+                      onChange={(e) => setPairingPhone(e.target.value)}
+                      placeholder="919876543210"
+                      className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus:border-emerald-700 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      disabled={isBusy || !pairingPhone.trim()}
+                      onClick={() => void onRequestPairingCode(pairingPhone)}
+                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap shrink-0"
+                    >
+                      Get Pairing Code
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -216,19 +283,19 @@ export function WhatsAppQrView({
           <div className="mt-5 space-y-5 text-sm text-slate-600">
             <div>
               <h4 className="font-medium text-slate-900">
-                1. One-Time QR Login (No Repeated Scanning)
+                1. One-Time QR / Pairing Login (No Repeated Scanning)
               </h4>
               <p className="mt-1 leading-relaxed">
-                Multi-device encryption keys are saved continuously to <span className="font-mono text-xs text-slate-800">data/wa-auth</span>. Whenever the server restarts, it automatically restores your WhatsApp link without logging out.
+                Multi-device encryption keys are saved continuously to <span className="font-mono text-xs text-slate-800">data/wa-auth</span> (and backed up to Upstash Redis when configured). Whenever the server restarts, it automatically restores your WhatsApp link without logging out.
               </p>
             </div>
 
             <div>
               <h4 className="font-medium text-slate-900">
-                2. Auto-Reconnect & 45s Keep-Alive Heartbeat
+                2. Seamless 515 Handshake &amp; Auto-Reconnect
               </h4>
               <p className="mt-1 leading-relaxed">
-                Transient network drops, stream resets (code 515), or idle timeouts automatically trigger exponential-backoff reconnection. Auth keys are cleared only if you manually tap Logout.
+                Post-scan stream restarts (code 515), transient drops, or idle timeouts flush <span className="font-mono text-xs text-slate-800">creds.json</span> before reconnecting automatically. Auth keys are cleared only if you tap Logout on your phone or dashboard.
               </p>
             </div>
 

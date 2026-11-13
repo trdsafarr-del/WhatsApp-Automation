@@ -66,14 +66,22 @@ async function startServer() {
   app.post('/api/whatsapp/connect', async (req: Request, res: Response) => {
     await store.ensureHydrated();
     const mode = req.body?.mode as AppSettings['whatsappMode'] | undefined;
-    const state = await whatsappManager.connect(mode);
+    const fresh = Boolean(req.body?.fresh);
+    const state = await whatsappManager.connect(mode, { fresh, waitForQr: true });
     res.json({ whatsapp: state });
+  });
+
+  app.post('/api/whatsapp/pairing-code', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const phoneNumber = String(req.body?.phoneNumber || '');
+    const state = await whatsappManager.requestPairingCode(phoneNumber);
+    res.status(state.lastError ? 400 : 200).json({ whatsapp: state });
   });
 
   app.post('/api/whatsapp/restart', async (_req: Request, res: Response) => {
     await store.ensureHydrated();
     const currentMode = store.getWhatsAppMeta().mode;
-    const state = await whatsappManager.connect(currentMode);
+    const state = await whatsappManager.connect(currentMode, { waitForQr: true });
     res.json({ whatsapp: state });
   });
 

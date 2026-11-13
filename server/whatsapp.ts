@@ -22,13 +22,16 @@ class WhatsAppManager {
   private status: WhatsAppState['status'] = 'disconnected';
   private qrDataUrl: string | null = null;
   private qrRaw: string | null = null;
+  private pairingCode: string | null = null;
   private lastHeartbeatAt: string | null = null;
   private reconnectCount = 0;
   private lastError: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private authBackupTimer: NodeJS.Timeout | null = null;
+  private credsSaveQueue: Promise<void> = Promise.resolve();
   private isInitializing = false;
+  private initialWaiters: Array<() => void> = [];
 
   constructor() {
     void this.restorePersistedSession();
@@ -38,15 +41,54 @@ class WhatsAppManager {
     return fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
   }
 
+  private isAuthRegistered(): boolean {
+    const credsPath = path.join(AUTH_DIR, 'creds.json');
+    if (!fs.existsSync(credsPath)) return false;
+    try {
+      const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8')) as { registered?: boolean };
+      return Boolean(raw.registered);
+    } catch {
+      return false;
+    }
+  }
+
+  private notifyWaiters() {
+    if (this.initialWaiters.length === 0) return;
+    const waiters = this.initialWaiters.splice(0);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  private waitForQrOrOpen(timeoutMs = 8000): Promise<void> {
+    if (this.status === 'qr_ready' || this.status === 'connected' || this.status === 'error') {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      this.initialWaiters.push(finish);
+    });
+  }
+
   private async restorePersistedSession() {
     if (process.env.VERCEL) return;
     await store.ensureHydrated();
     if (!this.hasSavedAuth() && store.isCloudSyncEnabled()) {
       await store.restoreAuthFiles(AUTH_DIR);
     }
-    if (this.hasSavedAuth()) {
+    if (this.hasSavedAuth() && this.isAuthRegistered()) {
       // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
       void this.connect('baileys_qr');
+    } else if (this.hasSavedAuth() && !this.isAuthRegistered()) {
+      // Clean up half-finished unregistered pairing files from an interrupted QR scan
+      this.clearAuthFiles();
     }
   }
 
@@ -90,15 +132,20 @@ class WhatsAppManager {
       pushName: meta.pushName,
       qrDataUrl: this.qrDataUrl,
       qrRaw: this.qrRaw,
+      pairingCode: this.pairingCode,
+      isServerless: Boolean(process.env.VERCEL),
       connectedAt: meta.connectedAt,
       lastHeartbeatAt: this.lastHeartbeatAt,
       reconnectCount: this.reconnectCount,
-      sessionPersisted: this.hasSavedAuth(),
+      sessionPersisted: this.hasSavedAuth() && this.isAuthRegistered(),
       lastError: this.lastError,
     };
   }
 
-  async connect(requestedMode?: WhatsAppEngineMode): Promise<WhatsAppState> {
+  async connect(
+    requestedMode?: WhatsAppEngineMode,
+    options?: { fresh?: boolean; waitForQr?: boolean }
+  ): Promise<WhatsAppState> {
     const mode: WhatsAppEngineMode = requestedMode || 'baileys_qr';
     store.updateWhatsAppMeta({ mode });
     store.updateSettings({ whatsappMode: mode });
@@ -109,14 +156,34 @@ class WhatsAppManager {
       this.reconnectTimer = null;
     }
 
-    if (this.isInitializing) return this.getState();
+    if (this.isInitializing) {
+      if (options?.waitForQr !== false) {
+        await this.waitForQrOrOpen();
+      }
+      return this.getState();
+    }
+
     this.isInitializing = true;
     this.status = 'connecting';
     this.qrDataUrl = null;
     this.qrRaw = null;
+    if (options?.fresh) {
+      this.pairingCode = null;
+    }
 
     try {
+      // Wait for any in-flight creds.json save (especially during 515 post-scan restart)
+      await this.credsSaveQueue;
       await this.closeSocketOnly();
+
+      // Clean stale unregistered pairing files when user explicitly requests a fresh QR
+      if (options?.fresh || (this.hasSavedAuth() && !this.isAuthRegistered() && !this.pairingCode)) {
+        // Only wipe if not currently mid-handshake (`reconnectCount` > 0 or 515 keeps creds)
+        if (options?.fresh) {
+          this.clearAuthFiles();
+        }
+      }
+
       if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       }
@@ -124,7 +191,7 @@ class WhatsAppManager {
         await store.restoreAuthFiles(AUTH_DIR);
       }
 
-      if (!this.hasSavedAuth()) {
+      if (!this.isAuthRegistered()) {
         store.updateWhatsAppMeta({
           mode: 'baileys_qr',
           connectedAt: null,
@@ -140,6 +207,7 @@ class WhatsAppManager {
       ]);
       const makeWASocket = baileys.default;
       const {
+        Browsers,
         DisconnectReason,
         fetchLatestBaileysVersion,
         getAggregateVotesInPollMessage,
@@ -169,8 +237,10 @@ class WhatsAppManager {
         printQRInTerminal: false,
         markOnlineOnConnect: false,
         syncFullHistory: false,
-        browser: ['OrderPulse', 'Chrome', '128.0.0'],
+        browser: Browsers.macOS('Chrome'),
+        connectTimeoutMs: 45_000,
         keepAliveIntervalMs: 30_000,
+        qrTimeout: 60_000,
         getMessage: async (key) => {
           if (!key.id) return undefined;
           const cached = store.getPollMessage(key.id) as WAMessage | undefined;
@@ -180,9 +250,15 @@ class WhatsAppManager {
 
       this.sock = sock;
 
-      sock.ev.on('creds.update', async () => {
-        await saveCreds();
-        this.scheduleAuthBackup();
+      sock.ev.on('creds.update', () => {
+        this.credsSaveQueue = this.credsSaveQueue
+          .then(() => saveCreds())
+          .then(() => {
+            this.scheduleAuthBackup();
+          })
+          .catch(() => {
+            // Keep queue healthy
+          });
       });
 
       sock.ev.on('connection.update', async (update) => {
@@ -197,6 +273,7 @@ class WhatsAppManager {
           });
           this.status = 'qr_ready';
           this.lastError = null;
+          this.notifyWaiters();
         }
 
         if (connection === 'open') {
@@ -205,6 +282,7 @@ class WhatsAppManager {
           this.reconnectCount = 0;
           this.qrDataUrl = null;
           this.qrRaw = null;
+          this.pairingCode = null;
           this.lastHeartbeatAt = now;
           this.lastError = null;
           const userId = sock.user?.id || '';
@@ -216,6 +294,7 @@ class WhatsAppManager {
           });
           this.scheduleAuthBackup();
           this.startHeartbeat();
+          this.notifyWaiters();
           void this.flushQueuedOrders();
         }
 
@@ -230,29 +309,64 @@ class WhatsAppManager {
               : 'WhatsApp socket closed';
 
           const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+          const isRestartRequired = statusCode === DisconnectReason.restartRequired;
+          const isQrTimeout =
+            !this.isAuthRegistered() &&
+            (errMessage.toLowerCase().includes('qr refs attempts ended') ||
+              statusCode === DisconnectReason.timedOut);
+          const isBadSession =
+            statusCode === DisconnectReason.badSession ||
+            statusCode === DisconnectReason.multideviceMismatch;
 
-          if (isLoggedOut) {
+          if (isLoggedOut || isBadSession) {
             this.clearAuthFiles();
             void store.clearRemoteAuth();
             this.status = 'disconnected';
             this.qrDataUrl = null;
             this.qrRaw = null;
-            this.lastError = 'Device logged out from WhatsApp phone. Scan QR again to relink.';
+            this.pairingCode = null;
+            this.lastError = isLoggedOut
+              ? 'Device logged out from WhatsApp phone. Click Generate WhatsApp QR to link again.'
+              : 'Session expired or mismatched. Click Generate WhatsApp QR to link fresh.';
             store.updateWhatsAppMeta({
               connectedAt: null,
               phoneNumber: null,
               pushName: null,
             });
+            this.notifyWaiters();
+          } else if (isRestartRequired) {
+            // Normal post-QR-scan handshake: flush creds.json and reconnect immediately without error flash
+            this.status = 'connecting';
+            this.lastError = null;
+            await this.credsSaveQueue;
+            if (!process.env.VERCEL) {
+              if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+              this.reconnectTimer = setTimeout(() => {
+                void this.connect('baileys_qr', { waitForQr: false });
+              }, 250);
+            }
+          } else if (isQrTimeout) {
+            // Stop cleanly when QR wasn't scanned within 60s instead of spinning forever
+            this.clearAuthFiles();
+            this.status = 'disconnected';
+            this.qrDataUrl = null;
+            this.qrRaw = null;
+            this.pairingCode = null;
+            this.lastError = 'QR code expired after 60s without scanning. Click Generate WhatsApp QR to get a new one.';
+            this.notifyWaiters();
           } else if (!process.env.VERCEL) {
-            // Auto-reconnect 24/7 for transient drops, stream errors (515), or timeouts without logging out
+            // Auto-reconnect 24/7 for transient drops without logging out
             this.reconnectCount += 1;
             this.status = 'connecting';
             this.lastError = errMessage;
-            const delayMs = Math.min(30_000, 3_000 * Math.min(this.reconnectCount, 6));
+            const delayMs = Math.min(30_000, 2_500 * Math.min(this.reconnectCount, 6));
             if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
             this.reconnectTimer = setTimeout(() => {
-              void this.connect('baileys_qr');
+              void this.connect('baileys_qr', { waitForQr: false });
             }, delayMs);
+            this.notifyWaiters();
+          } else {
+            this.notifyWaiters();
           }
         }
       });
@@ -316,14 +430,54 @@ class WhatsAppManager {
           }
         }
       });
+
+      if (options?.waitForQr !== false) {
+        await this.waitForQrOrOpen(8000);
+      }
     } catch (err) {
       this.status = 'error';
       this.lastError =
         err instanceof Error
           ? err.message
           : 'Unable to start WhatsApp Web QR socket in this network environment.';
+      this.notifyWaiters();
     } finally {
       this.isInitializing = false;
+    }
+
+    return this.getState();
+  }
+
+  /**
+   * Alternative 8-digit Pairing Code login ("Link with phone number instead")
+   * when camera QR scanning is inconvenient or failing.
+   */
+  async requestPairingCode(rawPhoneNumber: string): Promise<WhatsAppState> {
+    const settings = store.getSettings();
+    const jid = normalizePhoneToWhatsAppJid(rawPhoneNumber, settings.defaultCountryCode);
+    if (!jid) {
+      this.lastError = 'Enter a valid WhatsApp phone number with country code (e.g. 919876543210).';
+      return this.getState();
+    }
+    const digits = jid.split('@')[0];
+
+    await this.connect('baileys_qr', { fresh: true, waitForQr: true });
+    if (!this.sock) {
+      this.lastError = 'Unable to open WhatsApp socket for pairing code.';
+      return this.getState();
+    }
+    if (this.status === 'connected') {
+      return this.getState();
+    }
+
+    try {
+      const code = await this.sock.requestPairingCode(digits);
+      this.pairingCode = code;
+      this.status = 'qr_ready';
+      this.lastError = null;
+    } catch (err) {
+      this.lastError =
+        err instanceof Error ? err.message : 'Failed to generate 8-digit WhatsApp pairing code.';
     }
 
     return this.getState();
@@ -382,6 +536,7 @@ class WhatsAppManager {
     this.status = 'disconnected';
     this.qrDataUrl = null;
     this.qrRaw = null;
+    this.pairingCode = null;
     this.lastHeartbeatAt = null;
     this.lastError = null;
     store.updateWhatsAppMeta({
@@ -519,7 +674,6 @@ class WhatsAppManager {
           : `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}"`,
     });
 
-    // Send polite WhatsApp acknowledgement on real customer poll/text response
     if (
       (channel === 'whatsapp_poll' || channel === 'whatsapp_text') &&
       this.sock &&

@@ -170,16 +170,33 @@ export default function App() {
     }
   };
 
-  const handleWhatsAppConnect = async (mode: WhatsAppEngineMode) => {
+  const handleWhatsAppConnect = async (mode: WhatsAppEngineMode, fresh = false) => {
     setWhatsappBusy(true);
     try {
       const res = await fetch('/api/whatsapp/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, fresh }),
       });
       if (res.ok) {
         const data = (await res.json()) as { whatsapp: WhatsAppState };
+        setWhatsapp(data.whatsapp);
+      }
+    } finally {
+      setWhatsappBusy(false);
+    }
+  };
+
+  const handleWhatsAppPairingCode = async (phoneNumber: string) => {
+    setWhatsappBusy(true);
+    try {
+      const res = await fetch('/api/whatsapp/pairing-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber }),
+      });
+      const data = (await res.json()) as { whatsapp?: WhatsAppState };
+      if (data.whatsapp) {
         setWhatsapp(data.whatsapp);
       }
     } finally {
@@ -411,6 +428,7 @@ export default function App() {
               <WhatsAppQrView
                 whatsapp={whatsapp}
                 onConnect={handleWhatsAppConnect}
+                onRequestPairingCode={handleWhatsAppPairingCode}
                 onRestart={handleWhatsAppRestart}
                 onDisconnect={handleWhatsAppDisconnect}
                 isBusy={whatsappBusy}
