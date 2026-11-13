@@ -1,4 +1,9 @@
 import crypto from 'node:crypto';
+import {
+  DEFAULT_SETTINGS,
+  extractShopifyCustomerPhone,
+  inferInitialPollStatus,
+} from '../src/lib/orderRules.js';
 import type { AppSettings, OrderRecord } from '../src/lib/types.js';
 
 export interface ShopifyRawOrder {
@@ -6,10 +11,17 @@ export interface ShopifyRawOrder {
   name?: string;
   order_number?: number;
   created_at?: string;
+  cancelled_at?: string | null;
   total_price?: string;
   currency?: string;
   financial_status?: string;
+  payment_gateway_names?: string[];
   tags?: string;
+  note?: string | null;
+  note_attributes?: Array<{
+    name?: string;
+    value?: string | number | null;
+  }>;
   phone?: string | null;
   email?: string | null;
   customer?: {
@@ -17,15 +29,22 @@ export interface ShopifyRawOrder {
     last_name?: string;
     phone?: string | null;
     email?: string | null;
-  };
+    default_address?: {
+      phone?: string | null;
+    } | null;
+  } | null;
   shipping_address?: {
     name?: string;
     phone?: string | null;
-  };
+    address1?: string | null;
+    city?: string | null;
+    province?: string | null;
+    zip?: string | null;
+  } | null;
   billing_address?: {
     name?: string;
     phone?: string | null;
-  };
+  } | null;
   line_items?: Array<{
     title?: string;
     quantity?: number;
@@ -74,7 +93,29 @@ export function verifyShopifyWebhookHmac(
   return crypto.timingSafeEqual(computedBuf, headerBuf);
 }
 
-export function parseShopifyRawOrder(raw: ShopifyRawOrder): OrderRecord {
+function inferPaymentMethod(raw: ShopifyRawOrder): string {
+  const gateways = Array.isArray(raw.payment_gateway_names)
+    ? raw.payment_gateway_names.join(' ').toLowerCase()
+    : '';
+  const tags = (raw.tags || '').toLowerCase();
+  if (
+    gateways.includes('cod') ||
+    gateways.includes('cash on delivery') ||
+    tags.includes('cod') ||
+    raw.financial_status === 'pending'
+  ) {
+    return 'COD';
+  }
+  if (raw.financial_status === 'paid') {
+    return 'Prepaid';
+  }
+  return (raw.financial_status || 'Pending').toUpperCase();
+}
+
+export function parseShopifyRawOrder(
+  raw: ShopifyRawOrder,
+  settings: Pick<AppSettings, 'confirmTag' | 'cancelTag'> = DEFAULT_SETTINGS
+): OrderRecord {
   const shopifyOrderId = String(raw.id);
   const orderNumber =
     raw.name || (raw.order_number ? `#${raw.order_number}` : `#${shopifyOrderId.slice(-4)}`);
@@ -87,13 +128,7 @@ export function parseShopifyRawOrder(raw: ShopifyRawOrder): OrderRecord {
     raw.billing_address?.name?.trim() ||
     'Shopify Customer';
 
-  const customerPhone =
-    raw.shipping_address?.phone ||
-    raw.customer?.phone ||
-    raw.phone ||
-    raw.billing_address?.phone ||
-    '';
-
+  const customerPhone = extractShopifyCustomerPhone(raw);
   const customerEmail = raw.email || raw.customer?.email || '';
 
   const lineItemsSummary =
@@ -107,6 +142,16 @@ export function parseShopifyRawOrder(raw: ShopifyRawOrder): OrderRecord {
           .join(', ')
       : 'Order items';
 
+  const deliveryParts = [
+    raw.shipping_address?.address1?.trim(),
+    raw.shipping_address?.city?.trim(),
+    raw.shipping_address?.zip?.trim(),
+  ].filter(Boolean);
+  const deliverySummary = deliveryParts.join(', ');
+  const paymentMethod = inferPaymentMethod(raw);
+  const orderNote = raw.note?.trim() || '';
+  const initialPollStatus = inferInitialPollStatus(raw, settings);
+
   const now = new Date().toISOString();
   const createdAt = raw.created_at || now;
 
@@ -115,14 +160,17 @@ export function parseShopifyRawOrder(raw: ShopifyRawOrder): OrderRecord {
     shopifyOrderId,
     orderNumber,
     customerName: fullName,
-    customerPhone: customerPhone.trim(),
+    customerPhone,
     customerEmail,
     totalPrice: raw.total_price || '0.00',
     currency: raw.currency || 'INR',
     lineItemsSummary,
     financialStatus: raw.financial_status || 'pending',
+    paymentMethod,
+    deliverySummary,
+    orderNote,
     shopifyTags: raw.tags || '',
-    pollStatus: 'queued',
+    pollStatus: initialPollStatus,
     whatsappMessageId: null,
     pollQuestion: '',
     pollSentAt: null,
@@ -135,7 +183,7 @@ export function parseShopifyRawOrder(raw: ShopifyRawOrder): OrderRecord {
         id: `evt-${Date.now()}-init`,
         timestamp: now,
         actor: 'shopify',
-        message: `Shopify order ${orderNumber} ingested (${raw.financial_status || 'pending'})`,
+        message: `Shopify order ${orderNumber} read (${paymentMethod} · ${customerPhone || 'no phone'})`,
       },
     ],
   };

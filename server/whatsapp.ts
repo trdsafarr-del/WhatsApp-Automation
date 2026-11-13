@@ -7,6 +7,7 @@ import {
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
+  shouldAutoDispatchPoll,
 } from '../src/lib/orderRules.js';
 import type { OrderRecord, WhatsAppEngineMode, WhatsAppState } from '../src/lib/types.js';
 import { hasLiveShopifyCredentials, updateShopifyOrderTags } from './shopify.js';
@@ -26,21 +27,35 @@ class WhatsAppManager {
   private lastError: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private authBackupTimer: NodeJS.Timeout | null = null;
   private isInitializing = false;
 
   constructor() {
-    this.restorePersistedSession();
+    void this.restorePersistedSession();
   }
 
   private hasSavedAuth(): boolean {
     return fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
   }
 
-  private restorePersistedSession() {
-    if (!process.env.VERCEL && this.hasSavedAuth()) {
+  private async restorePersistedSession() {
+    if (process.env.VERCEL) return;
+    await store.ensureHydrated();
+    if (!this.hasSavedAuth() && store.isCloudSyncEnabled()) {
+      await store.restoreAuthFiles(AUTH_DIR);
+    }
+    if (this.hasSavedAuth()) {
       // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
       void this.connect('baileys_qr');
     }
+  }
+
+  private scheduleAuthBackup() {
+    if (!store.isCloudSyncEnabled()) return;
+    if (this.authBackupTimer) clearTimeout(this.authBackupTimer);
+    this.authBackupTimer = setTimeout(() => {
+      void store.backupAuthFiles(AUTH_DIR);
+    }, 1500);
   }
 
   private startHeartbeat() {
@@ -94,25 +109,28 @@ class WhatsAppManager {
       this.reconnectTimer = null;
     }
 
-    // Real Baileys WhatsApp Web QR Multi-Device Session
     if (this.isInitializing) return this.getState();
     this.isInitializing = true;
     this.status = 'connecting';
     this.qrDataUrl = null;
     this.qrRaw = null;
-    if (!this.hasSavedAuth()) {
-      store.updateWhatsAppMeta({
-        mode: 'baileys_qr',
-        connectedAt: null,
-        phoneNumber: null,
-        pushName: null,
-      });
-    }
 
     try {
       await this.closeSocketOnly();
       if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
+      }
+      if (!this.hasSavedAuth() && store.isCloudSyncEnabled()) {
+        await store.restoreAuthFiles(AUTH_DIR);
+      }
+
+      if (!this.hasSavedAuth()) {
+        store.updateWhatsAppMeta({
+          mode: 'baileys_qr',
+          connectedAt: null,
+          phoneNumber: null,
+          pushName: null,
+        });
       }
 
       const [baileys, pinoMod, qrMod] = await Promise.all([
@@ -125,6 +143,7 @@ class WhatsAppManager {
         DisconnectReason,
         fetchLatestBaileysVersion,
         getAggregateVotesInPollMessage,
+        jidNormalizedUser,
         makeCacheableSignalKeyStore,
         useMultiFileAuthState,
       } = baileys;
@@ -148,9 +167,9 @@ class WhatsAppManager {
           keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
         printQRInTerminal: false,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: false,
         syncFullHistory: false,
-        browser: ['OrderPulse Shopify', 'Chrome', '128.0.0'],
+        browser: ['OrderPulse', 'Chrome', '128.0.0'],
         keepAliveIntervalMs: 30_000,
         getMessage: async (key) => {
           if (!key.id) return undefined;
@@ -161,7 +180,10 @@ class WhatsAppManager {
 
       this.sock = sock;
 
-      sock.ev.on('creds.update', saveCreds);
+      sock.ev.on('creds.update', async () => {
+        await saveCreds();
+        this.scheduleAuthBackup();
+      });
 
       sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -180,6 +202,7 @@ class WhatsAppManager {
         if (connection === 'open') {
           const now = new Date().toISOString();
           this.status = 'connected';
+          this.reconnectCount = 0;
           this.qrDataUrl = null;
           this.qrRaw = null;
           this.lastHeartbeatAt = now;
@@ -191,7 +214,9 @@ class WhatsAppManager {
             phoneNumber: userId ? formatJidToDisplayPhone(userId) : 'Linked Device',
             pushName: sock.user?.name || 'WhatsApp Business',
           });
+          this.scheduleAuthBackup();
           this.startHeartbeat();
+          void this.flushQueuedOrders();
         }
 
         if (connection === 'close') {
@@ -208,6 +233,7 @@ class WhatsAppManager {
 
           if (isLoggedOut) {
             this.clearAuthFiles();
+            void store.clearRemoteAuth();
             this.status = 'disconnected';
             this.qrDataUrl = null;
             this.qrRaw = null;
@@ -217,17 +243,15 @@ class WhatsAppManager {
               phoneNumber: null,
               pushName: null,
             });
-          } else if (!process.env.VERCEL && store.getWhatsAppMeta().mode === 'baileys_qr') {
-            // Auto-reconnect 24/7 for transient drops, stream errors (515), or timeouts
+          } else if (!process.env.VERCEL) {
+            // Auto-reconnect 24/7 for transient drops, stream errors (515), or timeouts without logging out
             this.reconnectCount += 1;
             this.status = 'connecting';
             this.lastError = errMessage;
             const delayMs = Math.min(30_000, 3_000 * Math.min(this.reconnectCount, 6));
             if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
             this.reconnectTimer = setTimeout(() => {
-              if (store.getWhatsAppMeta().mode === 'baileys_qr') {
-                void this.connect('baileys_qr');
-              }
+              void this.connect('baileys_qr');
             }, delayMs);
           }
         }
@@ -235,6 +259,7 @@ class WhatsAppManager {
 
       // Listen for native WhatsApp Poll vote updates
       sock.ev.on('messages.update', async (updates) => {
+        const normalizedSelfJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : undefined;
         for (const { key, update } of updates) {
           if (!update.pollUpdates || !key.id) continue;
           const pollCreationMsg = store.getPollMessage(key.id) as WAMessage | undefined;
@@ -246,10 +271,9 @@ class WhatsAppManager {
                 message: pollCreationMsg.message,
                 pollUpdates: update.pollUpdates,
               },
-              sock.user?.id
+              normalizedSelfJid || sock.user?.id
             );
 
-            // Pick the option that currently has a voter
             const selected = votes.find((v) => v.voters && v.voters.length > 0);
             if (!selected) continue;
 
@@ -263,7 +287,7 @@ class WhatsAppManager {
         }
       });
 
-      // Listen for fallback text replies ("1", "2", "confirm", "cancel")
+      // Listen for fallback text replies ("1", "2", "confirm", "cancel", "yes", "no")
       sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
           if (msg.key.fromMe || !msg.message || !msg.key.remoteJid) continue;
@@ -277,8 +301,15 @@ class WhatsAppManager {
           const resolution = resolvePollVoteAction(text, settings);
           if (!resolution) continue;
 
-          const senderDigits = msg.key.remoteJid.split('@')[0].replace(/\D/g, '');
+          const keyWithAlt = msg.key as typeof msg.key & {
+            remoteJidAlt?: string;
+            participantAlt?: string;
+          };
+          const resolvedJid =
+            keyWithAlt.remoteJidAlt || keyWithAlt.participantAlt || msg.key.remoteJid;
+          const senderDigits = resolvedJid.split('@')[0].replace(/\D/g, '');
           if (!senderDigits) continue;
+
           const order = store.findLatestPendingOrderByPhone(senderDigits);
           if (order) {
             await this.applyVoteToOrder(order.id, text, 'whatsapp_text');
@@ -296,6 +327,17 @@ class WhatsAppManager {
     }
 
     return this.getState();
+  }
+
+  async flushQueuedOrders(): Promise<void> {
+    if (!this.sock || this.status !== 'connected') return;
+    const settings = store.getSettings();
+    const queued = store.getQueuedOrders();
+    for (const order of queued) {
+      if (shouldAutoDispatchPoll(order, settings)) {
+        await this.dispatchOrderPoll(order);
+      }
+    }
   }
 
   private async closeSocketOnly() {
@@ -335,6 +377,7 @@ class WhatsAppManager {
     await this.closeSocketOnly();
     if (clearAuth) {
       this.clearAuthFiles();
+      void store.clearRemoteAuth();
     }
     this.status = 'disconnected';
     this.qrDataUrl = null;
@@ -369,10 +412,19 @@ class WhatsAppManager {
       return store.getOrderById(order.id) || order;
     }
 
-    // Live Baileys WhatsApp Web Socket
     if (this.sock && this.status === 'connected') {
       try {
-        const sent = await this.sock.sendMessage(jid, {
+        let targetJid = jid;
+        try {
+          const check = await this.sock.onWhatsApp(jid);
+          if (Array.isArray(check) && check[0]?.jid) {
+            targetJid = check[0].jid;
+          }
+        } catch {
+          // Proceed with normalized JID if onWhatsApp lookup is unavailable
+        }
+
+        const sent = await this.sock.sendMessage(targetJid, {
           poll: {
             name: question,
             values: options,
@@ -403,12 +455,11 @@ class WhatsAppManager {
       }
     }
 
-    // If WhatsApp isn't connected yet, keep order queued so user can resend after linking QR
     order.pollStatus = 'queued';
     store.upsertOrder(order);
     store.appendOrderEvent(order.id, {
       actor: 'system',
-      message: 'WhatsApp QR not linked yet — order queued. Scan WhatsApp QR to dispatch.',
+      message: 'WhatsApp QR not linked yet — order queued and will send automatically once linked.',
     });
     return store.getOrderById(order.id) || order;
   }
@@ -456,7 +507,7 @@ class WhatsAppManager {
 
     store.appendOrderEvent(order.id, {
       actor: 'customer',
-      message: `Customer clicked "${optionDisplay}" (${channel.replace('_', ' ')})`,
+      message: `Customer selected "${optionDisplay}" (${channel.replace('_', ' ')})`,
     });
 
     store.appendOrderEvent(order.id, {
@@ -467,6 +518,29 @@ class WhatsAppManager {
           ? `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}" via Admin API`
           : `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}"`,
     });
+
+    // Send polite WhatsApp acknowledgement on real customer poll/text response
+    if (
+      (channel === 'whatsapp_poll' || channel === 'whatsapp_text') &&
+      this.sock &&
+      this.status === 'connected'
+    ) {
+      const jid = normalizePhoneToWhatsAppJid(
+        order.customerPhone,
+        settings.defaultCountryCode
+      );
+      if (jid) {
+        const replyText =
+          resolution.decision === 'confirm'
+            ? `Thank you ${order.customerName}! Your order ${order.orderNumber} at ${settings.shopName} is confirmed.`
+            : `Your order ${order.orderNumber} at ${settings.shopName} has been marked as cancelled as requested.`;
+        try {
+          await this.sock.sendMessage(jid, { text: replyText });
+        } catch {
+          // Non-fatal if acknowledgement message cannot be sent
+        }
+      }
+    }
 
     return store.getOrderById(order.id) || order;
   }

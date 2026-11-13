@@ -32,6 +32,9 @@ export interface OrderRecord {
   currency: string;
   lineItemsSummary: string;
   financialStatus: string;
+  paymentMethod?: string;
+  deliverySummary?: string;
+  orderNote?: string;
   shopifyTags: string;
   pollStatus: PollStatus;
   whatsappMessageId: string | null;
@@ -90,5 +93,6 @@ export interface DashboardPayload {
   whatsapp: WhatsAppState;
   settings: AppSettings;
   metrics: OrderMetrics;
+  cloudSyncEnabled?: boolean;
   serverTime: string;
 }

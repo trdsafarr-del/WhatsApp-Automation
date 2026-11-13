@@ -360,7 +360,7 @@ export function OrdersView({
                 </button>
               </div>
 
-              {/* Order Items & Current Shopify Tag */}
+              {/* Order Items, Delivery, Note & Current Shopify Tag */}
               <div className="mt-4 space-y-2 border-b border-slate-200 pb-4 text-sm">
                 <div className="flex items-start justify-between gap-4">
                   <span className="text-slate-500">Items</span>
@@ -368,6 +368,30 @@ export function OrdersView({
                     {selectedOrder.lineItemsSummary}
                   </span>
                 </div>
+                {selectedOrder.paymentMethod && (
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-slate-500">Payment</span>
+                    <span className="font-mono text-xs font-medium text-slate-800">
+                      {selectedOrder.paymentMethod}
+                    </span>
+                  </div>
+                )}
+                {selectedOrder.deliverySummary && (
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-slate-500">Delivery</span>
+                    <span className="text-right text-xs text-slate-700">
+                      {selectedOrder.deliverySummary}
+                    </span>
+                  </div>
+                )}
+                {selectedOrder.orderNote && (
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-slate-500">Order Note</span>
+                    <span className="text-right text-xs font-medium text-amber-800">
+                      {selectedOrder.orderNote}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between gap-4">
                   <span className="inline-flex items-center gap-1.5 text-slate-500">
                     <Tag className="h-3.5 w-3.5" aria-hidden="true" />

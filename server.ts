@@ -2,16 +2,17 @@ import 'dotenv/config';
 import express, { type Request, type Response } from 'express';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
-import { computeOrderMetrics } from './src/lib/orderRules.js';
-import type { AppSettings, OrderRecord } from './src/lib/types.js';
+import { computeOrderMetrics, shouldAutoDispatchPoll } from './src/lib/orderRules.js';
+import type { AppSettings } from './src/lib/types.js';
 import {
-  fetchShopifyOrders,
+  hasLiveShopifyCredentials,
   parseShopifyRawOrder,
   testShopifyConnection,
   verifyShopifyWebhookHmac,
   type ShopifyRawOrder,
 } from './server/shopify.js';
 import { store } from './server/store.js';
+import { syncShopifyOrdersNow } from './server/sync.js';
 import { whatsappManager } from './server/whatsapp.js';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -21,6 +22,8 @@ interface RawBodyRequest extends Request {
 }
 
 async function startServer() {
+  await store.ensureHydrated(true);
+
   const app = express();
 
   app.use(
@@ -32,34 +35,43 @@ async function startServer() {
   );
 
   // Healthcheck for uptime monitors (UptimeRobot / Cron-Job.org 24/7 keep-alive)
-  app.get('/api/health', (_req: Request, res: Response) => {
+  app.get('/api/health', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
     res.json({
       ok: true,
       whatsappStatus: whatsappManager.getState().status,
+      cloudSyncEnabled: store.isCloudSyncEnabled(),
       timestamp: new Date().toISOString(),
     });
   });
 
-  // Full dashboard snapshot
-  app.get('/api/dashboard', (_req: Request, res: Response) => {
+  // Full dashboard snapshot (shared across all devices)
+  app.get('/api/dashboard', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
+    if (hasLiveShopifyCredentials(store.getSettings())) {
+      void syncShopifyOrdersNow('auto');
+    }
     const orders = store.getOrders();
     res.json({
       orders,
       whatsapp: whatsappManager.getState(),
       settings: store.getSettings(),
       metrics: computeOrderMetrics(orders),
+      cloudSyncEnabled: store.isCloudSyncEnabled(),
       serverTime: new Date().toISOString(),
     });
   });
 
   // WhatsApp QR / Session controls
   app.post('/api/whatsapp/connect', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
     const mode = req.body?.mode as AppSettings['whatsappMode'] | undefined;
     const state = await whatsappManager.connect(mode);
     res.json({ whatsapp: state });
   });
 
   app.post('/api/whatsapp/restart', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
     const currentMode = store.getWhatsAppMeta().mode;
     const state = await whatsappManager.connect(currentMode);
     res.json({ whatsapp: state });
@@ -71,7 +83,8 @@ async function startServer() {
   });
 
   // Save Shopify & Poll automation settings
-  app.post('/api/settings', (req: Request, res: Response) => {
+  app.post('/api/settings', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
     const body = (req.body || {}) as Partial<AppSettings>;
     const cur = store.getSettings();
     const updated = store.updateSettings({
@@ -102,36 +115,24 @@ async function startServer() {
 
   // Test live Shopify Admin API connection
   app.post('/api/shopify/test', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
     const result = await testShopifyConnection(store.getSettings());
     res.status(result.ok ? 200 : 400).json(result);
   });
 
-  // Pull recent orders from Shopify Admin API & optionally send polls
+  // Pull recent orders from Shopify Admin API & automatically dispatch polls
   app.post('/api/shopify/sync', async (_req: Request, res: Response) => {
-    const settings = store.getSettings();
-    const fetched = await fetchShopifyOrders(settings);
-    if (!fetched.ok) {
-      res.status(400).json(fetched);
+    const result = await syncShopifyOrdersNow('manual');
+    if (!result.ok) {
+      res.status(400).json(result);
       return;
-    }
-
-    let importedCount = 0;
-    for (const raw of fetched.orders) {
-      const existing = store.getOrderByShopifyId(String(raw.id));
-      if (!existing) {
-        const parsed = parseShopifyRawOrder(raw);
-        store.upsertOrder(parsed);
-        importedCount += 1;
-        if (settings.autoSendPollOnNewOrder) {
-          await whatsappManager.dispatchOrderPoll(parsed);
-        }
-      }
     }
 
     const orders = store.getOrders();
     res.json({
       ok: true,
-      importedCount,
+      importedCount: result.importedCount,
+      dispatchedCount: result.dispatchedCount,
       orders,
       metrics: computeOrderMetrics(orders),
     });
@@ -139,6 +140,7 @@ async function startServer() {
 
   // Official Shopify Webhook: orders/create
   app.post('/api/webhooks/shopify/orders-create', async (req: RawBodyRequest, res: Response) => {
+    await store.ensureHydrated();
     const settings = store.getSettings();
     const hmac = req.header('X-Shopify-Hmac-Sha256');
     const rawBody = req.rawBody || JSON.stringify(req.body || {});
@@ -161,10 +163,10 @@ async function startServer() {
       return;
     }
 
-    const order = parseShopifyRawOrder(payload);
+    const order = parseShopifyRawOrder(payload, settings);
     store.upsertOrder(order);
 
-    if (settings.autoSendPollOnNewOrder) {
+    if (shouldAutoDispatchPoll(order, settings)) {
       await whatsappManager.dispatchOrderPoll(order);
     }
 
@@ -173,6 +175,7 @@ async function startServer() {
 
   // Resend WhatsApp Poll for an order
   app.post('/api/orders/:id/resend-poll', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
     const order = store.getOrderById(String(req.params.id));
     if (!order) {
       res.status(404).json({ error: 'Order not found' });
@@ -190,6 +193,7 @@ async function startServer() {
 
   // Manual tag override for an order
   app.post('/api/orders/:id/vote', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
     const option = String(req.body?.option || '');
     const updated = await whatsappManager.applyVoteToOrder(
       String(req.params.id),
@@ -222,6 +226,15 @@ async function startServer() {
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
+  }
+
+  // 24/7 automatic Shopify order sync every 30s so new orders are picked up even without webhooks
+  if (!process.env.VERCEL) {
+    setInterval(() => {
+      if (hasLiveShopifyCredentials(store.getSettings())) {
+        void syncShopifyOrdersNow('auto');
+      }
+    }, 30_000);
   }
 
   app.listen(PORT, '0.0.0.0', () => {

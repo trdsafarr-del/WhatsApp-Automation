@@ -130,11 +130,19 @@ export function SetupGuideView() {
 
           <div className="rounded-lg bg-amber-50/80 p-4 text-xs leading-relaxed text-amber-950">
             <p className="font-semibold">
-              24/7 WhatsApp QR Tip (Important for Vercel vs Render/Railway):
+              Multi-Device Data + 24/7 Never-Logout WhatsApp Hosting (Important):
             </p>
-            <p className="mt-1">
-              Vercel shuts down serverless functions after 60s, so a WhatsApp QR connection cannot stay open 24/7 on Vercel alone. To keep WhatsApp QR logged in 24/7 without ever disconnecting, deploy this exact GitHub repo on a persistent Node host like <span className="font-semibold">Railway, Render, Fly.io, or a VPS</span> with start command <span className="font-mono">npm start</span> (and attach a disk volume at <span className="font-mono">/app/data</span>).
-            </p>
+            <ul className="mt-1.5 list-disc space-y-1.5 pl-4">
+              <li>
+                <span className="font-semibold">Same Data Across All Devices &amp; Zero WhatsApp Logout:</span> Deploy this repo on a persistent Node host (<span className="font-semibold">Railway, Render, Fly.io, or VPS</span>) with start command <span className="font-mono">npm start</span> and persistent disk at <span className="font-mono">/app/data</span>. All phones/laptops share the same database and WhatsApp stays connected 24/7.
+              </li>
+              <li>
+                <span className="font-semibold">Optional Cloud Backup Across Redeploys / Serverless:</span> Add free <span className="font-mono">UPSTASH_REDIS_REST_URL</span> and <span className="font-mono">UPSTASH_REDIS_REST_TOKEN</span> environment variables (from console.upstash.com) so orders, Shopify credentials, and WhatsApp session keys automatically sync across every device and server restart.
+              </li>
+              <li>
+                <span className="font-semibold">Vercel Note:</span> Vercel serverless functions sleep after 60s, so a live WhatsApp QR socket cannot stay open 24/7 on Vercel alone — use Railway/Render/VPS for 24/7 automatic WhatsApp poll delivery &amp; reply listening.
+              </li>
+            </ul>
           </div>
         </div>
       </section>

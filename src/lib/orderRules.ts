@@ -225,3 +225,106 @@ export function computeOrderMetrics(orders: OrderRecord[]): OrderMetrics {
     avgResponseMinutes,
   };
 }
+
+export interface ShopifyPhoneSource {
+  phone?: string | null;
+  cancelled_at?: string | null;
+  tags?: string;
+  customer?: {
+    phone?: string | null;
+    default_address?: {
+      phone?: string | null;
+    } | null;
+  } | null;
+  shipping_address?: {
+    phone?: string | null;
+  } | null;
+  billing_address?: {
+    phone?: string | null;
+  } | null;
+  note_attributes?: Array<{
+    name?: string;
+    value?: string | number | null;
+  }>;
+}
+
+/**
+ * Extracts the best available customer phone number from a Shopify order payload,
+ * checking shipping address, customer profile, default address, billing address,
+ * and checkout note_attributes (commonly used by Indian COD / third-party checkouts).
+ */
+export function extractShopifyCustomerPhone(raw: ShopifyPhoneSource): string {
+  const candidates: Array<string | null | undefined> = [
+    raw.shipping_address?.phone,
+    raw.customer?.phone,
+    raw.customer?.default_address?.phone,
+    raw.phone,
+    raw.billing_address?.phone,
+  ];
+
+  if (Array.isArray(raw.note_attributes)) {
+    for (const attr of raw.note_attributes) {
+      const key = (attr.name || '').toLowerCase();
+      if (
+        key.includes('phone') ||
+        key.includes('mobile') ||
+        key.includes('whatsapp') ||
+        key.includes('contact')
+      ) {
+        candidates.push(attr.value != null ? String(attr.value) : null);
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed.replace(/\D/g, '').length >= 7) {
+        return trimmed;
+      }
+    }
+  }
+  return '';
+}
+
+/**
+ * Infers initial PollStatus from existing Shopify tags or cancellation state so
+ * already-confirmed or already-cancelled orders are not re-polled.
+ */
+export function inferInitialPollStatus(
+  raw: Pick<ShopifyPhoneSource, 'tags' | 'cancelled_at'>,
+  settings: Pick<AppSettings, 'confirmTag' | 'cancelTag'>
+): PollStatus {
+  if (raw.cancelled_at) return 'cancelled_by_user';
+
+  const tags = (raw.tags || '')
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+
+  const confirmTag = (settings.confirmTag || 'confirm').trim().toLowerCase();
+  const cancelTag = (settings.cancelTag || 'cancelled by user').trim().toLowerCase();
+
+  if (cancelTag && tags.includes(cancelTag)) return 'cancelled_by_user';
+  if (confirmTag && tags.includes(confirmTag)) return 'confirmed';
+  return 'queued';
+}
+
+/**
+ * Determines whether a newly ingested order should automatically trigger a WhatsApp Poll.
+ * Skips already-decided orders and stale historical orders (> 24h old on sync).
+ */
+export function shouldAutoDispatchPoll(
+  order: Pick<OrderRecord, 'pollStatus' | 'createdAt'>,
+  settings: Pick<AppSettings, 'autoSendPollOnNewOrder'>,
+  nowMs = Date.now()
+): boolean {
+  if (!settings.autoSendPollOnNewOrder) return false;
+  if (order.pollStatus !== 'queued') return false;
+
+  const createdMs = Date.parse(order.createdAt);
+  if (!Number.isFinite(createdMs)) return true;
+
+  const MAX_AUTO_POLL_AGE_MS = 24 * 60 * 60 * 1000;
+  return nowMs - createdMs <= MAX_AUTO_POLL_AGE_MS;
+}

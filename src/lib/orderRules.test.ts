@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
   computeOrderMetrics,
+  extractShopifyCustomerPhone,
   formatPollPayload,
+  inferInitialPollStatus,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
+  shouldAutoDispatchPoll,
 } from './orderRules.js';
 import type { OrderRecord } from './types.js';
 
@@ -125,4 +128,59 @@ test('computeOrderMetrics computes counts and confirmation rate accurately', () 
   assert.equal(metrics.cancelledCount, 1);
   assert.equal(metrics.confirmationRate, 67);
   assert.equal(metrics.avgResponseMinutes, 4);
+});
+
+test('extractShopifyCustomerPhone inspects default_address and note_attributes', () => {
+  assert.equal(
+    extractShopifyCustomerPhone({
+      customer: { default_address: { phone: '9876543210' } },
+    }),
+    '9876543210'
+  );
+  assert.equal(
+    extractShopifyCustomerPhone({
+      note_attributes: [{ name: 'WhatsApp Number', value: '+91 98111 22333' }],
+    }),
+    '+91 98111 22333'
+  );
+  assert.equal(extractShopifyCustomerPhone({}), '');
+});
+
+test('inferInitialPollStatus and shouldAutoDispatchPoll handle existing tags and age window', () => {
+  assert.equal(inferInitialPollStatus({ tags: 'COD, confirm' }, DEFAULT_SETTINGS), 'confirmed');
+  assert.equal(
+    inferInitialPollStatus({ tags: 'COD, cancelled by user' }, DEFAULT_SETTINGS),
+    'cancelled_by_user'
+  );
+  assert.equal(
+    inferInitialPollStatus({ tags: 'COD', cancelled_at: '2026-11-12T10:00:00Z' }, DEFAULT_SETTINGS),
+    'cancelled_by_user'
+  );
+  assert.equal(inferInitialPollStatus({ tags: 'COD' }, DEFAULT_SETTINGS), 'queued');
+
+  const now = Date.parse('2026-11-13T12:00:00.000Z');
+  assert.equal(
+    shouldAutoDispatchPoll(
+      { pollStatus: 'queued', createdAt: '2026-11-13T11:30:00.000Z' },
+      DEFAULT_SETTINGS,
+      now
+    ),
+    true
+  );
+  assert.equal(
+    shouldAutoDispatchPoll(
+      { pollStatus: 'queued', createdAt: '2026-11-10T11:30:00.000Z' },
+      DEFAULT_SETTINGS,
+      now
+    ),
+    false
+  );
+  assert.equal(
+    shouldAutoDispatchPoll(
+      { pollStatus: 'confirmed', createdAt: '2026-11-13T11:30:00.000Z' },
+      DEFAULT_SETTINGS,
+      now
+    ),
+    false
+  );
 });
