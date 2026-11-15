@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   BarChart3,
   BookOpen,
+  Layers,
   LayoutList,
   Menu,
   PanelLeft,
@@ -13,6 +14,7 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react';
+import { LiveAmbientBackground, type BackgroundMode } from './components/LiveAmbientBackground';
 import { OrdersView } from './components/OrdersView';
 import { ReportsView } from './components/ReportsView';
 import { SettingsView, type SettingsTab } from './components/SettingsView';
@@ -31,6 +33,14 @@ import type {
 type ActiveTab = 'orders' | 'reports' | 'whatsapp' | 'settings' | 'setup';
 
 const SIDEBAR_PIN_STORAGE_KEY = 'orderpulse_sidebar_pinned';
+const BG_MODE_STORAGE_KEY = 'orderpulse_bg_mode';
+
+const BG_MODE_OPTIONS: Array<{ id: BackgroundMode; label: string; short: string }> = [
+  { id: 'hyper4d', label: '4D Hyper', short: '4D' },
+  { id: 'orbit3d', label: '3D Orbit', short: '3D' },
+  { id: 'flow2d', label: '2D Mesh', short: '2D' },
+  { id: 'minimal', label: 'Calm', short: 'Off' },
+];
 
 const EMPTY_METRICS: OrderMetrics = {
   totalOrders: 0,
@@ -81,6 +91,33 @@ export default function App() {
     }
   });
   const [sidebarHovered, setSidebarHovered] = useState(false);
+  const [bgMode, setBgMode] = useState<BackgroundMode>(() => {
+    if (typeof window === 'undefined') return 'hyper4d';
+    try {
+      const saved = window.localStorage.getItem(BG_MODE_STORAGE_KEY);
+      if (saved === 'hyper4d' || saved === 'orbit3d' || saved === 'flow2d' || saved === 'minimal') {
+        return saved;
+      }
+      return 'hyper4d';
+    } catch {
+      return 'hyper4d';
+    }
+  });
+
+  const handleChangeBgMode = (next: BackgroundMode) => {
+    setBgMode(next);
+    try {
+      window.localStorage.setItem(BG_MODE_STORAGE_KEY, next);
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  const handleCycleBgMode = () => {
+    const idx = BG_MODE_OPTIONS.findIndex((m) => m.id === bgMode);
+    const next = BG_MODE_OPTIONS[(idx + 1) % BG_MODE_OPTIONS.length];
+    handleChangeBgMode(next.id);
+  };
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [metrics, setMetrics] = useState<OrderMetrics>(EMPTY_METRICS);
@@ -549,21 +586,12 @@ export default function App() {
 
   return (
     <div
-      className={`relative min-h-screen overflow-x-clip bg-[#060a13] text-slate-100 transition-[padding] duration-200 ${
+      className={`relative min-h-screen overflow-x-clip bg-[#050912] text-slate-100 transition-[padding] duration-200 ${
         sidebarPinned ? 'lg:pl-64' : 'lg:pl-[68px]'
       }`}
     >
-      {/* Animated Ambient Dark Background Canvas */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
-      >
-        <div className="ambient-bg-grid absolute -inset-12 opacity-70" />
-        <div className="ambient-orb-emerald absolute -top-44 -left-32 h-[560px] w-[560px] rounded-full" />
-        <div className="ambient-orb-sky absolute top-1/4 -right-40 h-[540px] w-[540px] rounded-full" />
-        <div className="ambient-orb-amber absolute -bottom-48 left-1/3 h-[500px] w-[500px] rounded-full" />
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/15 via-transparent to-slate-950/80" />
-      </div>
+      {/* Live 4D / 3D / 2D Interactive Ambient Background */}
+      <LiveAmbientBackground mode={bgMode} />
 
       {/* Desktop Auto-Hide Sidebar (hover left rail to expand, or pin open) */}
       <aside
@@ -646,9 +674,54 @@ export default function App() {
         </nav>
 
         {sidebarExpanded ? (
-          connectionSummary
+          <>
+            <div className="border-t border-slate-800/80 px-4 py-3">
+              <div className="flex items-center justify-between text-[11px] font-medium text-slate-400">
+                <span className="inline-flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                  Live Background
+                </span>
+                <span className="font-mono text-[10px] text-slate-500">
+                  {BG_MODE_OPTIONS.find((m) => m.id === bgMode)?.label}
+                </span>
+              </div>
+              <div
+                role="group"
+                aria-label="Live Background Style"
+                className="mt-2 grid grid-cols-4 gap-1 rounded-lg border border-slate-800 bg-slate-900/90 p-1"
+              >
+                {BG_MODE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleChangeBgMode(opt.id)}
+                    className={`rounded-md py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                      bgMode === opt.id
+                        ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-inset ring-emerald-400/40'
+                        : 'text-slate-400 hover:text-slate-100'
+                    }`}
+                  >
+                    {opt.short}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {connectionSummary}
+          </>
         ) : (
           <div className="flex flex-col items-center gap-3 border-t border-slate-800/80 py-4 font-mono text-[10px] text-slate-400">
+            <button
+              type="button"
+              onClick={handleCycleBgMode}
+              title={`Live Background: ${BG_MODE_OPTIONS.find((m) => m.id === bgMode)?.label} (click to switch)`}
+              aria-label="Switch Live Background Mode"
+              className="flex flex-col items-center gap-0.5 rounded-md px-2 py-1 text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+            >
+              <Layers className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+              <span className="text-[9px] font-semibold">
+                {BG_MODE_OPTIONS.find((m) => m.id === bgMode)?.short}
+              </span>
+            </button>
             <span
               title={`WhatsApp: ${waDisplay.sidebarLabel}`}
               className={`font-semibold ${
@@ -710,6 +783,37 @@ export default function App() {
                 );
               })}
             </nav>
+            <div className="border-t border-slate-800/80 px-4 py-3">
+              <div className="flex items-center justify-between text-xs font-medium text-slate-300">
+                <span className="inline-flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                  Live Background
+                </span>
+                <span className="font-mono text-[11px] text-slate-400">
+                  {BG_MODE_OPTIONS.find((m) => m.id === bgMode)?.label}
+                </span>
+              </div>
+              <div
+                role="group"
+                aria-label="Mobile Live Background Style"
+                className="mt-2 grid grid-cols-4 gap-1 rounded-lg border border-slate-800 bg-slate-900 p-1"
+              >
+                {BG_MODE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleChangeBgMode(opt.id)}
+                    className={`rounded-md py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                      bgMode === opt.id
+                        ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-inset ring-emerald-400/40'
+                        : 'text-slate-400 hover:text-slate-100'
+                    }`}
+                  >
+                    {opt.short}
+                  </button>
+                ))}
+              </div>
+            </div>
             {connectionSummary}
           </aside>
         </div>

@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  Calculator,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  FileDown,
+  FileSpreadsheet,
   IndianRupee,
   RefreshCw,
   Save,
@@ -16,6 +19,7 @@ import {
 } from 'lucide-react';
 import {
   buildProfitLossReport,
+  calculateUnitEconomicsSimulation,
   type CostAssumptions,
   type PnlOutcomeCategory,
 } from '../lib/orderRules';
@@ -25,7 +29,21 @@ interface ProfitLossPanelProps {
   orders: OrderRecord[];
   settings: AppSettings;
   periodLabel: string;
-  onSaveSettings: (next: Partial<AppSettings>) => Promise<boolean>;
+  costForm: CostAssumptions;
+  periodAdSpend: number;
+  adDaysCount?: number;
+  autoAdDays?: number;
+  isAdDaysOverridden?: boolean;
+  costDirty: boolean;
+  isSavingCosts: boolean;
+  costNotice: string | null;
+  onUpdateCostField: (key: keyof CostAssumptions, rawVal: string) => void;
+  onUpdatePeriodAdSpend: (rawVal: string) => void;
+  onUpdateAdDays?: (days: number) => void;
+  onResetAdDays?: () => void;
+  onSaveCostRules: () => Promise<void>;
+  onExportPnlPdf?: () => void;
+  onExportMonthlyExcel?: () => void;
   onSyncDelhivery: () => Promise<{
     ok: boolean;
     trackedCount?: number;
@@ -54,25 +72,26 @@ export function ProfitLossPanel({
   orders,
   settings,
   periodLabel,
-  onSaveSettings,
+  costForm,
+  periodAdSpend,
+  adDaysCount,
+  autoAdDays,
+  isAdDaysOverridden,
+  costDirty,
+  isSavingCosts,
+  costNotice,
+  onUpdateCostField,
+  onUpdatePeriodAdSpend,
+  onUpdateAdDays,
+  onResetAdDays,
+  onSaveCostRules,
+  onExportPnlPdf,
+  onExportMonthlyExcel,
   onSyncDelhivery,
   onImportDelhiveryCsv,
   onOpenDelhiverySettings,
   onInspectOrder,
 }: ProfitLossPanelProps) {
-  const [costForm, setCostForm] = useState<CostAssumptions>({
-    cogsPercent: settings.cogsPercent ?? 35,
-    packagingCostPerOrder: settings.packagingCostPerOrder ?? 25,
-    fallbackForwardShippingCost: settings.fallbackForwardShippingCost ?? 75,
-    fallbackRtoShippingCost: settings.fallbackRtoShippingCost ?? 75,
-    fallbackCodFee: settings.fallbackCodFee ?? 25,
-    prepaidGatewayPercent: settings.prepaidGatewayPercent ?? 2,
-    marketingCostPerOrder: settings.marketingCostPerOrder ?? 0,
-  });
-  const [periodAdSpend, setPeriodAdSpend] = useState<number>(0);
-  const [costDirty, setCostDirty] = useState(false);
-  const [isSavingCosts, setIsSavingCosts] = useState(false);
-  const [costNotice, setCostNotice] = useState<string | null>(null);
   const [isSyncingDelhivery, setIsSyncingDelhivery] = useState(false);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
   const [delhiveryStatus, setDelhiveryStatus] = useState<{
@@ -80,56 +99,64 @@ export function ProfitLossPanel({
     message: string;
   } | null>(null);
   const [outcomeFilter, setOutcomeFilter] = useState<'all' | PnlOutcomeCategory>('all');
-  const [showAssumptions, setShowAssumptions] = useState(false);
+  const [showAssumptions, setShowAssumptions] = useState(true);
+  const [showSimulator, setShowSimulator] = useState(false);
   const [showFallbackRates, setShowFallbackRates] = useState(false);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    if (!costDirty) {
-      setCostForm({
-        cogsPercent: settings.cogsPercent ?? 35,
-        packagingCostPerOrder: settings.packagingCostPerOrder ?? 25,
-        fallbackForwardShippingCost: settings.fallbackForwardShippingCost ?? 75,
-        fallbackRtoShippingCost: settings.fallbackRtoShippingCost ?? 75,
-        fallbackCodFee: settings.fallbackCodFee ?? 25,
-        prepaidGatewayPercent: settings.prepaidGatewayPercent ?? 2,
-        marketingCostPerOrder: settings.marketingCostPerOrder ?? 0,
-      });
-    }
-  }, [settings, costDirty]);
+  const [simInput, setSimInput] = useState({
+    sellingPrice: 1050,
+    cogsCost: Math.round(1050 * ((costForm.cogsPercent || 35) / 100)),
+    forwardShipping: costForm.fallbackForwardShippingCost || 120,
+    rtoShipping: costForm.fallbackRtoShippingCost || 110,
+    packagingCost: costForm.packagingCostPerOrder || 25,
+    paymentOrCodFee: costForm.fallbackCodFee || 47,
+    adSpendPerOrder: costForm.marketingCostPerOrder || 0,
+    expectedRtoPercent: 15,
+  });
 
   const pnl = useMemo(
-    () => buildProfitLossReport(orders, costForm, periodAdSpend),
-    [orders, costForm, periodAdSpend]
+    () => buildProfitLossReport(orders, costForm, periodAdSpend, adDaysCount),
+    [orders, costForm, periodAdSpend, adDaysCount]
   );
+
+  const simResult = useMemo(() => calculateUnitEconomicsSimulation(simInput), [simInput]);
+
+  const handleLoadStoreAverages = () => {
+    const shipped = pnl.orderRows.filter(
+      (r) => r.outcome === 'delivered' || r.outcome === 'in_transit' || r.outcome === 'rto_return'
+    );
+    const count = shipped.length;
+    if (count === 0) return;
+    const avgSp = Math.round(shipped.reduce((s, r) => s + r.orderValue, 0) / count);
+    const avgFwd = Math.round(shipped.reduce((s, r) => s + r.forwardShippingCost, 0) / count);
+    const rtoShipped = shipped.filter((r) => r.rtoShippingCost > 0);
+    const avgRto =
+      rtoShipped.length > 0
+        ? Math.round(rtoShipped.reduce((s, r) => s + r.rtoShippingCost, 0) / rtoShipped.length)
+        : Math.round(avgFwd * 0.9);
+    const avgFee = Math.round(shipped.reduce((s, r) => s + r.paymentOrCodFee, 0) / count);
+    const observedRtoPct = Math.round((pnl.rtoCount / count) * 100);
+    const estimatedCpaPerOrder =
+      pnl.totalMarketingCost > 0
+        ? Math.round(pnl.totalMarketingCost / Math.max(1, count))
+        : costForm.marketingCostPerOrder || 0;
+    setSimInput({
+      sellingPrice: avgSp || 1050,
+      cogsCost: Math.round((avgSp || 1050) * ((costForm.cogsPercent || 35) / 100)),
+      forwardShipping: avgFwd || costForm.fallbackForwardShippingCost || 120,
+      rtoShipping: avgRto || costForm.fallbackRtoShippingCost || 110,
+      packagingCost: costForm.packagingCostPerOrder || 25,
+      paymentOrCodFee: avgFee || 25,
+      adSpendPerOrder: estimatedCpaPerOrder,
+      expectedRtoPercent: observedRtoPct > 0 ? observedRtoPct : 15,
+    });
+  };
 
   const filteredOrderRows = useMemo(() => {
     if (outcomeFilter === 'all') return pnl.orderRows;
     return pnl.orderRows.filter((row) => row.outcome === outcomeFilter);
   }, [pnl.orderRows, outcomeFilter]);
-
-  const updateCostField = (key: keyof CostAssumptions, rawVal: string) => {
-    const parsed = Number.parseFloat(rawVal);
-    setCostDirty(true);
-    setCostForm((prev) => ({
-      ...prev,
-      [key]: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0,
-    }));
-  };
-
-  const handleSaveCostRules = async () => {
-    setIsSavingCosts(true);
-    setCostNotice(null);
-    const ok = await onSaveSettings(costForm);
-    setIsSavingCosts(false);
-    if (ok) {
-      setCostDirty(false);
-      setCostNotice('Unit economics & cost rules saved.');
-      window.setTimeout(() => setCostNotice(null), 3500);
-    } else {
-      setCostNotice('Failed to save cost rules.');
-    }
-  };
 
   const handleSyncDelhivery = async () => {
     setIsSyncingDelhivery(true);
@@ -219,7 +246,10 @@ export function ProfitLossPanel({
       sign: '-',
     },
     {
-      label: 'Marketing / Ad Spend',
+      label:
+        pnl.dailyMetaAdsRate > 0
+          ? `Meta Ads & Marketing (${pnl.metaAdDaysCount}d × ₹${pnl.dailyMetaAdsRate}/d)`
+          : 'Marketing / Ad Spend',
       amount: pnl.totalMarketingCost,
       colorClass: 'bg-orange-400',
       textClass: 'text-orange-300',
@@ -239,6 +269,86 @@ export function ProfitLossPanel({
     }
     return maxV;
   }, [chartDays]);
+
+  // Cost & Margin Donut Chart slices
+  const donutMetrics = useMemo(() => {
+    const rawSlices = [
+      { label: 'Product COGS', value: pnl.totalCogs, stroke: '#fbbf24', dotClass: 'bg-amber-400', textClass: 'text-amber-300' },
+      { label: 'Forward Shipping', value: pnl.totalForwardShipping, stroke: '#38bdf8', dotClass: 'bg-sky-400', textClass: 'text-sky-300' },
+      { label: 'RTO Freight', value: pnl.totalRtoShippingCost, stroke: '#f43f5e', dotClass: 'bg-rose-500', textClass: 'text-rose-300' },
+      { label: 'Packaging', value: pnl.totalPackagingCost, stroke: '#818cf8', dotClass: 'bg-indigo-400', textClass: 'text-indigo-300' },
+      { label: 'COD / PG Fees', value: pnl.totalPaymentFees, stroke: '#22d3ee', dotClass: 'bg-cyan-400', textClass: 'text-cyan-300' },
+      { label: 'Marketing / Ads', value: pnl.totalMarketingCost, stroke: '#fb923c', dotClass: 'bg-orange-400', textClass: 'text-orange-300' },
+      {
+        label: 'Net Profit Retained',
+        value: Math.max(0, pnl.netRealizedProfit),
+        stroke: '#10b981',
+        dotClass: 'bg-emerald-500',
+        textClass: 'text-emerald-300',
+      },
+    ].filter((s) => s.value > 0);
+
+    const total = rawSlices.reduce((s, x) => s + x.value, 0);
+    const radius = 56;
+    const circumference = 2 * Math.PI * radius;
+    let offsetAcc = 0;
+
+    const arcs = rawSlices.map((s) => {
+      const pct = total > 0 ? s.value / total : 0;
+      const dashLen = pct * circumference;
+      const dashOffset = -offsetAcc;
+      offsetAcc += dashLen;
+      return {
+        ...s,
+        pctLabel: Math.round(pct * 100),
+        dashArray: `${dashLen} ${circumference}`,
+        dashOffset,
+      };
+    });
+
+    return { total, radius, circumference, arcs };
+  }, [pnl]);
+
+  // COD vs Prepaid Profitability Split
+  const modeSplit = useMemo(() => {
+    const init = {
+      count: 0,
+      delivered: 0,
+      inTransit: 0,
+      rto: 0,
+      cancelled: 0,
+      revenue: 0,
+      shippingAndFee: 0,
+      netRealized: 0,
+      projectedProfit: 0,
+    };
+    const cod = { ...init };
+    const prepaid = { ...init };
+
+    for (const r of pnl.orderRows) {
+      const bucket = r.paymentMethod === 'COD' ? cod : prepaid;
+      bucket.count += 1;
+      if (r.outcome === 'delivered') {
+        bucket.delivered += 1;
+        bucket.revenue += r.realizedRevenue;
+        bucket.shippingAndFee += r.forwardShippingCost + r.paymentOrCodFee;
+        bucket.netRealized += r.netProfit;
+        bucket.projectedProfit += r.netProfit;
+      } else if (r.outcome === 'rto_return') {
+        bucket.rto += 1;
+        bucket.shippingAndFee += r.forwardShippingCost + r.rtoShippingCost;
+        bucket.netRealized += r.netProfit;
+        bucket.projectedProfit += r.netProfit;
+      } else if (r.outcome === 'in_transit') {
+        bucket.inTransit += 1;
+        bucket.shippingAndFee += r.forwardShippingCost + r.paymentOrCodFee;
+        bucket.projectedProfit += r.netProfit;
+      } else if (r.outcome === 'cancelled') {
+        bucket.cancelled += 1;
+      }
+    }
+    return { cod, prepaid };
+  }, [pnl.orderRows]);
 
   return (
     <div className="space-y-4 sm:space-y-6" data-testid="profit-loss-panel">
@@ -260,6 +370,30 @@ export function ProfitLossPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onExportMonthlyExcel && (
+              <button
+                type="button"
+                onClick={onExportMonthlyExcel}
+                disabled={orders.length === 0}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/12 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/20 disabled:opacity-50 whitespace-nowrap"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 text-cyan-300" aria-hidden="true" />
+                Export Excel (.xlsx)
+              </button>
+            )}
+
+            {onExportPnlPdf && (
+              <button
+                type="button"
+                onClick={onExportPnlPdf}
+                disabled={orders.length === 0}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/12 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 whitespace-nowrap"
+              >
+                <FileDown className="h-3.5 w-3.5 text-emerald-300" aria-hidden="true" />
+                Export P&amp;L PDF
+              </button>
+            )}
+
             {onImportDelhiveryCsv && (
               <>
                 <input
@@ -283,6 +417,19 @@ export function ProfitLossPanel({
 
             <button
               type="button"
+              onClick={() => setShowSimulator((prev) => !prev)}
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                showSimulator
+                  ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-200'
+                  : 'border-slate-700 bg-slate-950/80 text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              <Calculator className="h-3.5 w-3.5 text-indigo-300" aria-hidden="true" />
+              Margin Calculator
+            </button>
+
+            <button
+              type="button"
               onClick={() => setShowAssumptions((prev) => !prev)}
               className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
                 showAssumptions
@@ -291,7 +438,7 @@ export function ProfitLossPanel({
               }`}
             >
               <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-              {showAssumptions ? 'Hide Business Costs' : 'Adjust Business Costs'}
+              {showAssumptions ? 'Hide Cost Inputs' : 'Cost Inputs'}
             </button>
 
             {hasDelhiveryToken ? (
@@ -337,9 +484,108 @@ export function ProfitLossPanel({
           </div>
         )}
 
+        {showSimulator && (
+          <div className="mt-4 space-y-3 border-t border-slate-800 pt-4" data-testid="unit-margin-simulator">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-semibold text-white">
+                  What-If Order Margin &amp; Breakeven Calculator
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  Calculate profit per order, max Meta/Google CPA breakeven, and safe RTO % limit before running ads.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleLoadStoreAverages}
+                disabled={pnl.totalOrders === 0}
+                className="rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
+              >
+                Load Store Averages
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+              {(
+                [
+                  { key: 'sellingPrice', label: 'Selling Price ₹' },
+                  { key: 'cogsCost', label: 'Product Cost ₹' },
+                  { key: 'forwardShipping', label: 'Fwd Ship ₹' },
+                  { key: 'rtoShipping', label: 'RTO Return ₹' },
+                  { key: 'packagingCost', label: 'Packaging ₹' },
+                  { key: 'paymentOrCodFee', label: 'COD/PG Fee ₹' },
+                  { key: 'adSpendPerOrder', label: 'Ad Spend ₹/Ord' },
+                  { key: 'expectedRtoPercent', label: 'Expected RTO %' },
+                ] as const
+              ).map((field) => (
+                <label key={field.key} className="block">
+                  <span className="text-[11px] font-medium text-slate-300">{field.label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={field.key === 'expectedRtoPercent' ? 100 : undefined}
+                    value={simInput[field.key]}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value);
+                      setSimInput((prev) => ({
+                        ...prev,
+                        [field.key]: Number.isFinite(v) && v >= 0 ? v : 0,
+                      }));
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-indigo-400 focus:outline-none tabular-nums"
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 border-t border-slate-800/80 pt-3 sm:grid-cols-5">
+              <div>
+                <p className="text-[11px] text-slate-400">Profit if Delivered</p>
+                <p
+                  className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${
+                    simResult.profitIfDelivered >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {formatInr(simResult.profitIfDelivered, pnl.currency)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-400">Loss if RTO</p>
+                <p className="mt-0.5 font-mono text-sm font-semibold text-rose-400 tabular-nums">
+                  {formatInr(simResult.lossIfRto, pnl.currency)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-400">
+                  Blended Profit ({simInput.expectedRtoPercent}% RTO)
+                </p>
+                <p
+                  className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${
+                    simResult.blendedProfitPerOrder >= 0 ? 'text-emerald-300' : 'text-rose-400'
+                  }`}
+                >
+                  {formatInr(simResult.blendedProfitPerOrder, pnl.currency)} ({simResult.marginPercent}%)
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-400">Max CPA Breakeven</p>
+                <p className="mt-0.5 font-mono text-sm font-semibold text-cyan-300 tabular-nums">
+                  {formatInr(simResult.maxCpaBreakeven, pnl.currency)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-400">Safe RTO % Limit</p>
+                <p className="mt-0.5 font-mono text-sm font-semibold text-amber-300 tabular-nums">
+                  {simResult.breakevenRtoPercent}%
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showAssumptions && (
           <div className="mt-4 space-y-4 border-t border-slate-800 pt-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <label className="block">
                 <span className="text-[11px] font-medium text-slate-300">Product COGS %</span>
                 <input
@@ -348,7 +594,7 @@ export function ProfitLossPanel({
                   max={100}
                   step="0.5"
                   value={costForm.cogsPercent}
-                  onChange={(e) => updateCostField('cogsPercent', e.target.value)}
+                  onChange={(e) => onUpdateCostField('cogsPercent', e.target.value)}
                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
                 />
               </label>
@@ -360,8 +606,52 @@ export function ProfitLossPanel({
                   min={0}
                   step="1"
                   value={costForm.packagingCostPerOrder}
-                  onChange={(e) => updateCostField('packagingCostPerOrder', e.target.value)}
+                  onChange={(e) => onUpdateCostField('packagingCostPerOrder', e.target.value)}
                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-[11px] font-medium text-orange-300">Meta Ads ₹/Day</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="50"
+                  value={costForm.dailyMetaAdsSpend ?? 500}
+                  onChange={(e) => onUpdateCostField('dailyMetaAdsSpend', e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-orange-500/40 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-orange-400 focus:outline-none tabular-nums"
+                />
+              </label>
+
+              <label className="block">
+                <span className="flex items-center justify-between gap-1 text-[11px] font-medium text-orange-200">
+                  <span>Meta Ad Days</span>
+                  {isAdDaysOverridden && onResetAdDays ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onResetAdDays();
+                      }}
+                      className="text-[10px] font-normal text-cyan-300 underline hover:text-cyan-200"
+                    >
+                      Auto ({autoAdDays ?? pnl.metaAdDaysCount})
+                    </button>
+                  ) : (
+                    <span className="text-[10px] font-normal text-slate-400">Auto</span>
+                  )}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step="1"
+                  value={adDaysCount ?? pnl.metaAdDaysCount}
+                  onChange={(e) => {
+                    if (!onUpdateAdDays) return;
+                    const parsed = Number.parseInt(e.target.value, 10);
+                    onUpdateAdDays(Number.isFinite(parsed) && parsed >= 0 ? parsed : 0);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-orange-500/40 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-orange-400 focus:outline-none tabular-nums"
                 />
               </label>
 
@@ -372,28 +662,38 @@ export function ProfitLossPanel({
                   min={0}
                   step="5"
                   value={costForm.marketingCostPerOrder}
-                  onChange={(e) => updateCostField('marketingCostPerOrder', e.target.value)}
+                  onChange={(e) => onUpdateCostField('marketingCostPerOrder', e.target.value)}
                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
                 />
               </label>
 
               <label className="block">
-                <span className="text-[11px] font-medium text-slate-300">Extra Period Ad Spend ₹</span>
+                <span className="text-[11px] font-medium text-slate-300">Extra Ad / Overhead ₹</span>
                 <input
                   type="number"
                   min={0}
                   step="50"
                   value={periodAdSpend}
-                  onChange={(e) => {
-                    const v = Number.parseFloat(e.target.value);
-                    setPeriodAdSpend(Number.isFinite(v) && v >= 0 ? v : 0);
-                  }}
+                  onChange={(e) => onUpdatePeriodAdSpend(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
                 />
               </label>
             </div>
 
-            <div className="rounded-lg border border-slate-800/80 bg-slate-950/50 p-3">
+            {pnl.dailyMetaAdsRate > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-orange-500/25 bg-orange-500/8 px-3 py-2 text-xs">
+                <span className="text-orange-200">
+                  Daily Meta Ads Spend deducted from Profit &amp; Daily Chart:
+                </span>
+                <span className="font-mono font-semibold text-orange-300 tabular-nums">
+                  {formatInr(pnl.dailyMetaAdsRate, pnl.currency)}/day × {pnl.metaAdDaysCount}d ={' '}
+                  {formatInr(pnl.totalDailyMetaAds, pnl.currency)}
+                  {periodAdSpend > 0 ? ` + ${formatInr(periodAdSpend, pnl.currency)} extra` : ''}
+                </span>
+              </div>
+            )}
+
+            <div className="border-t border-slate-800/80 pt-3">
               <button
                 type="button"
                 onClick={() => setShowFallbackRates((prev) => !prev)}
@@ -405,10 +705,10 @@ export function ProfitLossPanel({
                   ) : (
                     <ChevronRight className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
                   )}
-                  Offline Fallback Rates (used only when Delhivery AWB rate isn&apos;t fetched yet)
+                  Prepaid PG % &amp; Offline Fallback Rates (when Delhivery AWB isn&apos;t synced yet)
                 </span>
-                <span className="font-mono text-[11px] text-slate-500">
-                  Fwd ₹{costForm.fallbackForwardShippingCost} · RTO ₹{costForm.fallbackRtoShippingCost} · COD ₹{costForm.fallbackCodFee}
+                <span className="font-mono text-[11px] text-slate-500 tabular-nums">
+                  PG {costForm.prepaidGatewayPercent}% · Fwd ₹{costForm.fallbackForwardShippingCost} · RTO ₹{costForm.fallbackRtoShippingCost}
                 </span>
               </button>
 
@@ -421,7 +721,7 @@ export function ProfitLossPanel({
                       min={0}
                       step="1"
                       value={costForm.fallbackForwardShippingCost}
-                      onChange={(e) => updateCostField('fallbackForwardShippingCost', e.target.value)}
+                      onChange={(e) => onUpdateCostField('fallbackForwardShippingCost', e.target.value)}
                       className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
                     />
                   </label>
@@ -433,7 +733,7 @@ export function ProfitLossPanel({
                       min={0}
                       step="1"
                       value={costForm.fallbackRtoShippingCost}
-                      onChange={(e) => updateCostField('fallbackRtoShippingCost', e.target.value)}
+                      onChange={(e) => onUpdateCostField('fallbackRtoShippingCost', e.target.value)}
                       className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
                     />
                   </label>
@@ -445,7 +745,7 @@ export function ProfitLossPanel({
                       min={0}
                       step="1"
                       value={costForm.fallbackCodFee}
-                      onChange={(e) => updateCostField('fallbackCodFee', e.target.value)}
+                      onChange={(e) => onUpdateCostField('fallbackCodFee', e.target.value)}
                       className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
                     />
                   </label>
@@ -458,7 +758,7 @@ export function ProfitLossPanel({
                       max={20}
                       step="0.1"
                       value={costForm.prepaidGatewayPercent}
-                      onChange={(e) => updateCostField('prepaidGatewayPercent', e.target.value)}
+                      onChange={(e) => onUpdateCostField('prepaidGatewayPercent', e.target.value)}
                       className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none tabular-nums"
                     />
                   </label>
@@ -468,12 +768,12 @@ export function ProfitLossPanel({
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] text-slate-400">
-                {costNotice || 'Shipping & COD fees come directly from Delhivery One API/Wallet CSV. Save your COGS & packaging here.'}
+                {costNotice || 'Change any cost above to recalculate Monthly P&L live. Included in Excel & PDF exports.'}
               </span>
               <button
                 type="button"
                 disabled={isSavingCosts}
-                onClick={() => void handleSaveCostRules()}
+                onClick={() => void onSaveCostRules()}
                 className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
               >
                 <Save className="h-3.5 w-3.5" aria-hidden="true" />
@@ -801,6 +1101,165 @@ export function ProfitLossPanel({
           <p className="mt-3 border-t border-slate-800/80 pt-3 text-[11px] text-slate-400">
             Emerald = Delivered Revenue · Indigo = Expected from Active Transit · Rose = Realized COGS, Freight &amp; RTO Loss.
           </p>
+        </div>
+      </section>
+
+      {/* 2nd Row Visual Charts: Cost & Margin Donut + COD vs Prepaid Profitability */}
+      <section aria-label="Cost Mix and Payment Mode Analytics" className="grid gap-4 lg:grid-cols-2">
+        {/* Left: SVG Donut Cost & Net Margin Breakdown */}
+        <div className="rounded-xl border border-slate-800/90 bg-slate-900/80 p-4 backdrop-blur-md sm:p-5">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-white">Cost Structure &amp; Margin Donut</h3>
+            <span className="font-mono text-xs text-slate-400 tabular-nums">
+              {pnl.netMarginPct}% Net Margin
+            </span>
+          </div>
+
+          <div className="mt-4 flex flex-col items-center gap-5 sm:flex-row">
+            <div className="relative flex shrink-0 items-center justify-center">
+              <svg
+                role="img"
+                aria-label="Cost and profit mix donut chart"
+                viewBox="0 0 150 150"
+                className="h-40 w-40 -rotate-90"
+              >
+                <circle
+                  cx="75"
+                  cy="75"
+                  r={donutMetrics.radius}
+                  fill="none"
+                  stroke="rgba(30, 41, 59, 0.9)"
+                  strokeWidth="22"
+                />
+                {donutMetrics.arcs.map((arc) => (
+                  <circle
+                    key={arc.label}
+                    cx="75"
+                    cy="75"
+                    r={donutMetrics.radius}
+                    fill="none"
+                    stroke={arc.stroke}
+                    strokeWidth="22"
+                    strokeDasharray={arc.dashArray}
+                    strokeDashoffset={arc.dashOffset}
+                  />
+                ))}
+              </svg>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
+                  Net Margin
+                </span>
+                <span
+                  className={`font-mono text-lg font-bold tabular-nums ${
+                    pnl.netRealizedProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {pnl.netMarginPct}%
+                </span>
+              </div>
+            </div>
+
+            <div className="w-full flex-1 space-y-2 text-xs">
+              {donutMetrics.arcs.length === 0 ? (
+                <p className="text-slate-400">
+                  Delivered or RTO orders will populate your exact cost &amp; profit share here.
+                </p>
+              ) : (
+                donutMetrics.arcs.map((arc) => (
+                  <div
+                    key={arc.label}
+                    className="flex items-center justify-between gap-2 border-b border-slate-800/60 pb-1.5 last:border-b-0 last:pb-0"
+                  >
+                    <span className="flex items-center gap-2 text-slate-300">
+                      <span className={`h-2.5 w-2.5 rounded-xs ${arc.dotClass}`} />
+                      {arc.label}
+                    </span>
+                    <span className={`font-mono font-semibold tabular-nums ${arc.textClass}`}>
+                      {formatInr(arc.value, pnl.currency)} ({arc.pctLabel}%)
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right: COD vs Prepaid Unit Economics Comparison */}
+        <div className="rounded-xl border border-slate-800/90 bg-slate-900/80 p-4 backdrop-blur-md sm:p-5">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-white">COD vs Prepaid Profitability</h3>
+            <span className="font-mono text-xs text-slate-400 tabular-nums">
+              {modeSplit.cod.count} COD · {modeSplit.prepaid.count} Prepaid
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {(
+              [
+                {
+                  title: 'COD Orders',
+                  data: modeSplit.cod,
+                  accentBorder: 'border-amber-500/30 bg-amber-500/5',
+                  titleColor: 'text-amber-300',
+                  barColor: 'bg-amber-400',
+                },
+                {
+                  title: 'Prepaid Orders',
+                  data: modeSplit.prepaid,
+                  accentBorder: 'border-emerald-500/30 bg-emerald-500/5',
+                  titleColor: 'text-emerald-300',
+                  barColor: 'bg-emerald-400',
+                },
+              ] as const
+            ).map((card) => {
+              const totalModeOrders = Math.max(1, modeSplit.cod.count + modeSplit.prepaid.count);
+              const sharePct = Math.round((card.data.count / totalModeOrders) * 100);
+              return (
+                <div key={card.title} className={`rounded-xl border p-3.5 ${card.accentBorder}`}>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs font-semibold ${card.titleColor}`}>{card.title}</span>
+                    <span className="font-mono text-xs font-semibold text-white tabular-nums">
+                      {card.data.count} ({sharePct}%)
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                    <div style={{ width: `${sharePct}%` }} className={`h-full rounded-full ${card.barColor}`} />
+                  </div>
+                  <div className="mt-3 space-y-1.5 text-[11px] tabular-nums">
+                    <div className="flex justify-between text-slate-300">
+                      <span>Delivered / Transit / RTO</span>
+                      <span className="font-mono text-white">
+                        {card.data.delivered} / {card.data.inTransit} /{' '}
+                        <span className="text-rose-300">{card.data.rto}</span>
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-slate-300">
+                      <span>Delivered Revenue</span>
+                      <span className="font-mono text-slate-100">
+                        {formatInr(card.data.revenue, pnl.currency)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-slate-300">
+                      <span>Ship + COD/PG Fees</span>
+                      <span className="font-mono text-amber-200">
+                        {formatInr(card.data.shippingAndFee, pnl.currency)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t border-slate-800/80 pt-1.5 font-semibold">
+                      <span className="text-slate-200">Projected / Realized Profit</span>
+                      <span
+                        className={`font-mono ${
+                          card.data.projectedProfit >= 0 ? 'text-emerald-300' : 'text-rose-400'
+                        }`}
+                      >
+                        {formatInr(card.data.projectedProfit, pnl.currency)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </section>
 

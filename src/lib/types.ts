@@ -109,6 +109,7 @@ export interface AppSettings {
   fallbackCodFee: number;
   prepaidGatewayPercent: number;
   marketingCostPerOrder: number;
+  dailyMetaAdsSpend?: number;
   deliverySlaDays?: number;
   pickupSlaHours?: number;
 }

@@ -8,8 +8,10 @@ import {
   buildProfitLossReport,
   buildSettlementAndDelaySummary,
   calculateOrderPnl,
+  calculateUnitEconomicsSimulation,
   computeBillableParcelWeightGrams,
   computeIncrementalRtoLegCost,
+  computeMetaAdDaysInRange,
   computeOrderMetrics,
   detectHostRuntimeKind,
   extractCleanIndianPincode,
@@ -21,6 +23,8 @@ import {
   formatPollPayload,
   getDispatchStatusInfo,
   getIstDateKey,
+  getIstMonthKey,
+  getMonthIstDateBounds,
   getOrderDeliveryDelayInfo,
   getOrderSettlementInfo,
   getSyncStartCutoffIso,
@@ -48,6 +52,7 @@ import {
   readCleanEnvVar,
   resolvePollVoteAction,
   selectPriorityAuthFiles,
+  shiftMonthKey,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
   shouldPreserveRecentLocalNote,
@@ -55,6 +60,7 @@ import {
   shouldSkipAutoRestoreForRemoteHost,
   splitDelhiveryChargeWithGst,
 } from './orderRules.js';
+import { buildMonthlyExcelWorkbook } from './exportExcelReport.js';
 import type { OrderRecord } from './types.js';
 
 test('normalizePhoneToWhatsAppJid formats Indian and international numbers', () => {
@@ -1375,3 +1381,268 @@ test('computeBillableParcelWeightGrams and splitDelhiveryChargeWithGst handle vo
   // If charge_DL was 0 in ss=RTO, keep return leg untouched
   assert.equal(computeIncrementalRtoLegCost(129.71, 148.86, false), 129.71);
 });
+
+test('Monthly IST helpers, unit economics breakeven simulator, and colorful 5-sheet ExcelJS workbook with formulas work accurately', async () => {
+  // 1) IST month boundary & shift checks
+  // 2026-10-31T19:30:00Z = 2026-11-01 01:00 IST -> 2026-11
+  assert.equal(getIstMonthKey('2026-10-31T19:30:00.000Z'), '2026-11');
+  assert.equal(shiftMonthKey('2026-01', -1), '2025-12');
+  assert.equal(shiftMonthKey('2026-12', 1), '2027-01');
+
+  const novBounds = getMonthIstDateBounds('2026-11');
+  assert.deepEqual(novBounds, {
+    fromDate: '2026-11-01',
+    toDate: '2026-11-30',
+    monthLabel: 'November 2026',
+  });
+  const leapFebBounds = getMonthIstDateBounds('2024-02');
+  assert.equal(leapFebBounds?.fromDate, '2024-02-01');
+  assert.equal(leapFebBounds?.toDate, '2024-02-29');
+
+  // 2) Unit economics simulator
+  // SP=1000, COGS=350, Pack=25, Fwd=75, RTO=75, Fee=25, Ads=100
+  // Delv Profit = 1000 - (350+75+25+25+100) = 425, RTO Loss = -(75+75+25+100) = -275
+  // At 20% RTO: 0.8 * 425 + 0.2 * (-275) = 340 - 55 = 285 blended profit (29% margin)
+  // Breakeven Max CPA = 0.8 * 525 + 0.2 * (-175) = 420 - 35 = 385
+  // Breakeven RTO % = 425 / (425 - (-275)) = 425 / 700 = 60.7%
+  const sim = calculateUnitEconomicsSimulation({
+    sellingPrice: 1000,
+    cogsCost: 350,
+    forwardShipping: 75,
+    rtoShipping: 75,
+    packagingCost: 25,
+    paymentOrCodFee: 25,
+    adSpendPerOrder: 100,
+    expectedRtoPercent: 20,
+  });
+  assert.equal(sim.profitIfDelivered, 425);
+  assert.equal(sim.lossIfRto, -275);
+  assert.equal(sim.blendedProfitPerOrder, 285);
+  assert.equal(sim.marginPercent, 29);
+  assert.equal(sim.maxCpaBreakeven, 385);
+  assert.equal(sim.breakevenRtoPercent, 60.7);
+
+  // 3) Colorful 5-Sheet ExcelJS Workbook generation with live Excel formulas
+  const costs = {
+    cogsPercent: 35,
+    packagingCostPerOrder: 25,
+    fallbackForwardShippingCost: 75,
+    fallbackRtoShippingCost: 75,
+    fallbackCodFee: 25,
+    prepaidGatewayPercent: 2,
+    marketingCostPerOrder: 50,
+  };
+  const delvOrder: OrderRecord = {
+    id: 'xl-1',
+    shopifyOrderId: '901',
+    orderNumber: '#1901',
+    customerName: 'Meera Nair',
+    customerPhone: '+919876543210',
+    customerEmail: 'meera@example.com',
+    totalPrice: '1000.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cookies Tin',
+    financialStatus: 'pending',
+    paymentMethod: 'COD',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'delivered',
+    shopifyTags: 'cod, confirm',
+    pollStatus: 'confirmed',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: null,
+    responseChannel: null,
+    shopifySynced: true,
+    createdAt: '2026-11-10T08:00:00.000Z',
+    delhiveryShippingCost: 80,
+    delhiveryCodFee: 30,
+    delhiveryRtoCost: 0,
+    delhiveryChargeSource: 'delhivery_api',
+    delhiveryChargedWeightGrams: 550,
+    orderNote: 'Fresh batch',
+    events: [],
+  };
+  const rtoOrder: OrderRecord = {
+    ...delvOrder,
+    id: 'xl-2',
+    shopifyOrderId: '902',
+    orderNumber: '#1902',
+    customerName: 'Vikram Rao',
+    shipmentStatus: 'rto_delivered',
+    delhiveryShippingCost: 80,
+    delhiveryCodFee: 0,
+    delhiveryRtoCost: 70,
+    delhiveryChargeSource: 'delhivery_wallet',
+    orderNote: 'Customer unavailable',
+  };
+
+  const { workbook, filename } = buildMonthlyExcelWorkbook({
+    orders: [delvOrder, rtoOrder],
+    settings: DEFAULT_SETTINGS,
+    costAssumptions: costs,
+    periodAdSpend: 500,
+    periodLabel: 'November 2026',
+  });
+
+  assert.equal(filename, 'Broomies-Bakery-Excel-Report-November-2026.xlsx');
+  assert.deepEqual(
+    workbook.worksheets.map((ws) => ws.name),
+    ['P&L Summary', 'Order-wise P&L', 'Daily Breakdown', 'Order Register', 'Visual Charts']
+  );
+
+  const pnlReport = buildProfitLossReport([delvOrder, rtoOrder], costs, 500);
+  const wsSummary = workbook.getWorksheet('P&L Summary');
+  assert.ok(wsSummary);
+  assert.equal(wsSummary.properties.tabColor?.argb, 'FF059669');
+  assert.equal((wsSummary.getCell('B15').value as { formula?: string }).formula, 'SUM(B9:B14)');
+  assert.equal((wsSummary.getCell('B16').value as { formula?: string }).formula, 'B8-B15');
+  assert.equal(
+    (wsSummary.getCell('B16').value as { result?: number }).result,
+    pnlReport.netRealizedProfit
+  );
+
+  const wsOrderPnl = workbook.getWorksheet('Order-wise P&L');
+  assert.ok(wsOrderPnl);
+  assert.equal((wsOrderPnl.getCell('U4').value as { formula?: string }).formula, 'SUM(O4:T4)');
+  assert.match((wsOrderPnl.getCell('V4').value as { formula?: string }).formula || '', /^IF\(/);
+  assert.equal((wsOrderPnl.getCell('V6').value as { formula?: string }).formula, 'SUM(V4:V5)');
+  // Outcome cell F4 ("Delivered") has emerald fill
+  assert.equal((wsOrderPnl.getCell('F4').fill as { fgColor?: { argb?: string } }).fgColor?.argb, 'FFD1FAE5');
+
+  const wsDaily = workbook.getWorksheet('Daily Breakdown');
+  assert.ok(wsDaily);
+  assert.equal((wsDaily.getCell('B5').value as { formula?: string }).formula, 'SUM(B4:B4)');
+  assert.equal((wsDaily.getCell('Q5').value as { formula?: string }).formula, 'SUM(Q4:Q4)');
+
+  const wsRegister = workbook.getWorksheet('Order Register');
+  assert.ok(wsRegister);
+  assert.equal(wsRegister.getCell('A4').value, '#1901');
+  assert.equal(wsRegister.getCell('R4').value, 'Fresh batch');
+
+  // Verify valid .xlsx zip buffer output
+  const outBuf = Buffer.from(await workbook.xlsx.writeBuffer());
+  assert.ok(outBuf.length > 5000);
+  assert.equal(outBuf.subarray(0, 2).toString('utf8'), 'PK');
+});
+
+test('Daily Meta Ads ₹500/day billing days and Profit & Loss + Excel deductions work accurately', async () => {
+  const sampleNov13: OrderRecord = {
+    id: 'ma-1',
+    shopifyOrderId: '951',
+    orderNumber: '#1951',
+    customerName: 'Riya',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '1000.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cookies',
+    financialStatus: 'paid',
+    paymentMethod: 'Prepaid',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'delivered',
+    shopifyTags: 'confirm',
+    pollStatus: 'confirmed',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: null,
+    responseChannel: null,
+    shopifySynced: true,
+    createdAt: '2026-11-13T08:00:00.000Z',
+    delhiveryShippingCost: 80,
+    delhiveryCodFee: 0,
+    delhiveryRtoCost: 0,
+    delhiveryChargeSource: 'delhivery_api',
+    events: [],
+  };
+  const sampleNov14: OrderRecord = {
+    ...sampleNov13,
+    id: 'ma-2',
+    shopifyOrderId: '952',
+    orderNumber: '#1952',
+    createdAt: '2026-11-14T08:00:00.000Z',
+  };
+  const sampleNov15: OrderRecord = {
+    ...sampleNov13,
+    id: 'ma-3',
+    shopifyOrderId: '953',
+    orderNumber: '#1953',
+    createdAt: '2026-11-15T08:00:00.000Z',
+  };
+
+  const allOrders = [sampleNov13, sampleNov14, sampleNov15];
+
+  // Single day (Today) -> 1 day
+  assert.equal(
+    computeMetaAdDaysInRange({
+      orders: [sampleNov15],
+      fromDate: '2026-11-15',
+      toDate: '2026-11-15',
+      syncStartDate: '2026-11-13',
+      todayIst: '2026-11-15',
+    }),
+    1
+  );
+
+  // This Month (Nov 1..30) on 2026-11-15 with syncStartDate=2026-11-13 -> clipped to 3 active days (Nov 13, 14, 15)
+  assert.equal(
+    computeMetaAdDaysInRange({
+      orders: allOrders,
+      fromDate: '2026-11-01',
+      toDate: '2026-11-30',
+      syncStartDate: '2026-11-13',
+      todayIst: '2026-11-15',
+    }),
+    3
+  );
+
+  // Past full month (Oct 1..31) -> 31 days
+  assert.equal(
+    computeMetaAdDaysInRange({
+      orders: [],
+      fromDate: '2026-10-01',
+      toDate: '2026-10-31',
+      syncStartDate: '2026-11-13',
+      todayIst: '2026-11-15',
+    }),
+    31
+  );
+
+  // Each order: 1000 - 350 COGS - 25 Pack - 80 Ship - 20 PG(2%) = 525 pre-Meta profit
+  // 3 days total = 1575 - 1500 (3 * 500/day) = +75 netRealizedProfit
+  // Each daily row: 525 - 500 = +25 netRealizedProfit
+  const costsWithMeta = {
+    cogsPercent: 35,
+    packagingCostPerOrder: 25,
+    fallbackForwardShippingCost: 75,
+    fallbackRtoShippingCost: 75,
+    fallbackCodFee: 25,
+    prepaidGatewayPercent: 2,
+    marketingCostPerOrder: 0,
+    dailyMetaAdsSpend: 500,
+  };
+  const pnlWithMeta = buildProfitLossReport(allOrders, costsWithMeta, 0, 3);
+  assert.equal(pnlWithMeta.dailyMetaAdsRate, 500);
+  assert.equal(pnlWithMeta.metaAdDaysCount, 3);
+  assert.equal(pnlWithMeta.totalDailyMetaAds, 1500);
+  assert.equal(pnlWithMeta.totalMarketingCost, 1500);
+  assert.equal(pnlWithMeta.netRealizedProfit, 75);
+  assert.equal(pnlWithMeta.dailyPnlRows.length, 3);
+  assert.equal(pnlWithMeta.dailyPnlRows[0].netRealizedProfit, 25);
+
+  const { workbook } = buildMonthlyExcelWorkbook({
+    orders: allOrders,
+    settings: DEFAULT_SETTINGS,
+    costAssumptions: costsWithMeta,
+    periodAdSpend: 0,
+    adDaysCount: 3,
+    periodLabel: 'November 2026',
+  });
+  const wsSummary = workbook.getWorksheet('P&L Summary');
+  assert.ok(wsSummary);
+  assert.equal(wsSummary.getCell('B14').value, 1500);
+  assert.equal((wsSummary.getCell('B16').value as { result?: number }).result, 75);
+});
+
+

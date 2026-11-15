@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fallbackCodFee: 25,
   prepaidGatewayPercent: 2,
   marketingCostPerOrder: 0,
+  dailyMetaAdsSpend: 500,
   deliverySlaDays: 4,
   pickupSlaHours: 48,
 };
@@ -1033,6 +1034,55 @@ export function getIstDateKey(value: string | Date): string | null {
 }
 
 /**
+ * Converts an ISO timestamp or Date into YYYY-MM in IST (+05:30).
+ */
+export function getIstMonthKey(value: string | Date): string | null {
+  const dateKey = getIstDateKey(value);
+  return dateKey ? dateKey.slice(0, 7) : null;
+}
+
+/**
+ * Shifts a YYYY-MM month key backward/forward cleanly across year boundaries.
+ */
+export function shiftMonthKey(monthKey: string, deltaMonths: number): string {
+  const match = monthKey.trim().match(/^(\d{4})-(\d{2})$/);
+  if (!match) return monthKey;
+  const year = Number.parseInt(match[1], 10);
+  const monthIdx = Number.parseInt(match[2], 10) - 1;
+  const dt = new Date(Date.UTC(year, monthIdx + deltaMonths, 1));
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+/**
+ * Computes exact IST month start/end YYYY-MM-DD dates and display label (e.g. "November 2026").
+ */
+export function getMonthIstDateBounds(
+  monthKey: string
+): { fromDate: string; toDate: string; monthLabel: string } | null {
+  const match = monthKey.trim().match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  if (month < 1 || month > 12) return null;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const mm = String(month).padStart(2, '0');
+  const dd = String(lastDay).padStart(2, '0');
+  const labelDt = new Date(Date.UTC(year, month - 1, 15));
+  const monthLabel = labelDt.toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  return {
+    fromDate: `${year}-${mm}-01`,
+    toDate: `${year}-${mm}-${dd}`,
+    monthLabel,
+  };
+}
+
+/**
  * Checks whether an order is confirmed by the customer AND still waiting to be dispatched today.
  */
 export function isOrderReadyToDispatch(
@@ -1718,6 +1768,75 @@ export function computeIncrementalRtoLegCost(
   return diff > 0 ? diff : cleanRtoTotal;
 }
 
+export interface UnitEconomicsSimulationInput {
+  sellingPrice: number;
+  cogsCost: number;
+  forwardShipping: number;
+  rtoShipping: number;
+  packagingCost: number;
+  paymentOrCodFee: number;
+  adSpendPerOrder: number;
+  expectedRtoPercent: number;
+}
+
+export interface UnitEconomicsSimulationResult {
+  profitIfDelivered: number;
+  lossIfRto: number;
+  blendedProfitPerOrder: number;
+  marginPercent: number;
+  maxCpaBreakeven: number;
+  breakevenRtoPercent: number;
+}
+
+/**
+ * Interactive single-order / blended-RTO profit & breakeven calculator for unit-economics planning.
+ */
+export function calculateUnitEconomicsSimulation(
+  input: UnitEconomicsSimulationInput
+): UnitEconomicsSimulationResult {
+  const sp = Math.max(0, Number(input.sellingPrice) || 0);
+  const cogs = Math.max(0, Number(input.cogsCost) || 0);
+  const fwd = Math.max(0, Number(input.forwardShipping) || 0);
+  const rto = Math.max(0, Number(input.rtoShipping) || 0);
+  const pack = Math.max(0, Number(input.packagingCost) || 0);
+  const fee = Math.max(0, Number(input.paymentOrCodFee) || 0);
+  const ads = Math.max(0, Number(input.adSpendPerOrder) || 0);
+  const rtoRate = Math.max(0, Math.min(100, Number(input.expectedRtoPercent) || 0)) / 100;
+
+  const profitIfDelivered = round2(sp - (cogs + fwd + pack + fee + ads));
+  const lossIfRto = round2(-(fwd + rto + pack + ads));
+  const blendedProfitPerOrder = round2(
+    (1 - rtoRate) * profitIfDelivered + rtoRate * lossIfRto
+  );
+  const marginPercent = sp > 0 ? Math.round((blendedProfitPerOrder * 100) / sp) : 0;
+
+  // Max ad spend per shipped order before blended profit crosses below 0
+  const preAdProfitIfDelv = sp - (cogs + fwd + pack + fee);
+  const preAdLossIfRto = -(fwd + rto + pack);
+  const maxCpaBreakeven = round2(
+    Math.max(0, (1 - rtoRate) * preAdProfitIfDelv + rtoRate * preAdLossIfRto)
+  );
+
+  // Solve (1 - r) * profitIfDelivered + r * lossIfRto = 0 -> r = profitIfDelivered / (profitIfDelivered - lossIfRto)
+  let breakevenRtoPercent = 0;
+  const spread = profitIfDelivered - lossIfRto;
+  if (profitIfDelivered > 0 && spread > 0) {
+    breakevenRtoPercent = Math.min(
+      100,
+      Math.max(0, Math.round((profitIfDelivered / spread) * 1000) / 10)
+    );
+  }
+
+  return {
+    profitIfDelivered,
+    lossIfRto,
+    blendedProfitPerOrder,
+    marginPercent,
+    maxCpaBreakeven,
+    breakevenRtoPercent,
+  };
+}
+
 export type PnlOutcomeCategory =
   | 'delivered'
   | 'in_transit'
@@ -1786,6 +1905,9 @@ export interface ProfitLossReportSummary {
   totalRtoLoss: number;
   totalPaymentFees: number;
   totalMarketingCost: number;
+  dailyMetaAdsRate: number;
+  metaAdDaysCount: number;
+  totalDailyMetaAds: number;
   totalRealizedCosts: number;
   netRealizedProfit: number;
   projectedTransitProfit: number;
@@ -1806,7 +1928,57 @@ export type CostAssumptions = Pick<
   | 'fallbackCodFee'
   | 'prepaidGatewayPercent'
   | 'marketingCostPerOrder'
+  | 'dailyMetaAdsSpend'
 >;
+
+/**
+ * Calculates how many active Meta Ads billing days fall inside the selected date filter,
+ * capping future dates at Today (IST) and clipping prior to store syncStartDate when applicable.
+ */
+export function computeMetaAdDaysInRange(params: {
+  orders: OrderRecord[];
+  fromDate?: string;
+  toDate?: string;
+  syncStartDate?: string;
+  todayIst?: string;
+}): number {
+  const today = params.todayIst || getIstDateKey(new Date()) || '2026-11-15';
+  const from = (params.fromDate || '').trim();
+  const to = (params.toDate || '').trim();
+  const syncStart = (params.syncStartDate || '').trim();
+
+  if (from && to && from === to) return 1;
+
+  const orderDates = params.orders
+    .map((o) => getIstDateKey(o.createdAt))
+    .filter((d): d is string => Boolean(d))
+    .sort();
+  const earliestOrder = orderDates[0] || '';
+  const latestOrder = orderDates[orderDates.length - 1] || '';
+
+  let effStart = from || earliestOrder || syncStart || today;
+  let effEnd = to || (latestOrder && latestOrder > today ? latestOrder : today);
+
+  if (from && from <= today && effEnd > today) {
+    effEnd = today;
+  }
+
+  if (
+    syncStart &&
+    syncStart > effStart &&
+    syncStart <= effEnd &&
+    (!earliestOrder || earliestOrder >= syncStart)
+  ) {
+    effStart = syncStart;
+  }
+
+  const startMs = Date.parse(`${effStart}T00:00:00+05:30`);
+  const endMs = Date.parse(`${effEnd}T00:00:00+05:30`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return orderDates.length > 0 ? new Set(orderDates).size : 1;
+  }
+  return Math.max(1, Math.round((endMs - startMs) / 86_400_000) + 1);
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -2015,9 +2187,11 @@ export function calculateOrderPnl(
 export function buildProfitLossReport(
   orders: OrderRecord[],
   costSettings: CostAssumptions,
-  periodAdSpendExtra = 0
+  periodAdSpendExtra = 0,
+  adDaysOverride?: number
 ): ProfitLossReportSummary {
   const extraAds = Math.max(0, Number(periodAdSpendExtra) || 0);
+  const dailyMetaAdsRate = Math.max(0, Number(costSettings.dailyMetaAdsSpend) || 0);
   const orderRows = orders.map((o) => calculateOrderPnl(o, costSettings));
 
   let currency = 'INR';
@@ -2121,6 +2295,21 @@ export function buildProfitLossReport(
     }
   }
 
+  // Deduct fixed Daily Meta Ads spend from each active day's Daily P&L row
+  if (dailyMetaAdsRate > 0) {
+    for (const day of dailyMap.values()) {
+      day.totalCosts += dailyMetaAdsRate;
+      day.netRealizedProfit -= dailyMetaAdsRate;
+      day.projectedNetProfit -= dailyMetaAdsRate;
+    }
+  }
+
+  const metaAdDaysCount =
+    typeof adDaysOverride === 'number' && Number.isFinite(adDaysOverride) && adDaysOverride >= 0
+      ? Math.round(adDaysOverride)
+      : dailyMap.size;
+  const totalDailyMetaAds = round2(dailyMetaAdsRate * metaAdDaysCount);
+
   const totalRealizedCosts = round2(
     totalCogs +
       totalPackagingCost +
@@ -2128,6 +2317,7 @@ export function buildProfitLossReport(
       totalRtoShippingCost +
       totalPaymentFees +
       totalMarketingCost +
+      totalDailyMetaAds +
       extraAds
   );
 
@@ -2174,7 +2364,10 @@ export function buildProfitLossReport(
     totalRtoShippingCost: round2(totalRtoShippingCost),
     totalRtoLoss: round2(totalRtoLoss),
     totalPaymentFees: round2(totalPaymentFees),
-    totalMarketingCost: round2(totalMarketingCost + extraAds),
+    totalMarketingCost: round2(totalMarketingCost + totalDailyMetaAds + extraAds),
+    dailyMetaAdsRate,
+    metaAdDaysCount,
+    totalDailyMetaAds,
     totalRealizedCosts,
     netRealizedProfit,
     projectedTransitProfit: round2(projectedTransitProfit),

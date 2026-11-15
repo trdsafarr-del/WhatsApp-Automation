@@ -800,7 +800,7 @@ export function SettingsView({
               Courier freight, COD &amp; RTO fees are pulled automatically from Delhivery One (and optional Wallet CSV). Enter only your internal product &amp; box costs below.
             </p>
 
-            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <label htmlFor="cogs-pct" className="block text-xs font-medium text-slate-300">
                   Product COGS (% of Order Value)
@@ -831,6 +831,23 @@ export function SettingsView({
                     updateField('packagingCostPerOrder', Number.parseFloat(e.target.value) || 0)
                   }
                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 font-mono text-sm text-white focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="daily-meta-ads" className="block text-xs font-medium text-orange-300">
+                  Daily Meta Ads Spend (INR / Day)
+                </label>
+                <input
+                  id="daily-meta-ads"
+                  type="number"
+                  min={0}
+                  step="50"
+                  value={form.dailyMetaAdsSpend ?? 500}
+                  onChange={(e) =>
+                    updateField('dailyMetaAdsSpend', Number.parseFloat(e.target.value) || 0)
+                  }
+                  className="mt-1 w-full rounded-lg border border-orange-500/40 bg-slate-950/70 px-3 py-2 font-mono text-sm text-white focus:border-orange-400 focus:outline-none"
                 />
               </div>
 

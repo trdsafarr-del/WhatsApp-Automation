@@ -195,6 +195,11 @@ async function startServer() {
         Number.isFinite(body.marketingCostPerOrder)
           ? Math.max(0, body.marketingCostPerOrder)
           : cur.marketingCostPerOrder,
+      dailyMetaAdsSpend:
+        typeof body.dailyMetaAdsSpend === 'number' &&
+        Number.isFinite(body.dailyMetaAdsSpend)
+          ? Math.max(0, body.dailyMetaAdsSpend)
+          : cur.dailyMetaAdsSpend ?? 500,
       deliverySlaDays:
         typeof body.deliverySlaDays === 'number' && Number.isFinite(body.deliverySlaDays)
           ? Math.max(1, Math.min(30, body.deliverySlaDays))
