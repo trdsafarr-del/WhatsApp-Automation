@@ -73,20 +73,20 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
       {/* Clean Tab Strip for Settings Sections */}
-      <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:flex-row sm:items-center">
+      <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800/90 bg-slate-900/75 p-3 backdrop-blur-md sm:flex-row sm:items-center sm:p-4">
         <div
           role="tablist"
           aria-label="Automation Settings Sections"
-          className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/70 p-1"
+          className="no-scrollbar flex flex-nowrap items-center gap-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/70 p-1 sm:flex-wrap"
         >
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === 'credentials'}
             onClick={() => setActiveTab('credentials')}
-            className={`inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
               activeTab === 'credentials'
                 ? 'bg-slate-800 text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-100'
@@ -100,7 +100,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
             role="tab"
             aria-selected={activeTab === 'polls'}
             onClick={() => setActiveTab('polls')}
-            className={`inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
               activeTab === 'polls'
                 ? 'bg-slate-800 text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-100'
@@ -114,7 +114,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
             role="tab"
             aria-selected={activeTab === 'dispatch'}
             onClick={() => setActiveTab('dispatch')}
-            className={`inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
               activeTab === 'dispatch'
                 ? 'bg-slate-800 text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-100'
@@ -128,7 +128,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
         <button
           type="submit"
           disabled={isSaving}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:text-sm"
+          className="hidden items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:inline-flex sm:text-sm"
         >
           <Save className="h-4 w-4" aria-hidden="true" />
           {isSaving ? 'Saving...' : isDirty ? 'Save Unsaved Changes' : 'Save Automation Rules'}
@@ -146,10 +146,10 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
       )}
 
       {activeTab === 'credentials' && (
-        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md">
+        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
           <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2.5">
-              <Store className="h-5 w-5 text-emerald-400" aria-hidden="true" />
+              <Store className="h-5 w-5 shrink-0 text-emerald-400" aria-hidden="true" />
               <div>
                 <h2 className="text-base font-semibold text-white">
                   Shopify Store &amp; Dev Dashboard Credentials
@@ -164,7 +164,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
               type="button"
               disabled={isTesting}
               onClick={() => void handleTest()}
-              className="rounded-lg border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+              className="min-h-[44px] w-full rounded-lg border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
             >
               {isTesting ? 'Testing...' : 'Test Shopify Connection'}
             </button>
@@ -297,7 +297,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
       )}
 
       {activeTab === 'polls' && (
-        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md">
+        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
           <div className="border-b border-slate-800 pb-4">
             <h2 className="text-base font-semibold text-white">
               WhatsApp Poll Template &amp; Auto-Tag Rules
@@ -422,7 +422,7 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
       )}
 
       {activeTab === 'dispatch' && (
-        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md">
+        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
           <div className="border-b border-slate-800 pb-4">
             <h2 className="text-base font-semibold text-white">
               Dispatch Tracking, Replies &amp; Sync Cutoff
@@ -522,6 +522,15 @@ export function SettingsView({ settings, onSave, onTestShopify }: SettingsViewPr
           </div>
         </section>
       )}
+      {/* Mobile Thumb-Zone Save Button */}
+      <button
+        type="submit"
+        disabled={isSaving}
+        className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 sm:hidden"
+      >
+        <Save className="h-4 w-4" aria-hidden="true" />
+        {isSaving ? 'Saving...' : isDirty ? 'Save Unsaved Changes' : 'Save Automation Rules'}
+      </button>
     </form>
   );
 }

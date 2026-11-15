@@ -563,19 +563,19 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Workspace Area */}
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+      {/* Main Workspace Area (no z-index so fixed z-50 child sheets overlay the bottom nav) */}
+      <div className="relative flex min-w-0 flex-1 flex-col">
         {/* Clean 3-Zone Top Header */}
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-slate-800/80 bg-slate-950/75 px-4 backdrop-blur-xl sm:px-6">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-950/80 px-3.5 backdrop-blur-xl sm:h-16 sm:gap-4 sm:px-6">
           {/* Zone 1: Sidebar Toggle + Breadcrumb / Title */}
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <button
               type="button"
               aria-label="Open navigation menu"
               onClick={() => setMobileMenuOpen(true)}
-              className="rounded-lg border border-slate-800 bg-slate-900/80 p-2 text-slate-300 hover:bg-slate-800 hover:text-white lg:hidden"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/80 text-slate-300 hover:bg-slate-800 hover:text-white lg:hidden"
             >
-              <Menu className="h-4 w-4" />
+              <Menu className="h-4 w-4" aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -591,15 +591,15 @@ export default function App() {
               )}
             </button>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[11px] text-slate-400 sm:text-xs">
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 sm:gap-2 sm:text-xs">
                 <span className="truncate">{pageMeta[activeTab].breadcrumb}</span>
-                <span aria-hidden="true" className="hidden sm:inline">·</span>
+                <span aria-hidden="true">·</span>
                 <span
-                  className={`hidden font-medium sm:inline whitespace-nowrap ${
+                  className={`font-medium whitespace-nowrap shrink-0 ${
                     waDisplay.isLinked ? 'text-emerald-400' : 'text-amber-300'
                   }`}
                 >
-                  WhatsApp {waDisplay.sidebarLabel}
+                  {waDisplay.isLinked ? 'WA Live' : 'WA Unlinked'}
                 </span>
               </div>
               <h1 className="truncate font-display text-sm font-semibold text-white sm:text-base">
@@ -650,18 +650,19 @@ export default function App() {
               setActiveTab('orders');
               void handleSyncShopify();
             }}
-            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-medium text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:px-4 sm:text-sm"
+            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:gap-2 sm:px-4 sm:text-sm"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${isSyncing ? 'animate-spin' : ''}`}
               aria-hidden="true"
             />
-            {isSyncing ? 'Syncing...' : 'Sync Shopify'}
+            <span className="sm:hidden">{isSyncing ? 'Syncing' : 'Sync'}</span>
+            <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Shopify'}</span>
           </button>
         </header>
 
-        {/* Tablet/Medium Sub-bar Tab Switcher */}
-        <div className="border-b border-slate-800/80 bg-slate-950/75 px-4 py-2 backdrop-blur-xl sm:px-6 xl:hidden">
+        {/* Tablet/Medium Sub-bar Tab Switcher (hidden on phones because mobile uses Bottom Nav Bar) */}
+        <div className="hidden border-b border-slate-800/80 bg-slate-950/75 px-6 py-2 backdrop-blur-xl lg:block xl:hidden">
           <div className="flex items-center gap-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/90 p-1">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
@@ -688,8 +689,8 @@ export default function App() {
           </div>
         </div>
 
-        <main className="flex-1 p-4 sm:p-6">
-          <div className="mx-auto max-w-[1600px] space-y-5">
+        <main className="flex-1 p-3.5 pb-24 sm:p-6 sm:pb-24 lg:pb-6">
+          <div className="mx-auto max-w-[1600px] space-y-4 sm:space-y-5">
             {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && (
               <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200 backdrop-blur-md sm:flex-row sm:items-center">
                 <p className="leading-relaxed">
@@ -698,7 +699,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setActiveTab('setup')}
-                  className="shrink-0 rounded-lg border border-amber-400/40 bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-slate-800 whitespace-nowrap"
+                  className="shrink-0 rounded-lg border border-amber-400/40 bg-slate-900/80 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-slate-800 whitespace-nowrap"
                 >
                   Open Setup Guide
                 </button>
@@ -706,16 +707,16 @@ export default function App() {
             )}
 
             {isLoading ? (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
                 {[1, 2, 3, 4].map((n) => (
                   <div
                     key={n}
-                    className="h-28 animate-pulse rounded-xl border border-slate-800 bg-slate-900/70"
+                    className="h-24 animate-pulse rounded-xl border border-slate-800 bg-slate-900/70 sm:h-28"
                   />
                 ))}
               </div>
             ) : loadError ? (
-              <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-6 text-sm text-rose-200">
+              <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-5 text-sm text-rose-200 sm:p-6">
                 Failed to load dashboard state: {loadError}
               </div>
             ) : activeTab === 'orders' ? (
@@ -760,6 +761,56 @@ export default function App() {
           </div>
         </main>
       </div>
+
+      {/* Fixed Mobile Bottom Navigation Bar (Thumb Zone) */}
+      <nav
+        aria-label="Mobile Bottom Navigation"
+        data-testid="mobile-bottom-nav"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800/90 bg-slate-950/95 backdrop-blur-xl pb-safe lg:hidden"
+      >
+        <div className="grid h-16 grid-cols-4 items-stretch">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const active = activeTab === item.id;
+            const mobileLabel =
+              item.id === 'setup' ? 'Guide' : item.shortLabel;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-current={active ? 'page' : undefined}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setMobileMenuOpen(false);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`relative flex min-h-[48px] flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium transition-colors active:scale-95 ${
+                  active ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                {active && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-0 h-0.5 w-10 rounded-full bg-emerald-400"
+                  />
+                )}
+                <div className="relative flex items-center justify-center">
+                  <Icon
+                    className={`h-5 w-5 ${active ? 'text-emerald-400' : 'text-slate-400'}`}
+                    aria-hidden="true"
+                  />
+                  {item.id === 'orders' && orders.length > 0 && (
+                    <span className="ml-1 font-mono text-[10px] font-semibold tabular-nums text-amber-300">
+                      {orders.length}
+                    </span>
+                  )}
+                </div>
+                <span className="truncate whitespace-nowrap leading-none">{mobileLabel}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }

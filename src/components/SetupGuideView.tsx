@@ -110,20 +110,20 @@ export function SetupGuideView({
   });
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       {/* Guide Tab Strip */}
-      <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md">
+      <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-3 backdrop-blur-md sm:p-4">
         <div
           role="tablist"
           aria-label="Deployment Guide Sections"
-          className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/70 p-1"
+          className="no-scrollbar flex flex-nowrap items-center gap-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/70 p-1 sm:flex-wrap"
         >
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === 'sync'}
             onClick={() => setActiveTab('sync')}
-            className={`inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
               activeTab === 'sync'
                 ? 'bg-slate-800 text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-100'
@@ -137,7 +137,7 @@ export function SetupGuideView({
             role="tab"
             aria-selected={activeTab === 'shopify'}
             onClick={() => setActiveTab('shopify')}
-            className={`inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
               activeTab === 'shopify'
                 ? 'bg-slate-800 text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-100'
@@ -151,7 +151,7 @@ export function SetupGuideView({
             role="tab"
             aria-selected={activeTab === 'railway'}
             onClick={() => setActiveTab('railway')}
-            className={`inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
               activeTab === 'railway'
                 ? 'bg-slate-800 text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-100'
@@ -164,7 +164,7 @@ export function SetupGuideView({
       </div>
 
       {activeTab === 'sync' && (
-        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md">
+        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
           <div className="flex items-center gap-2.5 border-b border-slate-800 pb-4">
             <Cloud className="h-5 w-5 text-emerald-400" aria-hidden="true" />
             <div>
@@ -215,7 +215,7 @@ export function SetupGuideView({
       )}
 
       {activeTab === 'shopify' && (
-        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md">
+        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
           <div className="flex items-center gap-2.5 border-b border-slate-800 pb-4">
             <ShoppingBag className="h-5 w-5 text-emerald-400" aria-hidden="true" />
             <div>
@@ -274,7 +274,7 @@ export function SetupGuideView({
       )}
 
       {activeTab === 'railway' && (
-        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md">
+        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
           <div className="flex items-center gap-2.5 border-b border-slate-800 pb-4">
             <GitBranch className="h-5 w-5 text-emerald-400" aria-hidden="true" />
             <div>

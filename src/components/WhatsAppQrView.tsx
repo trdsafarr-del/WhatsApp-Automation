@@ -49,14 +49,14 @@ export function WhatsAppQrView({
     display.isLinked && !isQrReady && !isConnecting && !formattedPairingCode;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Engine Header */}
-      <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md">
+      <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
         <div>
           <h2 className="text-base font-semibold text-white">
             Official WhatsApp Web QR Connection
           </h2>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-xs leading-relaxed text-slate-400 sm:text-sm">
             Link once via official WhatsApp Linked Devices QR or 8-digit phone pairing code. Credentials stay saved so you never have to re-scan on server restarts.
           </p>
         </div>
@@ -97,9 +97,9 @@ export function WhatsAppQrView({
       </div>
 
       {/* 2-Column QR Scanner & 24/7 Session Persistence Panel */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-12">
         {/* Left: Live QR Display / Active Linked Device */}
-        <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md lg:col-span-6">
+        <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6 lg:col-span-6">
           <div className="flex items-center justify-between border-b border-slate-800 pb-4">
             <div className="flex items-center gap-2.5">
               <QrCode className="h-5 w-5 text-emerald-400" aria-hidden="true" />
@@ -139,32 +139,32 @@ export function WhatsAppQrView({
                   </div>
                 </div>
 
-                <dl className="divide-y divide-slate-800 text-sm">
-                  <div className="flex items-center justify-between py-2.5">
-                    <dt className="text-slate-400">Session Persistence</dt>
-                    <dd className="font-medium text-emerald-400">
+                <dl className="divide-y divide-slate-800 text-xs sm:text-sm">
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <dt className="shrink-0 text-slate-400">Session Persistence</dt>
+                    <dd className="text-right font-medium text-emerald-400">
                       {display.persistenceLabel}
                     </dd>
                   </div>
-                  <div className="flex items-center justify-between py-2.5">
-                    <dt className="text-slate-400">Connected At</dt>
-                    <dd className="font-mono text-xs tabular-nums text-slate-200">
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <dt className="shrink-0 text-slate-400">Connected At</dt>
+                    <dd className="text-right font-mono text-xs tabular-nums text-slate-200">
                       {whatsapp.connectedAt
                         ? new Date(whatsapp.connectedAt).toLocaleString()
                         : '—'}
                     </dd>
                   </div>
-                  <div className="flex items-center justify-between py-2.5">
-                    <dt className="text-slate-400">Last Keep-Alive Heartbeat</dt>
-                    <dd className="font-mono text-xs tabular-nums text-slate-200">
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <dt className="shrink-0 text-slate-400">Last Keep-Alive Heartbeat</dt>
+                    <dd className="text-right font-mono text-xs tabular-nums text-slate-200">
                       {whatsapp.lastHeartbeatAt
                         ? new Date(whatsapp.lastHeartbeatAt).toLocaleTimeString()
                         : '—'}
                     </dd>
                   </div>
-                  <div className="flex items-center justify-between py-2.5">
-                    <dt className="text-slate-400">Auto-Reconnect Counter</dt>
-                    <dd className="font-mono text-xs tabular-nums text-slate-200">
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <dt className="shrink-0 text-slate-400">Auto-Reconnect Counter</dt>
+                    <dd className="text-right font-mono text-xs tabular-nums text-slate-200">
                       {whatsapp.reconnectCount}
                     </dd>
                   </div>
@@ -178,14 +178,14 @@ export function WhatsAppQrView({
                   </p>
                 )}
 
-                <div className="flex flex-wrap items-center gap-3 pt-2">
+                <div className="flex flex-col gap-2.5 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
                   {display.isLocalConnected ? (
                     <>
                       <button
                         type="button"
                         disabled={isBusy}
                         onClick={() => void onRestart()}
-                        className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
                       >
                         <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                         Refresh Socket (Stay Logged In)
@@ -194,7 +194,7 @@ export function WhatsAppQrView({
                         type="button"
                         disabled={isBusy}
                         onClick={() => void onPause()}
-                        className="inline-flex items-center gap-2 rounded-lg border border-amber-500/35 bg-amber-500/15 px-4 py-2 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-500/25 whitespace-nowrap shrink-0"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-amber-500/35 bg-amber-500/15 px-4 py-2 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-500/25 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
                       >
                         Pause Here (Let Railway Run 24/7)
                       </button>
@@ -204,7 +204,7 @@ export function WhatsAppQrView({
                       type="button"
                       disabled={isBusy}
                       onClick={() => void onConnect('baileys_qr', false)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0"
+                      className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
                     >
                       <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                       Restore Saved Session
@@ -216,7 +216,7 @@ export function WhatsAppQrView({
                       type="button"
                       disabled={isBusy}
                       onClick={() => void onDisconnect()}
-                      className="inline-flex items-center gap-2 rounded-lg border border-rose-500/35 bg-rose-500/10 px-4 py-2 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/20 whitespace-nowrap shrink-0"
+                      className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-rose-500/35 bg-rose-500/10 px-4 py-2 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/20 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
                     >
                       <Power className="h-3.5 w-3.5" aria-hidden="true" />
                       Logout Device
@@ -263,13 +263,13 @@ export function WhatsAppQrView({
                 </div>
 
                 {formattedPairingCode ? (
-                  <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-5">
+                  <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-4 sm:p-5">
                     <p className="text-xs font-medium text-emerald-200">
                       Enter this 8-character code in WhatsApp → Linked Devices → Link with phone number instead:
                     </p>
                     <p
                       data-testid="whatsapp-pairing-code"
-                      className="mt-3 font-mono text-3xl font-bold tracking-[0.2em] text-white"
+                      className="mt-3 font-mono text-2xl font-bold tracking-[0.15em] text-white sm:text-3xl sm:tracking-[0.2em]"
                     >
                       {formattedPairingCode}
                     </p>
@@ -283,7 +283,7 @@ export function WhatsAppQrView({
                             src={whatsapp.qrDataUrl}
                             alt="Official WhatsApp Web QR Code"
                             referrerPolicy="no-referrer"
-                            className="h-60 w-60 object-contain"
+                            className="h-52 w-52 object-contain sm:h-60 sm:w-60"
                           />
                         </div>
                         <div className="mx-auto max-w-sm space-y-1 text-sm text-slate-300">
@@ -297,7 +297,7 @@ export function WhatsAppQrView({
                       </div>
                     ) : (
                       <div className="py-2">
-                        <div className="mx-auto flex h-44 w-44 flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-4">
+                        <div className="mx-auto flex h-40 w-40 flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-4 sm:h-44 sm:w-44">
                           <Smartphone className="h-8 w-8 text-slate-500" aria-hidden="true" />
                           <p className="mt-2 text-xs font-medium text-slate-400">
                             {isConnecting ? 'Completing WhatsApp handshake...' : 'QR Session Idle'}
@@ -311,7 +311,7 @@ export function WhatsAppQrView({
                         type="button"
                         disabled={isBusy}
                         onClick={() => void onConnect('baileys_qr', true)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:w-auto"
                       >
                         <QrCode className="h-4 w-4" aria-hidden="true" />
                         {isBusy
@@ -341,13 +341,13 @@ export function WhatsAppQrView({
                         value={pairingPhone}
                         onChange={(e) => setPairingPhone(e.target.value)}
                         placeholder="919876543210"
-                        className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                        className="min-h-[44px] flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none sm:min-h-0"
                       />
                       <button
                         type="button"
                         disabled={isBusy || !pairingPhone.trim()}
                         onClick={() => void onRequestPairingCode(pairingPhone)}
-                        className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0"
+                        className="min-h-[44px] rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0"
                       >
                         Get Pairing Code
                       </button>
@@ -367,7 +367,7 @@ export function WhatsAppQrView({
         </div>
 
         {/* Right: 24/7 Persistence Architecture & Guarantees */}
-        <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-6 backdrop-blur-md lg:col-span-6">
+        <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6 lg:col-span-6">
           <div className="flex items-center gap-2.5 border-b border-slate-800 pb-4">
             <ShieldCheck className="h-5 w-5 text-emerald-400" aria-hidden="true" />
             <h3 className="text-base font-semibold text-white">
