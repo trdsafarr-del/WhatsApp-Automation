@@ -383,6 +383,7 @@ export function inferInitialPollStatus(
 
 export interface ShopifyFulfillmentSource {
   status?: string | null;
+  shipment_status?: string | null;
   created_at?: string | null;
   tracking_number?: string | null;
   tracking_numbers?: Array<string | null> | null;
@@ -397,10 +398,11 @@ export interface ExtractedTrackingInfo {
   trackingCompany: string;
   trackingValue: string;
   fulfilledAt: string | null;
+  shipmentStatus: string | null;
 }
 
 /**
- * Extracts the newest active fulfillment tracking URL/number from a Shopify order payload.
+ * Extracts the newest active fulfillment tracking URL/number and shipment status from a Shopify order payload.
  */
 export function extractShopifyTrackingInfo(raw: {
   fulfillments?: ShopifyFulfillmentSource[] | null;
@@ -412,6 +414,7 @@ export function extractShopifyTrackingInfo(raw: {
       trackingCompany: '',
       trackingValue: '',
       fulfilledAt: null,
+      shipmentStatus: null,
     };
   }
 
@@ -433,6 +436,7 @@ export function extractShopifyTrackingInfo(raw: {
         : '');
     const company = f.tracking_company?.trim() || '';
     const value = url || num;
+    const shipmentStatus = f.shipment_status?.trim() || null;
 
     if (value) {
       return {
@@ -441,16 +445,19 @@ export function extractShopifyTrackingInfo(raw: {
         trackingCompany: company,
         trackingValue: value,
         fulfilledAt: f.created_at || null,
+        shipmentStatus,
       };
     }
   }
 
+  const fallback = candidates.find((f) => f.shipment_status?.trim() || f.created_at);
   return {
     trackingNumber: '',
     trackingUrl: '',
     trackingCompany: '',
     trackingValue: '',
-    fulfilledAt: null,
+    fulfilledAt: fallback?.created_at || null,
+    shipmentStatus: fallback?.shipment_status?.trim() || null,
   };
 }
 
@@ -792,7 +799,22 @@ export function readCleanEnvVar(
   return '';
 }
 
-export type DispatchStatusCode = 'ready' | 'dispatched' | 'cancelled' | 'pending';
+export type DispatchStatusCode =
+  | 'ready'
+  | 'dispatched'
+  | 'in_transit'
+  | 'delivered'
+  | 'rto_return'
+  | 'cancelled'
+  | 'pending';
+
+function parseNormalizedTags(shopifyTags?: string | null): string[] {
+  if (!shopifyTags) return [];
+  return shopifyTags
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+}
 
 /**
  * Checks whether a Shopify order has already been dispatched/fulfilled
@@ -815,6 +837,118 @@ export function isOrderDispatched(
 }
 
 /**
+ * Checks whether an order has actually entered RTO / Return (excluding pre-dispatch RTO Risk tags).
+ */
+export function isOrderRtoReturn(
+  order: Pick<OrderRecord, 'fulfillmentStatus' | 'shipmentStatus' | 'shopifyTags'>
+): boolean {
+  const ship = (order.shipmentStatus || '').trim().toLowerCase();
+  if (
+    ship === 'failure' ||
+    ship === 'rto' ||
+    ship === 'rto_initiated' ||
+    ship === 'rto_in_transit' ||
+    ship === 'rto_delivered' ||
+    ship === 'returned'
+  ) {
+    return true;
+  }
+
+  const fStatus = (order.fulfillmentStatus || '').trim().toLowerCase();
+  if (fStatus === 'restocked' || fStatus === 'returned' || fStatus === 'rto') {
+    return true;
+  }
+
+  const tags = parseNormalizedTags(order.shopifyTags);
+  return tags.some((tag) => {
+    if (tag.includes('risk')) return false;
+    return (
+      tag === 'rto' ||
+      tag.startsWith('rto ') ||
+      tag.startsWith('rto_') ||
+      tag.startsWith('rto-') ||
+      tag.includes('return to origin') ||
+      tag === 'returned' ||
+      tag === 'return' ||
+      tag.includes('order returned') ||
+      tag.includes('shipment returned') ||
+      tag.includes('ndr rto')
+    );
+  });
+}
+
+/**
+ * Checks whether an order has been delivered to the customer (and is not an RTO return).
+ */
+export function isOrderDelivered(
+  order: Pick<OrderRecord, 'fulfillmentStatus' | 'shipmentStatus' | 'shopifyTags'>
+): boolean {
+  if (isOrderRtoReturn(order)) return false;
+
+  const ship = (order.shipmentStatus || '').trim().toLowerCase();
+  if (ship === 'delivered') return true;
+
+  const tags = parseNormalizedTags(order.shopifyTags);
+  return tags.some((tag) => {
+    if (tag.includes('undelivered') || tag.includes('not delivered') || tag.includes('rto')) {
+      return false;
+    }
+    return tag === 'delivered' || tag === 'order delivered' || tag === 'shipment delivered';
+  });
+}
+
+function hasExplicitInTransitSignal(
+  order: Pick<OrderRecord, 'shipmentStatus' | 'shopifyTags'>
+): boolean {
+  const ship = (order.shipmentStatus || '').trim().toLowerCase();
+  if (
+    ship === 'in_transit' ||
+    ship === 'out_for_delivery' ||
+    ship === 'attempted_delivery' ||
+    ship === 'ready_for_pickup' ||
+    ship === 'picked_up' ||
+    ship === 'confirmed' ||
+    ship === 'label_printed' ||
+    ship === 'label_purchased'
+  ) {
+    return true;
+  }
+
+  const tags = parseNormalizedTags(order.shopifyTags);
+  return tags.some(
+    (tag) =>
+      tag === 'in transit' ||
+      tag === 'in_transit' ||
+      tag === 'in-transit' ||
+      tag === 'out for delivery' ||
+      tag === 'out_for_delivery' ||
+      tag === 'ofd' ||
+      tag === 'attempted delivery' ||
+      tag === 'shipped'
+  );
+}
+
+/**
+ * Checks whether an order is currently In Transit (shipped/fulfilled/tracking active,
+ * and not yet Delivered or marked as RTO Return).
+ */
+export function isOrderInTransit(
+  order: Pick<
+    OrderRecord,
+    | 'fulfillmentStatus'
+    | 'shipmentStatus'
+    | 'shopifyTags'
+    | 'trackingNumber'
+    | 'trackingUrl'
+    | 'trackingSentAt'
+    | 'trackingSentValue'
+  >
+): boolean {
+  if (isOrderRtoReturn(order) || isOrderDelivered(order)) return false;
+  return hasExplicitInTransitSignal(order) || isOrderDispatched(order);
+}
+
+/**
  * Converts an ISO timestamp or Date into a YYYY-MM-DD calendar date in IST (+05:30).
  */
 export function getIstDateKey(value: string | Date): string | null {
@@ -832,13 +966,20 @@ export function isOrderReadyToDispatch(
     OrderRecord,
     | 'pollStatus'
     | 'fulfillmentStatus'
+    | 'shipmentStatus'
+    | 'shopifyTags'
     | 'trackingNumber'
     | 'trackingUrl'
     | 'trackingSentAt'
     | 'trackingSentValue'
   >
 ): boolean {
-  return order.pollStatus === 'confirmed' && !isOrderDispatched(order);
+  return (
+    order.pollStatus === 'confirmed' &&
+    !isOrderDispatched(order) &&
+    !isOrderDelivered(order) &&
+    !isOrderRtoReturn(order)
+  );
 }
 
 /**
@@ -868,19 +1009,34 @@ export function isOrderDispatchedToday(
 }
 
 /**
- * Returns a concise status code and label for the "Today Dispatch" column.
+ * Returns a concise status code and label for the "Today Dispatch" / Shipment column.
  */
 export function getDispatchStatusInfo(
   order: Pick<
     OrderRecord,
     | 'pollStatus'
     | 'fulfillmentStatus'
+    | 'shipmentStatus'
+    | 'shopifyTags'
     | 'trackingNumber'
     | 'trackingUrl'
     | 'trackingSentAt'
     | 'trackingSentValue'
   >
 ): { code: DispatchStatusCode; label: string } {
+  if (isOrderRtoReturn(order)) {
+    return { code: 'rto_return', label: 'RTO Return' };
+  }
+  if (isOrderDelivered(order)) {
+    return { code: 'delivered', label: 'Delivered' };
+  }
+  const ship = (order.shipmentStatus || '').trim().toLowerCase();
+  if (ship === 'out_for_delivery') {
+    return { code: 'in_transit', label: 'Out for Delivery' };
+  }
+  if (hasExplicitInTransitSignal(order)) {
+    return { code: 'in_transit', label: 'In Transit' };
+  }
   if (isOrderDispatched(order)) {
     return { code: 'dispatched', label: 'Dispatched' };
   }
@@ -900,10 +1056,7 @@ export function getDispatchStatusInfo(
  */
 export function hasHighRtoTag(shopifyTags?: string | null): boolean {
   if (!shopifyTags) return false;
-  const tags = shopifyTags
-    .split(',')
-    .map((t) => t.trim().toLowerCase())
-    .filter(Boolean);
+  const tags = parseNormalizedTags(shopifyTags);
 
   return tags.some(
     (tag) =>
@@ -935,6 +1088,9 @@ export interface PdfReportSummary {
   confirmed: number;
   readyToDispatch: number;
   dispatched: number;
+  inTransit: number;
+  delivered: number;
+  rtoReturn: number;
   pending: number;
   cancelled: number;
   rows: PdfOrderRowData[];
@@ -947,6 +1103,9 @@ export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSu
   let confirmed = 0;
   let readyToDispatch = 0;
   let dispatched = 0;
+  let inTransit = 0;
+  let delivered = 0;
+  let rtoReturn = 0;
   let pending = 0;
   let cancelled = 0;
 
@@ -956,8 +1115,13 @@ export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSu
     else if (order.pollStatus === 'poll_sent' || order.pollStatus === 'queued') pending += 1;
 
     const dispatchInfo = getDispatchStatusInfo(order);
-    if (dispatchInfo.code === 'dispatched') dispatched += 1;
+    if (dispatchInfo.code === 'dispatched' || dispatchInfo.code === 'in_transit') {
+      dispatched += 1;
+    }
     if (dispatchInfo.code === 'ready') readyToDispatch += 1;
+    if (isOrderInTransit(order)) inTransit += 1;
+    if (isOrderDelivered(order)) delivered += 1;
+    if (isOrderRtoReturn(order)) rtoReturn += 1;
 
     const confirmStatus =
       order.pollStatus === 'confirmed'
@@ -1000,6 +1164,9 @@ export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSu
     confirmed,
     readyToDispatch,
     dispatched,
+    inTransit,
+    delivered,
+    rtoReturn,
     pending,
     cancelled,
     rows,

@@ -228,6 +228,7 @@ app.post('/api/webhooks/shopify/orders-updated', async (req: RawBodyRequest, res
   };
   if (payload.tags !== undefined) existing.shopifyTags = payload.tags;
   if (parsed.fulfillmentStatus !== undefined) existing.fulfillmentStatus = parsed.fulfillmentStatus;
+  if (parsed.shipmentStatus !== undefined) existing.shipmentStatus = parsed.shipmentStatus;
   if (parsed.fulfilledAt) existing.fulfilledAt = parsed.fulfilledAt;
   if (parsed.trackingUrl) existing.trackingUrl = parsed.trackingUrl;
   if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;

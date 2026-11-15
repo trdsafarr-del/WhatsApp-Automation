@@ -33,6 +33,7 @@ export interface OrderRecord {
   lineItemsSummary: string;
   financialStatus: string;
   fulfillmentStatus?: string | null;
+  shipmentStatus?: string | null;
   fulfilledAt?: string | null;
   paymentMethod?: string;
   deliverySummary?: string;

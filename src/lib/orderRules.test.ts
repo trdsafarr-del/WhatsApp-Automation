@@ -17,10 +17,13 @@ import {
   hasHighRtoTag,
   inferInitialPollStatus,
   isHostHeartbeatRecent,
+  isOrderDelivered,
   isOrderDispatched,
   isOrderDispatchedToday,
+  isOrderInTransit,
   isOrderOnOrAfterStartDate,
   isOrderReadyToDispatch,
+  isOrderRtoReturn,
   isTransientWhatsAppError,
   isWhatsAppConnectionReplaced,
   mergeShopifyTags,
@@ -621,4 +624,109 @@ test('Today Dispatch and PDF summary helpers classify confirmed un-dispatched vs
     true
   );
   assert.equal(isOrderDispatchedToday(baseOrder, todayNov15Ms), false);
+});
+
+test('In Transit, Delivered, and RTO Return classifiers handle Shopify shipment_status and courier tags without false-positives on RTO Risk', () => {
+  const trackingWithShipment = extractShopifyTrackingInfo({
+    fulfillments: [
+      {
+        status: 'success',
+        shipment_status: 'in_transit',
+        tracking_company: 'Delhivery',
+        tracking_number: 'DLV9988',
+        tracking_url: 'https://www.delhivery.com/track/package/DLV9988',
+      },
+    ],
+  });
+  assert.equal(trackingWithShipment.shipmentStatus, 'in_transit');
+
+  const fulfilledGeneric: OrderRecord = {
+    id: 'ord-transit-1',
+    shopifyOrderId: '101',
+    orderNumber: '#1330',
+    customerName: 'Junaid Alam',
+    customerPhone: '+917535924844',
+    customerEmail: '',
+    totalPrice: '1075.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cookies',
+    financialStatus: 'pending',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: null,
+    trackingCompany: 'Delhivery',
+    trackingNumber: 'DLV9988',
+    shopifyTags: 'cod, confirm, HIGH RTO Risk, RTO Risk - low',
+    pollStatus: 'confirmed',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: null,
+    responseChannel: null,
+    shopifySynced: true,
+    createdAt: '2026-11-15T06:00:00.000Z',
+    events: [],
+  };
+
+  // Pre-dispatch HIGH RTO Risk / RTO Risk - low MUST NOT trigger RTO Return
+  assert.equal(isOrderRtoReturn(fulfilledGeneric), false);
+  assert.equal(isOrderDelivered(fulfilledGeneric), false);
+  assert.equal(isOrderInTransit(fulfilledGeneric), true);
+
+  const outForDeliveryOrder: OrderRecord = {
+    ...fulfilledGeneric,
+    shipmentStatus: 'out_for_delivery',
+  };
+  assert.equal(isOrderInTransit(outForDeliveryOrder), true);
+  assert.equal(getDispatchStatusInfo(outForDeliveryOrder).label, 'Out for Delivery');
+
+  const deliveredOrder: OrderRecord = {
+    ...fulfilledGeneric,
+    shipmentStatus: 'delivered',
+  };
+  assert.equal(isOrderDelivered(deliveredOrder), true);
+  assert.equal(isOrderInTransit(deliveredOrder), false);
+  assert.equal(isOrderRtoReturn(deliveredOrder), false);
+  assert.deepEqual(getDispatchStatusInfo(deliveredOrder), {
+    code: 'delivered',
+    label: 'Delivered',
+  });
+
+  const deliveredByTag: OrderRecord = {
+    ...fulfilledGeneric,
+    shipmentStatus: null,
+    shopifyTags: 'cod, confirm, delivered',
+  };
+  assert.equal(isOrderDelivered(deliveredByTag), true);
+  assert.equal(isOrderInTransit(deliveredByTag), false);
+
+  // Actual RTO tags & failure shipment_status -> RTO Return (never Delivered/In Transit)
+  const rtoFailureOrder: OrderRecord = {
+    ...fulfilledGeneric,
+    shipmentStatus: 'failure',
+  };
+  assert.equal(isOrderRtoReturn(rtoFailureOrder), true);
+  assert.equal(isOrderInTransit(rtoFailureOrder), false);
+  assert.equal(isOrderDelivered(rtoFailureOrder), false);
+  assert.deepEqual(getDispatchStatusInfo(rtoFailureOrder), {
+    code: 'rto_return',
+    label: 'RTO Return',
+  });
+
+  const rtoDeliveredTagOrder: OrderRecord = {
+    ...fulfilledGeneric,
+    shipmentStatus: null,
+    shopifyTags: 'cod, confirm, RTO Delivered',
+  };
+  assert.equal(isOrderRtoReturn(rtoDeliveredTagOrder), true);
+  assert.equal(isOrderDelivered(rtoDeliveredTagOrder), false);
+  assert.equal(isOrderInTransit(rtoDeliveredTagOrder), false);
+
+  const pdfReport = buildOrdersPdfSummaryAndRows([
+    outForDeliveryOrder,
+    deliveredOrder,
+    rtoFailureOrder,
+  ]);
+  assert.equal(pdfReport.inTransit, 1);
+  assert.equal(pdfReport.delivered, 1);
+  assert.equal(pdfReport.rtoReturn, 1);
 });

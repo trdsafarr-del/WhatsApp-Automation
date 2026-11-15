@@ -36,10 +36,10 @@ export function exportOrdersToPdf(
   );
 
   // Summary Metrics Strip
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setTextColor(15, 23, 42);
   doc.text(
-    `Total Orders: ${report.total}    |    Confirmed: ${report.confirmed}    |    Today Dispatch (Ready): ${report.readyToDispatch}    |    Dispatched: ${report.dispatched}    |    Pending: ${report.pending}    |    Cancelled: ${report.cancelled}`,
+    `Total: ${report.total}   |   Confirmed: ${report.confirmed}   |   Today Dispatch: ${report.readyToDispatch}   |   In Transit: ${report.inTransit}   |   Delivered: ${report.delivered}   |   RTO Return: ${report.rtoReturn}   |   Cancelled: ${report.cancelled}`,
     36,
     78
   );
@@ -112,10 +112,16 @@ export function exportOrdersToPdf(
         if (rowMeta.dispatchCode === 'ready') {
           hookData.cell.styles.fillColor = [209, 250, 229];
           hookData.cell.styles.textColor = [6, 95, 70];
+        } else if (rowMeta.dispatchCode === 'delivered') {
+          hookData.cell.styles.fillColor = [204, 251, 241];
+          hookData.cell.styles.textColor = [17, 94, 89];
+        } else if (rowMeta.dispatchCode === 'in_transit') {
+          hookData.cell.styles.fillColor = [224, 231, 255];
+          hookData.cell.styles.textColor = [55, 48, 163];
         } else if (rowMeta.dispatchCode === 'dispatched') {
           hookData.cell.styles.fillColor = [224, 242, 254];
           hookData.cell.styles.textColor = [7, 89, 133];
-        } else if (rowMeta.dispatchCode === 'cancelled') {
+        } else if (rowMeta.dispatchCode === 'rto_return' || rowMeta.dispatchCode === 'cancelled') {
           hookData.cell.styles.fillColor = [254, 226, 226];
           hookData.cell.styles.textColor = [153, 27, 27];
         } else {

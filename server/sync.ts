@@ -160,6 +160,10 @@ export async function syncShopifyOrdersNow(
             existing.fulfillmentStatus = parsed.fulfillmentStatus;
             changed = true;
           }
+          if ((existing.shipmentStatus ?? null) !== (parsed.shipmentStatus ?? null)) {
+            existing.shipmentStatus = parsed.shipmentStatus ?? null;
+            changed = true;
+          }
           if (parsed.fulfilledAt && existing.fulfilledAt !== parsed.fulfilledAt) {
             existing.fulfilledAt = parsed.fulfilledAt;
             changed = true;
