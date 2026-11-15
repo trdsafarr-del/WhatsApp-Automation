@@ -26,6 +26,7 @@ import {
   isOrderInTransit,
   isOrderReadyToDispatch,
   isOrderRtoReturn,
+  isOrderTrackingAdded,
 } from '../lib/orderRules';
 import { exportOrdersToPdf } from '../lib/exportOrdersPdf';
 import type { AppSettings, OrderMetrics, OrderRecord, PollStatus } from '../lib/types';
@@ -50,6 +51,7 @@ type FilterTab =
   | 'all'
   | 'today_dispatch'
   | 'today_dispatched'
+  | 'tracking_added'
   | 'in_transit'
   | 'delivered'
   | 'rto_return'
@@ -130,6 +132,13 @@ function DispatchStatusDisplay({ order }: { order: OrderRecord }) {
           {info.label}
         </span>
       );
+    case 'tracking_added':
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/40 bg-cyan-500/15 px-2 py-0.5 text-xs font-medium text-cyan-300 whitespace-nowrap">
+          <Tag className="h-3.5 w-3.5 shrink-0 text-cyan-400" aria-hidden="true" />
+          {info.label}
+        </span>
+      );
     case 'dispatched':
       return (
         <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/35 bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-300 whitespace-nowrap">
@@ -192,6 +201,11 @@ export function OrdersView({
     [orders]
   );
 
+  const trackingAddedCount = useMemo(
+    () => orders.filter((o) => isOrderTrackingAdded(o)).length,
+    [orders]
+  );
+
   const inTransitCount = useMemo(
     () => orders.filter((o) => isOrderInTransit(o)).length,
     [orders]
@@ -219,6 +233,9 @@ export function OrdersView({
         return false;
       }
       if (filter === 'today_dispatched' && !isOrderDispatchedToday(order)) {
+        return false;
+      }
+      if (filter === 'tracking_added' && !isOrderTrackingAdded(order)) {
         return false;
       }
       if (filter === 'in_transit' && !isOrderInTransit(order)) {
@@ -259,6 +276,8 @@ export function OrdersView({
         return `Today Dispatch (${readyToDispatchCount})`;
       case 'today_dispatched':
         return `Today Dispatched (${todayDispatchedCount})`;
+      case 'tracking_added':
+        return `Tracking Added (${trackingAddedCount})`;
       case 'in_transit':
         return `In Transit (${inTransitCount})`;
       case 'delivered':
@@ -280,6 +299,7 @@ export function OrdersView({
     filter,
     readyToDispatchCount,
     todayDispatchedCount,
+    trackingAddedCount,
     inTransitCount,
     deliveredCount,
     rtoReturnCount,
@@ -611,6 +631,7 @@ export function OrdersView({
               { id: 'all', label: `All (${orders.length})` },
               { id: 'today_dispatch', label: `Today Dispatch (${readyToDispatchCount})` },
               { id: 'today_dispatched', label: `Today Dispatched (${todayDispatchedCount})` },
+              { id: 'tracking_added', label: `Tracking Added (${trackingAddedCount})` },
               { id: 'in_transit', label: `In Transit (${inTransitCount})` },
               { id: 'delivered', label: `Delivered (${deliveredCount})` },
               { id: 'rto_return', label: `RTO Return (${rtoReturnCount})` },
@@ -626,7 +647,7 @@ export function OrdersView({
               role="tab"
               aria-selected={filter === tab.id}
               onClick={() => setFilter(tab.id)}
-              className={`min-h-[38px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
+              className={`min-h-[38px] rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
                 filter === tab.id
                   ? tab.id === 'high_rto'
                     ? 'bg-amber-400/20 text-amber-200 ring-1 ring-inset ring-amber-400/40'
@@ -634,13 +655,15 @@ export function OrdersView({
                       ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-inset ring-emerald-400/40'
                       : tab.id === 'today_dispatched'
                         ? 'bg-sky-500/20 text-sky-200 ring-1 ring-inset ring-sky-400/40'
-                        : tab.id === 'in_transit'
-                          ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-inset ring-indigo-400/40'
-                          : tab.id === 'delivered'
-                            ? 'bg-teal-500/20 text-teal-200 ring-1 ring-inset ring-teal-400/40'
-                            : tab.id === 'rto_return'
-                              ? 'bg-rose-500/20 text-rose-200 ring-1 ring-inset ring-rose-400/40'
-                              : 'bg-slate-800 text-white shadow-xs'
+                        : tab.id === 'tracking_added'
+                          ? 'bg-cyan-500/20 text-cyan-200 ring-1 ring-inset ring-cyan-400/40'
+                          : tab.id === 'in_transit'
+                            ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-inset ring-indigo-400/40'
+                            : tab.id === 'delivered'
+                              ? 'bg-teal-500/20 text-teal-200 ring-1 ring-inset ring-teal-400/40'
+                              : tab.id === 'rto_return'
+                                ? 'bg-rose-500/20 text-rose-200 ring-1 ring-inset ring-rose-400/40'
+                                : 'bg-slate-800 text-white shadow-xs'
                   : 'text-slate-400 hover:text-slate-100'
               }`}
             >

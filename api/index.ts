@@ -213,6 +213,9 @@ app.post('/api/webhooks/shopify/orders-updated', async (req: RawBodyRequest, res
 
   if (!existing) {
     store.upsertOrder(parsed);
+    if (shouldAutoDispatchPoll(parsed, settings)) {
+      await whatsappManager.dispatchOrderPoll(parsed);
+    }
     if (whatsappManager.isConnected() && shouldAutoSendTracking(undefined, parsed, settings, tracking.fulfilledAt)) {
       await whatsappManager.dispatchTrackingMessage(parsed);
     }
@@ -234,6 +237,10 @@ app.post('/api/webhooks/shopify/orders-updated', async (req: RawBodyRequest, res
   if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;
   if (parsed.trackingCompany) existing.trackingCompany = parsed.trackingCompany;
   store.upsertOrder(existing);
+
+  if (whatsappManager.isConnected() && shouldAutoDispatchPoll(existing, settings)) {
+    await whatsappManager.dispatchOrderPoll(existing);
+  }
 
   if (
     whatsappManager.isConnected() &&

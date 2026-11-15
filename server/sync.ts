@@ -199,6 +199,10 @@ export async function syncShopifyOrdersNow(
         }
       }
 
+      if (whatsappManager.isConnected()) {
+        await whatsappManager.flushQueuedOrders();
+      }
+
       return { ok: true, importedCount, dispatchedCount, trackingSentCount };
     } finally {
       syncInFlight = null;

@@ -345,7 +345,7 @@ export async function fetchShopifyOrders(
       ? `&created_at_min=${encodeURIComponent(cutoffIso)}`
       : '';
     const res = await fetch(
-      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders.json?status=any&limit=50${createdAtParam}`,
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders.json?status=any&limit=250${createdAtParam}`,
       {
         headers: {
           'X-Shopify-Access-Token': auth.token,

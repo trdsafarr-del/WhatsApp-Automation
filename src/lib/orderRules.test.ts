@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
+  buildDailyReportSummary,
   buildDeployEnvSnippet,
   buildOrdersPdfSummaryAndRows,
   computeOrderMetrics,
   extractShopifyCustomerPhone,
   extractShopifyTrackingInfo,
+  filterOrdersByIstDateRange,
+  formatIstDateDisplay,
   formatOrderTemplate,
   formatPollPayload,
   getDispatchStatusInfo,
@@ -15,15 +18,18 @@ import {
   getWhatsAppDisplayState,
   hasConfiguredShopify,
   hasHighRtoTag,
+  hasOrderTrackingAdded,
   inferInitialPollStatus,
   isHostHeartbeatRecent,
   isOrderDelivered,
   isOrderDispatched,
   isOrderDispatchedToday,
   isOrderInTransit,
+  isOrderNotConfirmedOnWhatsApp,
   isOrderOnOrAfterStartDate,
   isOrderReadyToDispatch,
   isOrderRtoReturn,
+  isOrderTrackingAdded,
   isTransientWhatsAppError,
   isWhatsAppConnectionReplaced,
   mergeShopifyTags,
@@ -668,14 +674,37 @@ test('In Transit, Delivered, and RTO Return classifiers handle Shopify shipment_
   };
 
   // Pre-dispatch HIGH RTO Risk / RTO Risk - low MUST NOT trigger RTO Return
-  assert.equal(isOrderRtoReturn(fulfilledGeneric), false);
-  assert.equal(isOrderDelivered(fulfilledGeneric), false);
-  assert.equal(isOrderInTransit(fulfilledGeneric), true);
+  // Confirmed/label-added orders without pickup belong in Tracking Added, NOT In Transit
+  const labelAddedOrder: OrderRecord = {
+    ...fulfilledGeneric,
+    shipmentStatus: 'confirmed',
+  };
+  assert.equal(isOrderRtoReturn(labelAddedOrder), false);
+  assert.equal(isOrderDelivered(labelAddedOrder), false);
+  assert.equal(isOrderTrackingAdded(labelAddedOrder), true);
+  assert.equal(isOrderInTransit(labelAddedOrder), false);
+  assert.deepEqual(getDispatchStatusInfo(labelAddedOrder), {
+    code: 'tracking_added',
+    label: 'Tracking Added',
+  });
+
+  // Once courier picks up parcel (picked_up / in_transit / out_for_delivery), it moves from Tracking Added -> In Transit
+  const pickedUpOrder: OrderRecord = {
+    ...fulfilledGeneric,
+    shipmentStatus: 'picked_up',
+  };
+  assert.equal(isOrderTrackingAdded(pickedUpOrder), false);
+  assert.equal(isOrderInTransit(pickedUpOrder), true);
+  assert.deepEqual(getDispatchStatusInfo(pickedUpOrder), {
+    code: 'in_transit',
+    label: 'In Transit',
+  });
 
   const outForDeliveryOrder: OrderRecord = {
     ...fulfilledGeneric,
     shipmentStatus: 'out_for_delivery',
   };
+  assert.equal(isOrderTrackingAdded(outForDeliveryOrder), false);
   assert.equal(isOrderInTransit(outForDeliveryOrder), true);
   assert.equal(getDispatchStatusInfo(outForDeliveryOrder).label, 'Out for Delivery');
 
@@ -684,6 +713,7 @@ test('In Transit, Delivered, and RTO Return classifiers handle Shopify shipment_
     shipmentStatus: 'delivered',
   };
   assert.equal(isOrderDelivered(deliveredOrder), true);
+  assert.equal(isOrderTrackingAdded(deliveredOrder), false);
   assert.equal(isOrderInTransit(deliveredOrder), false);
   assert.equal(isOrderRtoReturn(deliveredOrder), false);
   assert.deepEqual(getDispatchStatusInfo(deliveredOrder), {
@@ -697,14 +727,16 @@ test('In Transit, Delivered, and RTO Return classifiers handle Shopify shipment_
     shopifyTags: 'cod, confirm, delivered',
   };
   assert.equal(isOrderDelivered(deliveredByTag), true);
+  assert.equal(isOrderTrackingAdded(deliveredByTag), false);
   assert.equal(isOrderInTransit(deliveredByTag), false);
 
-  // Actual RTO tags & failure shipment_status -> RTO Return (never Delivered/In Transit)
+  // Actual RTO tags & failure shipment_status -> RTO Return (never Tracking Added/In Transit/Delivered)
   const rtoFailureOrder: OrderRecord = {
     ...fulfilledGeneric,
     shipmentStatus: 'failure',
   };
   assert.equal(isOrderRtoReturn(rtoFailureOrder), true);
+  assert.equal(isOrderTrackingAdded(rtoFailureOrder), false);
   assert.equal(isOrderInTransit(rtoFailureOrder), false);
   assert.equal(isOrderDelivered(rtoFailureOrder), false);
   assert.deepEqual(getDispatchStatusInfo(rtoFailureOrder), {
@@ -722,11 +754,134 @@ test('In Transit, Delivered, and RTO Return classifiers handle Shopify shipment_
   assert.equal(isOrderInTransit(rtoDeliveredTagOrder), false);
 
   const pdfReport = buildOrdersPdfSummaryAndRows([
+    labelAddedOrder,
     outForDeliveryOrder,
     deliveredOrder,
     rtoFailureOrder,
   ]);
+  assert.equal(pdfReport.trackingAdded, 1);
   assert.equal(pdfReport.inTransit, 1);
   assert.equal(pdfReport.delivered, 1);
   assert.equal(pdfReport.rtoReturn, 1);
 });
+
+test('Daily report summary, IST date-range filter, and WhatsApp/tracking report classifiers compute accurate counts', () => {
+  const baseOrder: OrderRecord = {
+    id: 'rep-1',
+    shopifyOrderId: '201',
+    orderNumber: '#1401',
+    customerName: 'Rohan Sharma',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '1000.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Almond Cookies',
+    financialStatus: 'pending',
+    fulfillmentStatus: null,
+    shipmentStatus: null,
+    trackingCompany: '',
+    trackingNumber: '',
+    trackingUrl: '',
+    shopifyTags: 'cod, waiting for confirmation',
+    pollStatus: 'poll_sent',
+    whatsappMessageId: 'msg-1',
+    pollQuestion: 'Confirm?',
+    pollSentAt: '2026-11-15T06:00:00.000Z',
+    respondedAt: null,
+    responseChannel: 'whatsapp_poll',
+    shopifySynced: true,
+    createdAt: '2026-11-15T05:30:00.000Z', // 2026-11-15 11:00 IST
+    events: [],
+  };
+
+  const nov15ConfirmedReady: OrderRecord = {
+    ...baseOrder,
+    id: 'rep-2',
+    orderNumber: '#1402',
+    pollStatus: 'confirmed',
+    shopifyTags: 'cod, confirm',
+    totalPrice: '1500.00',
+    createdAt: '2026-11-15T10:00:00.000Z', // 2026-11-15 15:30 IST
+  };
+
+  const nov15ConfirmedTrackingAdded: OrderRecord = {
+    ...baseOrder,
+    id: 'rep-3',
+    orderNumber: '#1403',
+    pollStatus: 'confirmed',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'confirmed',
+    trackingCompany: 'Delhivery',
+    trackingNumber: 'DLV100',
+    totalPrice: '2000.00',
+    createdAt: '2026-11-14T20:00:00.000Z', // 2026-11-15 01:30 IST
+  };
+
+  const nov14Cancelled: OrderRecord = {
+    ...baseOrder,
+    id: 'rep-4',
+    orderNumber: '#1404',
+    pollStatus: 'cancelled_by_user',
+    shopifyTags: 'cancelled by user',
+    totalPrice: '800.00',
+    createdAt: '2026-11-14T12:00:00.000Z', // 2026-11-14 17:30 IST
+  };
+
+  const nov14InTransit: OrderRecord = {
+    ...baseOrder,
+    id: 'rep-5',
+    orderNumber: '#1405',
+    pollStatus: 'confirmed',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'in_transit',
+    trackingNumber: 'DLV200',
+    totalPrice: '1200.00',
+    createdAt: '2026-11-14T14:00:00.000Z', // 2026-11-14 19:30 IST
+  };
+
+  assert.equal(isOrderNotConfirmedOnWhatsApp(baseOrder), true);
+  assert.equal(isOrderNotConfirmedOnWhatsApp(nov15ConfirmedReady), false);
+  assert.equal(isOrderNotConfirmedOnWhatsApp(nov14Cancelled), false);
+
+  assert.equal(hasOrderTrackingAdded(nov15ConfirmedReady), false);
+  assert.equal(hasOrderTrackingAdded(nov15ConfirmedTrackingAdded), true);
+  assert.equal(hasOrderTrackingAdded(nov14InTransit), true);
+
+  assert.equal(formatIstDateDisplay('2026-11-15'), '15 Nov 2026');
+
+  const all = [
+    baseOrder,
+    nov15ConfirmedReady,
+    nov15ConfirmedTrackingAdded,
+    nov14Cancelled,
+    nov14InTransit,
+  ];
+
+  const onlyNov15 = filterOrdersByIstDateRange(all, '2026-11-15', '2026-11-15');
+  assert.equal(onlyNov15.length, 3);
+
+  const summaryNov15 = buildDailyReportSummary(onlyNov15);
+  assert.equal(summaryNov15.totals.totalOrders, 3);
+  assert.equal(summaryNov15.totals.confirmedOrders, 2);
+  assert.equal(summaryNov15.totals.cancelledOrders, 0);
+  assert.equal(summaryNov15.totals.notConfirmedOnWhatsApp, 1);
+  assert.equal(summaryNov15.totals.trackingAddedTotal, 1);
+  assert.equal(summaryNov15.totals.trackingPendingPickup, 1);
+  assert.equal(summaryNov15.totals.readyToDispatch, 1);
+  assert.equal(summaryNov15.totals.totalValue, 4500);
+  assert.equal(summaryNov15.totals.confirmedValue, 3500);
+  assert.equal(summaryNov15.totals.notConfirmedValue, 1000);
+  assert.equal(summaryNov15.totals.cancelledValue, 0);
+  assert.equal(summaryNov15.dailyRows.length, 1);
+  assert.equal(summaryNov15.dailyRows[0].dateKey, '2026-11-15');
+
+  const fullSummary = buildDailyReportSummary(all);
+  assert.equal(fullSummary.dailyRows.length, 2);
+  assert.equal(fullSummary.dailyRows[0].dateKey, '2026-11-15');
+  assert.equal(fullSummary.dailyRows[1].dateKey, '2026-11-14');
+  assert.equal(fullSummary.totals.trackingAddedTotal, 2);
+  assert.equal(fullSummary.totals.inTransitCount, 1);
+  assert.equal(fullSummary.totals.cancelledOrders, 1);
+  assert.equal(fullSummary.totals.cancelledValue, 800);
+});
+

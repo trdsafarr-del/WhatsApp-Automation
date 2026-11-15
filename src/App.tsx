@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  BarChart3,
   BookOpen,
   LayoutList,
   Menu,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { OrdersView } from './components/OrdersView';
+import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 import { SetupGuideView } from './components/SetupGuideView';
 import { WhatsAppQrView } from './components/WhatsAppQrView';
@@ -26,7 +28,7 @@ import type {
   WhatsAppState,
 } from './lib/types';
 
-type ActiveTab = 'orders' | 'whatsapp' | 'settings' | 'setup';
+type ActiveTab = 'orders' | 'reports' | 'whatsapp' | 'settings' | 'setup';
 
 const SIDEBAR_PIN_STORAGE_KEY = 'orderpulse_sidebar_pinned';
 
@@ -60,6 +62,7 @@ const NAV_ITEMS: Array<{
   icon: React.ComponentType<{ className?: string }>;
 }> = [
   { id: 'orders', label: 'Orders & Polls', shortLabel: 'Orders', icon: LayoutList },
+  { id: 'reports', label: 'Daily Reports & PDF', shortLabel: 'Reports', icon: BarChart3 },
   { id: 'whatsapp', label: 'WhatsApp QR', shortLabel: 'WhatsApp', icon: QrCode },
   { id: 'settings', label: 'Automation & Shopify', shortLabel: 'Automation', icon: SlidersHorizontal },
   { id: 'setup', label: 'Install & Deploy', shortLabel: 'Deploy Guide', icon: BookOpen },
@@ -380,6 +383,10 @@ export default function App() {
     orders: {
       breadcrumb: `${settings.shopName} / Orders & Dispatch`,
       title: 'Live Order Confirmation & Dispatch Queue',
+    },
+    reports: {
+      breadcrumb: `${settings.shopName} / Reports & Analytics`,
+      title: 'Date-Wise Order, Confirmation & Tracking Reports',
     },
     whatsapp: {
       breadcrumb: `${settings.shopName} / WhatsApp QR`,
@@ -735,6 +742,15 @@ export default function App() {
                 isSyncing={isSyncing}
                 syncMessage={syncMessage}
               />
+            ) : activeTab === 'reports' ? (
+              <ReportsView
+                orders={orders}
+                settings={settings}
+                onInspectOrder={(orderId) => {
+                  setSelectedOrderId(orderId);
+                  setActiveTab('orders');
+                }}
+              />
             ) : activeTab === 'whatsapp' ? (
               <WhatsAppQrView
                 whatsapp={whatsapp}
@@ -768,7 +784,7 @@ export default function App() {
         data-testid="mobile-bottom-nav"
         className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800/90 bg-slate-950/95 backdrop-blur-xl pb-safe lg:hidden"
       >
-        <div className="grid h-16 grid-cols-4 items-stretch">
+        <div className="grid h-16 grid-cols-5 items-stretch">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;
@@ -784,28 +800,28 @@ export default function App() {
                   setMobileMenuOpen(false);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className={`relative flex min-h-[48px] flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium transition-colors active:scale-95 ${
+                className={`relative flex min-h-[48px] flex-col items-center justify-center gap-1 px-0.5 text-[10px] font-medium transition-colors active:scale-95 ${
                   active ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-100'
                 }`}
               >
                 {active && (
                   <span
                     aria-hidden="true"
-                    className="absolute top-0 h-0.5 w-10 rounded-full bg-emerald-400"
+                    className="absolute top-0 h-0.5 w-8 rounded-full bg-emerald-400"
                   />
                 )}
                 <div className="relative flex items-center justify-center">
                   <Icon
-                    className={`h-5 w-5 ${active ? 'text-emerald-400' : 'text-slate-400'}`}
+                    className={`h-4 w-4 ${active ? 'text-emerald-400' : 'text-slate-400'}`}
                     aria-hidden="true"
                   />
                   {item.id === 'orders' && orders.length > 0 && (
-                    <span className="ml-1 font-mono text-[10px] font-semibold tabular-nums text-amber-300">
+                    <span className="ml-0.5 font-mono text-[9px] font-semibold tabular-nums text-amber-300">
                       {orders.length}
                     </span>
                   )}
                 </div>
-                <span className="truncate whitespace-nowrap leading-none">{mobileLabel}</span>
+                <span className="max-w-full truncate whitespace-nowrap leading-none">{mobileLabel}</span>
               </button>
             );
           })}

@@ -801,6 +801,7 @@ export function readCleanEnvVar(
 
 export type DispatchStatusCode =
   | 'ready'
+  | 'tracking_added'
   | 'dispatched'
   | 'in_transit'
   | 'delivered'
@@ -897,19 +898,15 @@ export function isOrderDelivered(
   });
 }
 
-function hasExplicitInTransitSignal(
+function hasPickedUpOrTransitSignal(
   order: Pick<OrderRecord, 'shipmentStatus' | 'shopifyTags'>
 ): boolean {
   const ship = (order.shipmentStatus || '').trim().toLowerCase();
   if (
+    ship === 'picked_up' ||
     ship === 'in_transit' ||
     ship === 'out_for_delivery' ||
-    ship === 'attempted_delivery' ||
-    ship === 'ready_for_pickup' ||
-    ship === 'picked_up' ||
-    ship === 'confirmed' ||
-    ship === 'label_printed' ||
-    ship === 'label_purchased'
+    ship === 'attempted_delivery'
   ) {
     return true;
   }
@@ -917,6 +914,9 @@ function hasExplicitInTransitSignal(
   const tags = parseNormalizedTags(order.shopifyTags);
   return tags.some(
     (tag) =>
+      tag === 'picked up' ||
+      tag === 'picked_up' ||
+      tag === 'picked-up' ||
       tag === 'in transit' ||
       tag === 'in_transit' ||
       tag === 'in-transit' ||
@@ -928,9 +928,40 @@ function hasExplicitInTransitSignal(
   );
 }
 
+function hasPrePickupTrackingStatus(order: Pick<OrderRecord, 'shipmentStatus'>): boolean {
+  const ship = (order.shipmentStatus || '').trim().toLowerCase();
+  return (
+    ship === 'confirmed' ||
+    ship === 'label_printed' ||
+    ship === 'label_purchased' ||
+    ship === 'ready_for_pickup'
+  );
+}
+
 /**
- * Checks whether an order is currently In Transit (shipped/fulfilled/tracking active,
- * and not yet Delivered or marked as RTO Return).
+ * Checks whether an order has tracking/label added in Shopify and is waiting for courier pickup
+ * (not yet picked up / in transit, not delivered, and not RTO return).
+ */
+export function isOrderTrackingAdded(
+  order: Pick<
+    OrderRecord,
+    | 'fulfillmentStatus'
+    | 'shipmentStatus'
+    | 'shopifyTags'
+    | 'trackingNumber'
+    | 'trackingUrl'
+    | 'trackingSentAt'
+    | 'trackingSentValue'
+  >
+): boolean {
+  if (isOrderRtoReturn(order) || isOrderDelivered(order)) return false;
+  if (hasPickedUpOrTransitSignal(order)) return false;
+  return isOrderDispatched(order) || hasPrePickupTrackingStatus(order);
+}
+
+/**
+ * Checks whether an order has been picked up and is actively In Transit
+ * (picked_up / in_transit / out_for_delivery / attempted_delivery, and not Delivered or RTO Return).
  */
 export function isOrderInTransit(
   order: Pick<
@@ -945,7 +976,7 @@ export function isOrderInTransit(
   >
 ): boolean {
   if (isOrderRtoReturn(order) || isOrderDelivered(order)) return false;
-  return hasExplicitInTransitSignal(order) || isOrderDispatched(order);
+  return hasPickedUpOrTransitSignal(order);
 }
 
 /**
@@ -1034,8 +1065,11 @@ export function getDispatchStatusInfo(
   if (ship === 'out_for_delivery') {
     return { code: 'in_transit', label: 'Out for Delivery' };
   }
-  if (hasExplicitInTransitSignal(order)) {
+  if (hasPickedUpOrTransitSignal(order)) {
     return { code: 'in_transit', label: 'In Transit' };
+  }
+  if (hasPrePickupTrackingStatus(order)) {
+    return { code: 'tracking_added', label: 'Tracking Added' };
   }
   if (isOrderDispatched(order)) {
     return { code: 'dispatched', label: 'Dispatched' };
@@ -1087,6 +1121,7 @@ export interface PdfReportSummary {
   total: number;
   confirmed: number;
   readyToDispatch: number;
+  trackingAdded: number;
   dispatched: number;
   inTransit: number;
   delivered: number;
@@ -1102,6 +1137,7 @@ export interface PdfReportSummary {
 export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSummary {
   let confirmed = 0;
   let readyToDispatch = 0;
+  let trackingAdded = 0;
   let dispatched = 0;
   let inTransit = 0;
   let delivered = 0;
@@ -1115,10 +1151,15 @@ export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSu
     else if (order.pollStatus === 'poll_sent' || order.pollStatus === 'queued') pending += 1;
 
     const dispatchInfo = getDispatchStatusInfo(order);
-    if (dispatchInfo.code === 'dispatched' || dispatchInfo.code === 'in_transit') {
+    if (
+      dispatchInfo.code === 'dispatched' ||
+      dispatchInfo.code === 'tracking_added' ||
+      dispatchInfo.code === 'in_transit'
+    ) {
       dispatched += 1;
     }
     if (dispatchInfo.code === 'ready') readyToDispatch += 1;
+    if (isOrderTrackingAdded(order)) trackingAdded += 1;
     if (isOrderInTransit(order)) inTransit += 1;
     if (isOrderDelivered(order)) delivered += 1;
     if (isOrderRtoReturn(order)) rtoReturn += 1;
@@ -1163,6 +1204,7 @@ export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSu
     total: orders.length,
     confirmed,
     readyToDispatch,
+    trackingAdded,
     dispatched,
     inTransit,
     delivered,
@@ -1172,3 +1214,197 @@ export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSu
     rows,
   };
 }
+
+/**
+ * Checks whether the customer has NOT confirmed (or cancelled) via WhatsApp yet
+ * (poll_sent, queued, or failed).
+ */
+export function isOrderNotConfirmedOnWhatsApp(
+  order: Pick<OrderRecord, 'pollStatus'>
+): boolean {
+  return (
+    order.pollStatus === 'poll_sent' ||
+    order.pollStatus === 'queued' ||
+    order.pollStatus === 'failed'
+  );
+}
+
+/**
+ * Checks whether tracking / fulfillment has been added to an order (including awaiting pickup,
+ * in transit, delivered, or fulfilled).
+ */
+export function hasOrderTrackingAdded(
+  order: Pick<
+    OrderRecord,
+    | 'fulfillmentStatus'
+    | 'shipmentStatus'
+    | 'shopifyTags'
+    | 'trackingNumber'
+    | 'trackingUrl'
+    | 'trackingSentAt'
+    | 'trackingSentValue'
+  >
+): boolean {
+  return (
+    isOrderDispatched(order) ||
+    isOrderTrackingAdded(order) ||
+    isOrderInTransit(order) ||
+    isOrderDelivered(order)
+  );
+}
+
+/**
+ * Filters orders whose createdAt IST calendar date falls within [fromDate, toDate] inclusive.
+ */
+export function filterOrdersByIstDateRange(
+  orders: OrderRecord[],
+  fromDate?: string,
+  toDate?: string
+): OrderRecord[] {
+  const from = (fromDate || '').trim();
+  const to = (toDate || '').trim();
+  if (!from && !to) return orders;
+
+  return orders.filter((order) => {
+    const key = getIstDateKey(order.createdAt);
+    if (!key) return false;
+    if (from && key < from) return false;
+    if (to && key > to) return false;
+    return true;
+  });
+}
+
+/**
+ * Formats a YYYY-MM-DD calendar date into human-readable format (e.g. "15 Nov 2026").
+ */
+export function formatIstDateDisplay(dateKey: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return dateKey;
+  const ms = Date.parse(`${dateKey}T12:00:00+05:30`);
+  if (!Number.isFinite(ms)) return dateKey;
+  return new Date(ms).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+export interface DailyReportRow {
+  dateKey: string;
+  dateLabel: string;
+  totalOrders: number;
+  confirmedOrders: number;
+  cancelledOrders: number;
+  notConfirmedOnWhatsApp: number;
+  readyToDispatch: number;
+  trackingAddedTotal: number;
+  trackingPendingPickup: number;
+  inTransitCount: number;
+  deliveredCount: number;
+  rtoReturnCount: number;
+  highRtoCount: number;
+  confirmationRate: number;
+  totalValue: number;
+  confirmedValue: number;
+  cancelledValue: number;
+  notConfirmedValue: number;
+  currency: string;
+}
+
+export interface DailyReportSummary {
+  totals: DailyReportRow;
+  dailyRows: DailyReportRow[];
+}
+
+/**
+ * Groups orders by IST calendar date and computes aggregate + per-day KPIs for Reports & PDF export.
+ */
+export function buildDailyReportSummary(orders: OrderRecord[]): DailyReportSummary {
+  const buckets = new Map<string, OrderRecord[]>();
+  for (const order of orders) {
+    const key = getIstDateKey(order.createdAt) || 'Unknown';
+    const list = buckets.get(key);
+    if (list) list.push(order);
+    else buckets.set(key, [order]);
+  }
+
+  const summarizeBucket = (dateKey: string, dateLabel: string, list: OrderRecord[]): DailyReportRow => {
+    let confirmedOrders = 0;
+    let cancelledOrders = 0;
+    let notConfirmedOnWhatsApp = 0;
+    let readyToDispatch = 0;
+    let trackingAddedTotal = 0;
+    let trackingPendingPickup = 0;
+    let inTransitCount = 0;
+    let deliveredCount = 0;
+    let rtoReturnCount = 0;
+    let highRtoCount = 0;
+    let totalValue = 0;
+    let confirmedValue = 0;
+    let cancelledValue = 0;
+    let notConfirmedValue = 0;
+    let currency = 'INR';
+
+    for (const order of list) {
+      if (order.currency) currency = order.currency;
+      const numeric = Number.parseFloat(order.totalPrice || '0');
+      const orderVal = Number.isFinite(numeric) ? numeric : 0;
+      totalValue += orderVal;
+
+      if (order.pollStatus === 'confirmed') {
+        confirmedOrders += 1;
+        confirmedValue += orderVal;
+      } else if (order.pollStatus === 'cancelled_by_user') {
+        cancelledOrders += 1;
+        cancelledValue += orderVal;
+      } else {
+        notConfirmedOnWhatsApp += 1;
+        notConfirmedValue += orderVal;
+      }
+
+      if (isOrderReadyToDispatch(order)) readyToDispatch += 1;
+      if (hasOrderTrackingAdded(order)) trackingAddedTotal += 1;
+      if (isOrderTrackingAdded(order)) trackingPendingPickup += 1;
+      if (isOrderInTransit(order)) inTransitCount += 1;
+      if (isOrderDelivered(order)) deliveredCount += 1;
+      if (isOrderRtoReturn(order)) rtoReturnCount += 1;
+      if (hasHighRtoTag(order.shopifyTags)) highRtoCount += 1;
+    }
+
+    const decided = confirmedOrders + cancelledOrders;
+    const confirmationRate = decided > 0 ? Math.round((confirmedOrders / decided) * 100) : 0;
+
+    return {
+      dateKey,
+      dateLabel,
+      totalOrders: list.length,
+      confirmedOrders,
+      cancelledOrders,
+      notConfirmedOnWhatsApp,
+      readyToDispatch,
+      trackingAddedTotal,
+      trackingPendingPickup,
+      inTransitCount,
+      deliveredCount,
+      rtoReturnCount,
+      highRtoCount,
+      confirmationRate,
+      totalValue: Math.round(totalValue * 100) / 100,
+      confirmedValue: Math.round(confirmedValue * 100) / 100,
+      cancelledValue: Math.round(cancelledValue * 100) / 100,
+      notConfirmedValue: Math.round(notConfirmedValue * 100) / 100,
+      currency,
+    };
+  };
+
+  const dailyRows = Array.from(buckets.entries())
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([key, list]) => summarizeBucket(key, formatIstDateDisplay(key), list));
+
+  const totals = summarizeBucket('ALL', 'Selected Period', orders);
+
+  return {
+    totals,
+    dailyRows,
+  };
+}
+

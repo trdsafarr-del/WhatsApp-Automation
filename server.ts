@@ -225,6 +225,9 @@ async function startServer() {
 
     if (!existing) {
       store.upsertOrder(parsed);
+      if (shouldAutoDispatchPoll(parsed, settings)) {
+        await whatsappManager.dispatchOrderPoll(parsed);
+      }
       if (whatsappManager.isConnected() && shouldAutoSendTracking(undefined, parsed, settings, tracking.fulfilledAt)) {
         await whatsappManager.dispatchTrackingMessage(parsed);
       }
@@ -245,6 +248,10 @@ async function startServer() {
     if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;
     if (parsed.trackingCompany) existing.trackingCompany = parsed.trackingCompany;
     store.upsertOrder(existing);
+
+    if (whatsappManager.isConnected() && shouldAutoDispatchPoll(existing, settings)) {
+      await whatsappManager.dispatchOrderPoll(existing);
+    }
 
     if (
       whatsappManager.isConnected() &&
