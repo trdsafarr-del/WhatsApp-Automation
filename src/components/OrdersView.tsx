@@ -7,6 +7,8 @@ import {
   Clock,
   FileDown,
   MapPin,
+  MessageSquarePlus,
+  MessageSquareText,
   Package,
   PackageCheck,
   RefreshCw,
@@ -31,6 +33,12 @@ import {
 import { exportOrdersToPdf } from '../lib/exportOrdersPdf';
 import type { AppSettings, OrderMetrics, OrderRecord, PollStatus } from '../lib/types';
 
+export interface RemarkSaveResult {
+  ok: boolean;
+  shopifySynced?: boolean;
+  error?: string;
+}
+
 interface OrdersViewProps {
   orders: OrderRecord[];
   metrics: OrderMetrics;
@@ -40,6 +48,7 @@ interface OrdersViewProps {
   onVoteOrder: (orderId: string, option: string) => Promise<void>;
   onResendPoll: (orderId: string) => Promise<void>;
   onSendTracking: (orderId: string) => Promise<void>;
+  onSaveRemark: (orderId: string, remark: string) => Promise<RemarkSaveResult>;
   onSyncShopify: () => Promise<void>;
   onOpenSettings: () => void;
   busyOrderId: string | null;
@@ -179,6 +188,7 @@ export function OrdersView({
   onVoteOrder,
   onResendPoll,
   onSendTracking,
+  onSaveRemark,
   onSyncShopify,
   onOpenSettings,
   busyOrderId,
@@ -190,6 +200,14 @@ export function OrdersView({
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('details');
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [pdfFeedback, setPdfFeedback] = useState<string | null>(null);
+  const [remarkFeedback, setRemarkFeedback] = useState<{
+    type: 'success' | 'warning';
+    text: string;
+  } | null>(null);
+  const [remarkModalOrder, setRemarkModalOrder] = useState<OrderRecord | null>(null);
+  const [remarkDraft, setRemarkDraft] = useState('');
+  const [remarkSaving, setRemarkSaving] = useState(false);
+  const [remarkModalError, setRemarkModalError] = useState<string | null>(null);
 
   const readyToDispatchCount = useMemo(
     () => orders.filter(isOrderReadyToDispatch).length,
@@ -265,7 +283,8 @@ export function OrdersView({
         order.customerName.toLowerCase().includes(q) ||
         order.customerPhone.toLowerCase().includes(q) ||
         order.lineItemsSummary.toLowerCase().includes(q) ||
-        order.shopifyTags.toLowerCase().includes(q)
+        order.shopifyTags.toLowerCase().includes(q) ||
+        (order.orderNote || '').toLowerCase().includes(q)
       );
     });
   }, [orders, filter, search]);
@@ -321,6 +340,50 @@ export function OrdersView({
   const openMobileOrder = (orderId: string) => {
     onSelectOrder(orderId);
     setMobileSheetOpen(true);
+  };
+
+  const openRemarkModal = (order: OrderRecord) => {
+    setRemarkModalOrder(order);
+    setRemarkDraft(order.orderNote || '');
+    setRemarkModalError(null);
+  };
+
+  const closeRemarkModal = () => {
+    if (remarkSaving) return;
+    setRemarkModalOrder(null);
+    setRemarkModalError(null);
+  };
+
+  const handleSubmitRemark = async (nextText: string) => {
+    if (!remarkModalOrder) return;
+    setRemarkSaving(true);
+    setRemarkModalError(null);
+    const trimmed = nextText.trim();
+    const result = await onSaveRemark(remarkModalOrder.id, trimmed);
+    setRemarkSaving(false);
+
+    if (!result.ok) {
+      setRemarkModalError(result.error || 'Could not save remark.');
+      return;
+    }
+
+    const orderNum = remarkModalOrder.orderNumber;
+    setRemarkModalOrder(null);
+    const msg = trimmed
+      ? result.shopifySynced
+        ? `Remark saved for ${orderNum} & synced to Shopify Notes.`
+        : `Remark saved locally for ${orderNum}${result.error ? ` (${result.error})` : ''}.`
+      : result.shopifySynced
+        ? `Remark cleared for ${orderNum} in Shopify Notes.`
+        : `Remark cleared locally for ${orderNum}.`;
+
+    setRemarkFeedback({
+      type: result.shopifySynced ? 'success' : 'warning',
+      text: msg,
+    });
+    window.setTimeout(() => {
+      setRemarkFeedback((prev) => (prev?.text === msg ? null : prev));
+    }, 5000);
   };
 
   const renderInspectorPanel = (order: OrderRecord, isMobileSheet = false) => (
@@ -426,14 +489,30 @@ export function OrdersView({
                 </div>
               </div>
             )}
-            {order.orderNote && (
-              <div className="flex items-start justify-between gap-4">
-                <span className="shrink-0 text-slate-400">Order Note</span>
-                <span className="text-right text-xs font-medium text-amber-300">
-                  {order.orderNote}
-                </span>
+            <div className="flex items-start justify-between gap-4">
+              <span className="shrink-0 text-slate-400">Remarks / Note</span>
+              <div className="flex min-w-0 flex-col items-end gap-1.5 text-right">
+                {order.orderNote ? (
+                  <span className="text-xs font-medium text-amber-300 break-words">
+                    {order.orderNote}
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500">No remark added</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openRemarkModal(order)}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2 py-1 text-[11px] font-medium text-slate-200 transition-colors hover:border-amber-400/50 hover:text-amber-200 whitespace-nowrap"
+                >
+                  {order.orderNote ? (
+                    <MessageSquareText className="h-3 w-3 text-amber-300" aria-hidden="true" />
+                  ) : (
+                    <MessageSquarePlus className="h-3 w-3 text-slate-400" aria-hidden="true" />
+                  )}
+                  {order.orderNote ? 'Edit Shopify Note' : 'Add Remark'}
+                </button>
               </div>
-            )}
+            </div>
             <div className="flex items-start justify-between gap-4">
               <span className="inline-flex shrink-0 items-center gap-1.5 text-slate-400">
                 <Tag className="h-3.5 w-3.5" aria-hidden="true" />
@@ -572,9 +651,15 @@ export function OrdersView({
         </div>
       </section>
 
-      {(syncMessage || pdfFeedback) && (
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-4 py-3 text-xs text-emerald-200 backdrop-blur-md sm:text-sm">
-          {pdfFeedback || syncMessage}
+      {(syncMessage || pdfFeedback || remarkFeedback) && (
+        <div
+          className={`rounded-lg border px-4 py-3 text-xs backdrop-blur-md sm:text-sm ${
+            remarkFeedback?.type === 'warning' && !pdfFeedback && !syncMessage
+              ? 'border-amber-500/35 bg-amber-950/40 text-amber-200'
+              : 'border-emerald-500/30 bg-emerald-950/40 text-emerald-200'
+          }`}
+        >
+          {pdfFeedback || remarkFeedback?.text || syncMessage}
         </div>
       )}
 
@@ -713,13 +798,21 @@ export function OrdersView({
                 {filteredOrders.map((order) => {
                   const isSelected = selectedOrder?.id === order.id;
                   const isHighRto = hasHighRtoTag(order.shopifyTags);
+                  const hasRemark = Boolean(order.orderNote?.trim());
                   return (
-                    <button
+                    <div
                       key={order.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       data-high-rto={isHighRto ? 'true' : undefined}
                       onClick={() => openMobileOrder(order.id)}
-                      className={`w-full rounded-xl border p-4 text-left backdrop-blur-md transition-colors active:scale-[0.99] ${
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openMobileOrder(order.id);
+                        }
+                      }}
+                      className={`w-full cursor-pointer rounded-xl border p-4 text-left backdrop-blur-md transition-colors active:scale-[0.99] ${
                         isHighRto
                           ? isSelected
                             ? 'border-amber-400/75 bg-amber-400/20'
@@ -729,9 +822,38 @@ export function OrdersView({
                             : 'border-slate-800/90 bg-slate-900/80 hover:border-slate-700'
                       }`}
                     >
-                      {/* Top Row: Order # + High RTO + Price */}
+                      {/* Top Row: Order # + Remark Icon + High RTO + Price */}
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            data-testid={`mobile-remark-btn-${order.id}`}
+                            aria-label={
+                              hasRemark
+                                ? `Edit remark for ${order.orderNumber}: ${order.orderNote}`
+                                : `Add remark for ${order.orderNumber}`
+                            }
+                            title={
+                              hasRemark
+                                ? `Remark: ${order.orderNote}`
+                                : `Add remark / Shopify note for ${order.orderNumber}`
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openRemarkModal(order);
+                            }}
+                            className={`inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg border transition-colors ${
+                              hasRemark
+                                ? 'border-amber-400/50 bg-amber-400/15 text-amber-300 hover:bg-amber-400/25'
+                                : 'border-slate-700/90 bg-slate-800/80 text-slate-400 hover:border-emerald-500/50 hover:text-emerald-300'
+                            }`}
+                          >
+                            {hasRemark ? (
+                              <MessageSquareText className="h-4 w-4" aria-hidden="true" />
+                            ) : (
+                              <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
+                            )}
+                          </button>
                           <span
                             className={`font-mono text-sm font-bold tabular-nums ${
                               isHighRto ? 'text-amber-200' : 'text-white'
@@ -772,6 +894,13 @@ export function OrdersView({
                         </span>
                       </div>
 
+                      {hasRemark && (
+                        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-400/35 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-200">
+                          <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden="true" />
+                          <span className="line-clamp-2 leading-snug">{order.orderNote}</span>
+                        </div>
+                      )}
+
                       {/* Poll Status + Today Dispatch */}
                       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
                         <StatusDisplay status={order.pollStatus} />
@@ -797,7 +926,7 @@ export function OrdersView({
                           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
                         </span>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -821,6 +950,7 @@ export function OrdersView({
                       {filteredOrders.map((order) => {
                         const isSelected = selectedOrder?.id === order.id;
                         const isHighRto = hasHighRtoTag(order.shopifyTags);
+                        const hasRemark = Boolean(order.orderNote?.trim());
                         const rowClass = isHighRto
                           ? isSelected
                             ? 'bg-amber-400/20 ring-1 ring-inset ring-amber-400/60'
@@ -837,6 +967,35 @@ export function OrdersView({
                           >
                             <td className="px-3 py-3 font-mono text-xs font-semibold tabular-nums text-white whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  data-testid={`desktop-remark-btn-${order.id}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openRemarkModal(order);
+                                  }}
+                                  title={
+                                    hasRemark
+                                      ? `Remark: ${order.orderNote}`
+                                      : `Add remark (Shopify Note) for ${order.orderNumber}`
+                                  }
+                                  aria-label={
+                                    hasRemark
+                                      ? `Edit remark for ${order.orderNumber}: ${order.orderNote}`
+                                      : `Add remark for ${order.orderNumber}`
+                                  }
+                                  className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors focus-visible:outline-2 focus-visible:outline-emerald-400 ${
+                                    hasRemark
+                                      ? 'border-amber-400/50 bg-amber-400/15 text-amber-300 hover:bg-amber-400/25'
+                                      : 'border-slate-700/80 bg-slate-900/80 text-slate-400 hover:border-emerald-500/50 hover:bg-emerald-500/10 hover:text-emerald-300'
+                                  }`}
+                                >
+                                  {hasRemark ? (
+                                    <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
+                                  ) : (
+                                    <MessageSquarePlus className="h-3.5 w-3.5" aria-hidden="true" />
+                                  )}
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => onSelectOrder(order.id)}
@@ -856,9 +1015,19 @@ export function OrdersView({
                                   </span>
                                 )}
                               </div>
-                              <div className="mt-0.5 font-sans text-[11px] font-normal text-slate-400 tabular-nums whitespace-nowrap">
+                              <div className="mt-0.5 pl-8.5 font-sans text-[11px] font-normal text-slate-400 tabular-nums whitespace-nowrap">
                                 {formatRelativeTime(order.createdAt)}
                               </div>
+                              {hasRemark && (
+                                <button
+                                  type="button"
+                                  onClick={() => openRemarkModal(order)}
+                                  title={order.orderNote}
+                                  className="mt-1 ml-8.5 block max-w-[140px] truncate rounded bg-amber-400/10 px-1.5 py-0.5 text-left font-sans text-[10px] font-medium text-amber-300 hover:bg-amber-400/20"
+                                >
+                                  Note: {order.orderNote}
+                                </button>
+                              )}
                             </td>
                             <td className="px-3 py-3">
                               <div className="font-medium text-slate-100 whitespace-nowrap">{order.customerName}</div>
@@ -1042,6 +1211,144 @@ export function OrdersView({
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order Remarks / Shopify Order Note Modal */}
+      {remarkModalOrder && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remark-modal-title"
+          data-testid="order-remark-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        >
+          <div
+            className="fixed inset-0 bg-black/75 backdrop-blur-xs"
+            onClick={closeRemarkModal}
+          />
+          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-slate-700/80 bg-slate-950 p-5 shadow-2xl shadow-black/70 sm:p-6">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3.5">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3
+                    id="remark-modal-title"
+                    className="font-display text-base font-semibold text-white"
+                  >
+                    Order Remark · {remarkModalOrder.orderNumber}
+                  </h3>
+                  <span className="rounded border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                    Syncs to Shopify Notes
+                  </span>
+                </div>
+                <p className="mt-1 truncate text-xs text-slate-400">
+                  {remarkModalOrder.customerName} · {remarkModalOrder.customerPhone || 'No phone'}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close remark editor"
+                onClick={closeRemarkModal}
+                disabled={remarkSaving}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-50"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleSubmitRemark(remarkDraft);
+              }}
+              className="mt-4 space-y-3.5"
+            >
+              <div>
+                <label
+                  htmlFor="order-remark-textarea"
+                  className="block text-xs font-medium text-slate-300"
+                >
+                  Remark / Shopify Order Note
+                </label>
+                <textarea
+                  id="order-remark-textarea"
+                  rows={4}
+                  autoFocus
+                  value={remarkDraft}
+                  onChange={(e) => setRemarkDraft(e.target.value)}
+                  placeholder="Write any remark (e.g. Call before delivery, Address confirmed on WhatsApp, Hold dispatch till tomorrow, Pack gift card)..."
+                  className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-900/90 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Jo bhi remark aap yahan save karenge woh seedha Shopify Admin → Order → Notes me save ho jayega.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  'Call before delivery',
+                  'Address verified on call',
+                  'Hold dispatch',
+                  'Urgent dispatch today',
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() =>
+                      setRemarkDraft((prev) =>
+                        prev.trim()
+                          ? prev.includes(preset)
+                            ? prev
+                            : `${prev.trim()} | ${preset}`
+                          : preset
+                      )
+                    }
+                    className="rounded-md border border-slate-700/90 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition-colors hover:border-emerald-500/50 hover:text-emerald-200"
+                  >
+                    + {preset}
+                  </button>
+                ))}
+              </div>
+
+              {remarkModalError && (
+                <div className="rounded-lg border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-200">
+                  {remarkModalError}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3.5">
+                <div>
+                  {remarkModalOrder.orderNote && (
+                    <button
+                      type="button"
+                      disabled={remarkSaving}
+                      onClick={() => void handleSubmitRemark('')}
+                      className="min-h-[40px] rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      Clear Note
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={remarkSaving}
+                    onClick={closeRemarkModal}
+                    className="min-h-[40px] rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={remarkSaving}
+                    className="inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {remarkSaving ? 'Saving to Shopify...' : 'Save Remark to Shopify'}
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

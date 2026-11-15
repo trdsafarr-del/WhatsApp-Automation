@@ -438,3 +438,56 @@ export async function updateShopifyOrderTags(
     };
   }
 }
+
+export async function updateShopifyOrderNote(
+  settings: AppSettings,
+  shopifyOrderId: string,
+  note: string
+): Promise<{ synced: boolean; error?: string }> {
+  if (!hasLiveShopifyCredentials(settings)) {
+    return {
+      synced: false,
+      error: 'Shopify credentials are not configured yet (saved locally only).',
+    };
+  }
+
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { synced: false, error: auth.error };
+  }
+
+  try {
+    const updateRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders/${shopifyOrderId}.json`,
+      {
+        method: 'PUT',
+        headers: {
+          'X-Shopify-Access-Token': auth.token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          order: {
+            id: Number(shopifyOrderId) || shopifyOrderId,
+            note,
+          },
+        }),
+      }
+    );
+
+    if (!updateRes.ok) {
+      const text = await updateRes.text();
+      return {
+        synced: false,
+        error: `Shopify note update ${updateRes.status}: ${text.slice(0, 180)}`,
+      };
+    }
+
+    return { synced: true };
+  } catch (err) {
+    return {
+      synced: false,
+      error: err instanceof Error ? err.message : 'Failed updating Shopify order note',
+    };
+  }
+}

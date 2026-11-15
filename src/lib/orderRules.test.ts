@@ -41,6 +41,7 @@ import {
   selectPriorityAuthFiles,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
+  shouldPreserveRecentLocalNote,
   shouldPreserveRecentLocalTags,
   shouldSkipAutoRestoreForRemoteHost,
 } from './orderRules.js';
@@ -997,6 +998,29 @@ test('Multi-host Railway session guard and non-regressive order merge keep 24/7 
   assert.equal(merged.whatsappMessageId, 'wa-msg-1');
   assert.equal(merged.trackingUrl, 'https://track.example/1');
   assert.equal(merged.events.length, 2);
+
+  // Order note preservation & fresher remark merge
+  assert.equal(
+    shouldPreserveRecentLocalNote({ noteUpdatedAt: '2026-11-15T11:59:10.000Z' }, now),
+    true
+  );
+  assert.equal(
+    shouldPreserveRecentLocalNote({ noteUpdatedAt: '2026-11-15T11:50:00.000Z' }, now),
+    false
+  );
+  assert.equal(shouldPreserveRecentLocalNote({ noteUpdatedAt: null }, now), false);
+
+  const olderNoteOrder: OrderRecord = {
+    ...sentOrder,
+    orderNote: 'Old note',
+    noteUpdatedAt: '2026-11-15T11:00:00.000Z',
+  };
+  const fresherNoteOrder: OrderRecord = {
+    ...staleQueuedOrder,
+    orderNote: 'Call before delivery · urgent',
+    noteUpdatedAt: '2026-11-15T11:55:00.000Z',
+  };
+  const mergedWithNote = mergeProgressedOrderRecords(olderNoteOrder, fresherNoteOrder);
+  assert.equal(mergedWithNote.orderNote, 'Call before delivery · urgent');
+  assert.equal(mergedWithNote.noteUpdatedAt, '2026-11-15T11:55:00.000Z');
 });
-
-

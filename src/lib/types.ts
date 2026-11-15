@@ -38,6 +38,7 @@ export interface OrderRecord {
   paymentMethod?: string;
   deliverySummary?: string;
   orderNote?: string;
+  noteUpdatedAt?: string | null;
   trackingNumber?: string;
   trackingUrl?: string;
   trackingCompany?: string;

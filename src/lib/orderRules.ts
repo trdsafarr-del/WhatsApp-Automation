@@ -565,6 +565,20 @@ export function shouldPreserveRecentLocalTags(
 }
 
 /**
+ * Prevents a slower in-flight Shopify fetch from overwriting a fresher local order remark update.
+ */
+export function shouldPreserveRecentLocalNote(
+  order: Pick<OrderRecord, 'noteUpdatedAt'>,
+  nowMs = Date.now(),
+  graceWindowMs = 90_000
+): boolean {
+  if (!order.noteUpdatedAt) return false;
+  const noteMs = Date.parse(order.noteUpdatedAt);
+  if (!Number.isFinite(noteMs)) return false;
+  return nowMs - noteMs >= 0 && nowMs - noteMs < graceWindowMs;
+}
+
+/**
  * Selects critical WhatsApp Baileys auth files (creds, app-state-sync, lid-mapping, device-list,
  * and compact sessions) within a byte budget so cloud Redis backups never fail on thousands of pre-keys.
  */
@@ -1508,8 +1522,20 @@ export function mergeProgressedOrderRecords(
     })
     .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
 
+  const winnerNoteMs = winner.noteUpdatedAt ? Date.parse(winner.noteUpdatedAt) : 0;
+  const loserNoteMs = loser.noteUpdatedAt ? Date.parse(loser.noteUpdatedAt) : 0;
+  const preferLoserNote =
+    Number.isFinite(loserNoteMs) &&
+    loserNoteMs > (Number.isFinite(winnerNoteMs) ? winnerNoteMs : 0);
+
   return {
     ...winner,
+    orderNote: preferLoserNote
+      ? loser.orderNote || ''
+      : winner.orderNote ?? loser.orderNote ?? '',
+    noteUpdatedAt: preferLoserNote
+      ? loser.noteUpdatedAt || null
+      : winner.noteUpdatedAt || loser.noteUpdatedAt || null,
     shopifyTags:
       winner.shopifyTags && winner.shopifyTags.length >= (loser.shopifyTags?.length || 0)
         ? winner.shopifyTags

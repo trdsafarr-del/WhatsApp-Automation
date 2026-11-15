@@ -688,8 +688,11 @@ class WhatsAppManager {
         pushName: null,
       });
     } else {
+      const runtime = detectHostRuntimeKind();
       this.lastError =
-        'WhatsApp socket paused on this server. Click Restore Saved Session if you want to resume here instead of Railway.';
+        runtime === 'dev_preview'
+          ? 'Dev preview socket paused so your 24/7 Railway server stays connected.'
+          : 'WhatsApp socket is paused on this server. Click Restore Saved Session to resume 24/7 dispatch.';
     }
     return this.getState();
   }

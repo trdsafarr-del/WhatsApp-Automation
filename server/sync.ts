@@ -4,6 +4,7 @@ import {
   isOrderOnOrAfterStartDate,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
+  shouldPreserveRecentLocalNote,
   shouldPreserveRecentLocalTags,
 } from '../src/lib/orderRules.js';
 import {
@@ -148,7 +149,11 @@ export async function syncShopifyOrdersNow(
             existing.deliverySummary = parsed.deliverySummary;
             changed = true;
           }
-          if (parsed.orderNote && existing.orderNote !== parsed.orderNote) {
+          if (
+            !shouldPreserveRecentLocalNote(existing) &&
+            raw.note !== undefined &&
+            (existing.orderNote || '') !== parsed.orderNote
+          ) {
             existing.orderNote = parsed.orderNote;
             changed = true;
           }

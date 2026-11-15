@@ -4,15 +4,18 @@ import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
 import {
   computeOrderMetrics,
+  detectHostRuntimeKind,
   extractShopifyTrackingInfo,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
+  shouldPreserveRecentLocalNote,
 } from './src/lib/orderRules.js';
 import type { AppSettings } from './src/lib/types.js';
 import {
   hasLiveShopifyCredentials,
   parseShopifyRawOrder,
   testShopifyConnection,
+  updateShopifyOrderNote,
   verifyShopifyWebhookHmac,
   type ShopifyRawOrder,
 } from './server/shopify.js';
@@ -96,6 +99,11 @@ async function startServer() {
   });
 
   app.post('/api/whatsapp/pause', async (_req: Request, res: Response) => {
+    const runtime = detectHostRuntimeKind();
+    if (runtime === 'railway' || runtime === 'cloud') {
+      res.json({ whatsapp: whatsappManager.getState() });
+      return;
+    }
     const state = await whatsappManager.disconnect(false);
     res.json({ whatsapp: state });
   });
@@ -241,6 +249,9 @@ async function startServer() {
       trackingSentValue: existing.trackingSentValue,
     };
     if (payload.tags !== undefined) existing.shopifyTags = payload.tags;
+    if (!shouldPreserveRecentLocalNote(existing) && payload.note !== undefined) {
+      existing.orderNote = parsed.orderNote;
+    }
     if (parsed.fulfillmentStatus !== undefined) existing.fulfillmentStatus = parsed.fulfillmentStatus;
     if (parsed.shipmentStatus !== undefined) existing.shipmentStatus = parsed.shipmentStatus;
     if (parsed.fulfilledAt) existing.fulfilledAt = parsed.fulfilledAt;
@@ -320,6 +331,62 @@ async function startServer() {
     res.json({
       ok: true,
       order: updated,
+      orders: allOrders,
+      metrics: computeOrderMetrics(allOrders),
+    });
+  });
+
+  // Save order remark & sync directly into Shopify Admin Order Notes
+  app.post('/api/orders/:id/remark', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const order = store.getOrderById(String(req.params.id));
+    if (!order) {
+      res.status(404).json({ error: 'Order not found' });
+      return;
+    }
+
+    const rawRemark = typeof req.body?.remark === 'string'
+      ? req.body.remark
+      : typeof req.body?.note === 'string'
+        ? req.body.note
+        : '';
+    const cleanRemark = rawRemark.trim();
+
+    order.orderNote = cleanRemark;
+    order.noteUpdatedAt = new Date().toISOString();
+    store.upsertOrder(order);
+
+    const settings = store.getSettings();
+    const shopifyResult = await updateShopifyOrderNote(
+      settings,
+      order.shopifyOrderId,
+      cleanRemark
+    );
+
+    if (shopifyResult.synced) {
+      order.shopifySynced = true;
+      store.upsertOrder(order);
+    }
+
+    const preview = cleanRemark.length > 100 ? `${cleanRemark.slice(0, 100)}…` : cleanRemark;
+    store.appendOrderEvent(order.id, {
+      actor: 'system',
+      message: cleanRemark
+        ? shopifyResult.synced
+          ? `Remark saved & synced to Shopify Notes: "${preview}"`
+          : `Remark saved locally${shopifyResult.error ? ` (Shopify Notes sync issue: ${shopifyResult.error})` : ''}: "${preview}"`
+        : shopifyResult.synced
+          ? 'Order remark cleared in dashboard & Shopify Notes'
+          : `Order remark cleared locally${shopifyResult.error ? ` (Shopify Notes sync issue: ${shopifyResult.error})` : ''}`,
+    });
+
+    await store.flushRemote();
+    const allOrders = store.getOrders();
+    res.json({
+      ok: true,
+      shopifySynced: shopifyResult.synced,
+      shopifyError: shopifyResult.error,
+      order: store.getOrderById(order.id),
       orders: allOrders,
       metrics: computeOrderMetrics(allOrders),
     });

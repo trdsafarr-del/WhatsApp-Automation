@@ -228,6 +228,42 @@ export default function App() {
     }
   };
 
+  const handleSaveOrderRemark = async (
+    orderId: string,
+    remark: string
+  ): Promise<{ ok: boolean; shopifySynced?: boolean; error?: string }> => {
+    setBusyOrderId(orderId);
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/remark`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remark }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        shopifySynced?: boolean;
+        shopifyError?: string;
+        error?: string;
+        orders?: OrderRecord[];
+        metrics?: OrderMetrics;
+      };
+      if (!res.ok) {
+        return { ok: false, error: data.error || 'Failed to save remark.' };
+      }
+      if (data.orders) setOrders(data.orders);
+      if (data.metrics) setMetrics(data.metrics);
+      return {
+        ok: true,
+        shopifySynced: data.shopifySynced,
+        error: data.shopifyError,
+      };
+    } catch {
+      return { ok: false, error: 'Network error while saving remark.' };
+    } finally {
+      setBusyOrderId(null);
+    }
+  };
+
   const handleSyncShopify = async () => {
     setIsSyncing(true);
     setSyncMessage(null);
@@ -727,8 +763,7 @@ export default function App() {
                     <span className="font-semibold text-amber-200">
                       WhatsApp Socket Paused on This Server:
                     </span>{' '}
-                    Queued orders cannot send until WhatsApp reconnects here.
-                    {whatsapp.lastError ? ` (${whatsapp.lastError})` : ''}
+                    Queued orders will automatically send once WhatsApp is resumed here.
                   </p>
                   <button
                     type="button"
@@ -764,6 +799,7 @@ export default function App() {
                 onVoteOrder={handleVoteOrder}
                 onResendPoll={handleResendPoll}
                 onSendTracking={handleSendTracking}
+                onSaveRemark={handleSaveOrderRemark}
                 onSyncShopify={handleSyncShopify}
                 onOpenSettings={() => setActiveTab('settings')}
                 busyOrderId={busyOrderId}
