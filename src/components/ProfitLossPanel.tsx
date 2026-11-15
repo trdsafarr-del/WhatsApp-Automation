@@ -99,7 +99,7 @@ export function ProfitLossPanel({
     message: string;
   } | null>(null);
   const [outcomeFilter, setOutcomeFilter] = useState<'all' | PnlOutcomeCategory>('all');
-  const [showAssumptions, setShowAssumptions] = useState(true);
+  const [showAssumptions, setShowAssumptions] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
   const [showFallbackRates, setShowFallbackRates] = useState(false);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
@@ -430,6 +430,7 @@ export function ProfitLossPanel({
 
             <button
               type="button"
+              aria-expanded={showAssumptions}
               onClick={() => setShowAssumptions((prev) => !prev)}
               className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
                 showAssumptions
@@ -438,7 +439,12 @@ export function ProfitLossPanel({
               }`}
             >
               <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-              {showAssumptions ? 'Hide Cost Inputs' : 'Cost Inputs'}
+              <span>Cost Inputs{costDirty ? ' •' : ''}</span>
+              {showAssumptions ? (
+                <ChevronDown className="h-3.5 w-3.5 text-emerald-300" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+              )}
             </button>
 
             {hasDelhiveryToken ? (
@@ -580,6 +586,42 @@ export function ProfitLossPanel({
                 </p>
               </div>
             </div>
+          </div>
+        )}
+
+        {!showAssumptions && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 pt-2.5 text-[11px] text-slate-400">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono tabular-nums">
+              <span>
+                COGS <strong className="text-slate-200">{costForm.cogsPercent}%</strong>
+              </span>
+              <span>
+                Pack <strong className="text-slate-200">{formatInr(costForm.packagingCostPerOrder, pnl.currency)}</strong>
+              </span>
+              <span className="text-orange-300">
+                Meta Ads{' '}
+                <strong>
+                  {formatInr(pnl.dailyMetaAdsRate, pnl.currency)}/d × {pnl.metaAdDaysCount}d ={' '}
+                  {formatInr(pnl.totalDailyMetaAds, pnl.currency)}
+                </strong>
+              </span>
+              <span>
+                Prepaid PG <strong className="text-slate-200">{costForm.prepaidGatewayPercent}%</strong>
+              </span>
+              {periodAdSpend > 0 && (
+                <span>
+                  Extra <strong className="text-slate-200">{formatInr(periodAdSpend, pnl.currency)}</strong>
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAssumptions(true)}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-300 hover:text-emerald-200"
+            >
+              Edit Cost Rules
+              <ChevronDown className="h-3 w-3" aria-hidden="true" />
+            </button>
           </div>
         )}
 
@@ -1017,12 +1059,11 @@ export function ProfitLossPanel({
                     const transitH = Math.round((day.expectedTransitRevenue / chartMaxVal) * 140);
                     const costH = Math.round((day.totalCosts / chartMaxVal) * 140);
                     const shortDate = day.dateLabel.replace(/ \d{4}$/, '');
-                    const netLabel = formatInr(
+                    const displayedNet =
                       day.realizedRevenue > 0 || day.rtoLoss > 0
                         ? day.netRealizedProfit
-                        : day.projectedNetProfit,
-                      pnl.currency
-                    );
+                        : day.projectedNetProfit;
+                    const netLabel = formatInr(displayedNet, pnl.currency);
 
                     return (
                       <g key={day.dateKey}>
@@ -1062,7 +1103,7 @@ export function ProfitLossPanel({
                           fontFamily="monospace"
                           fontWeight="600"
                           fill={
-                            day.netRealizedProfit < 0
+                            displayedNet < 0
                               ? '#fda4af'
                               : day.realizedRevenue > 0
                                 ? '#6ee7b7'

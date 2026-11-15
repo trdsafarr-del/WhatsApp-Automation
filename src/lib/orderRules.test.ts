@@ -1631,8 +1631,18 @@ test('Daily Meta Ads ₹500/day billing days and Profit & Loss + Excel deduction
   assert.equal(pnlWithMeta.dailyPnlRows.length, 3);
   assert.equal(pnlWithMeta.dailyPnlRows[0].netRealizedProfit, 25);
 
+  const inTransitOrder: OrderRecord = {
+    ...sampleNov15,
+    id: 'ma-4',
+    shopifyOrderId: '954',
+    orderNumber: '#1954',
+    shipmentStatus: 'in_transit',
+    delhiveryShippingCost: 90,
+    createdAt: '2026-11-15T09:00:00.000Z',
+  };
+
   const { workbook } = buildMonthlyExcelWorkbook({
-    orders: allOrders,
+    orders: [...allOrders, inTransitOrder],
     settings: DEFAULT_SETTINGS,
     costAssumptions: costsWithMeta,
     periodAdSpend: 0,
@@ -1643,6 +1653,13 @@ test('Daily Meta Ads ₹500/day billing days and Profit & Loss + Excel deduction
   assert.ok(wsSummary);
   assert.equal(wsSummary.getCell('B14').value, 1500);
   assert.equal((wsSummary.getCell('B16').value as { result?: number }).result, 75);
+
+  const wsOrderPnl = workbook.getWorksheet('Order-wise P&L');
+  assert.ok(wsOrderPnl);
+  // Row 8 is TOTAL (4 orders: 3 delivered + 1 in_transit): COGS = 4 * 350 = 1400, Fwd = 3*80 + 90 = 330
+  assert.equal((wsOrderPnl.getCell('O8').value as { formula?: string }).formula, 'SUM(O4:O7)');
+  assert.equal((wsOrderPnl.getCell('O8').value as { result?: number }).result, 1400);
+  assert.equal((wsOrderPnl.getCell('Q8').value as { result?: number }).result, 330);
 });
 
 

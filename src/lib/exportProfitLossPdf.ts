@@ -433,7 +433,7 @@ export function exportProfitLossReportToPdf({
     doc.addPage();
     drawSectionHeading(
       doc,
-      '4. Executive Visual Charts & Cost Analytics',
+      '5. Executive Visual Charts & Cost Analytics',
       `${periodLabel} (${pnl.totalOrders} Orders)`,
       36
     );

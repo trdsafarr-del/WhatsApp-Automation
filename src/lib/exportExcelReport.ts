@@ -772,6 +772,25 @@ export function buildMonthlyExcelWorkbook({
       result: round2(val),
     });
 
+    const sumOrderField = (
+      colLetter: string,
+      selector: (row: (typeof pnl.orderRows)[number]) => number
+    ): ExcelJS.CellFormulaValue =>
+      sumCol(
+        colLetter,
+        pnl.orderRows.reduce((s, r) => s + selector(r), 0)
+      );
+
+    const footerNoteParts: string[] = [];
+    if (pnl.inTransitCount > 0) {
+      footerNoteParts.push(`Includes ${pnl.inTransitCount} In-Transit Est. rows`);
+    }
+    if (pnl.totalDailyMetaAds + periodAdSpend > 0) {
+      footerNoteParts.push(
+        `Meta Ads (${pnl.currency} ${pnl.totalDailyMetaAds})${periodAdSpend > 0 ? ` + Extra (${pnl.currency} ${periodAdSpend})` : ''} deducted in Sheet 1`
+      );
+    }
+
     const totalValues: Array<string | ExcelJS.CellFormulaValue> = [
       `TOTAL (${pnl.orderRows.length} Orders)`,
       '',
@@ -787,21 +806,16 @@ export function buildMonthlyExcelWorkbook({
       sumCol('L', pnl.grossOrderValue),
       sumCol('M', pnl.realizedRevenue),
       sumCol('N', pnl.inTransitExpectedRevenue),
-      sumCol('O', pnl.totalCogs),
-      sumCol('P', pnl.totalPackagingCost),
-      sumCol('Q', pnl.totalForwardShipping),
-      sumCol('R', pnl.totalRtoShippingCost),
-      sumCol('S', pnl.totalPaymentFees),
-      sumCol('T', pnl.totalMarketingCost - pnl.totalDailyMetaAds - periodAdSpend),
-      sumCol('U', pnl.totalRealizedCosts - pnl.totalDailyMetaAds - periodAdSpend),
-      sumCol(
-        'V',
-        pnl.orderRows.reduce((s, r) => s + r.netProfit, 0)
-      ),
+      sumOrderField('O', (r) => r.cogsCost),
+      sumOrderField('P', (r) => r.packagingCost),
+      sumOrderField('Q', (r) => r.forwardShippingCost),
+      sumOrderField('R', (r) => r.rtoShippingCost),
+      sumOrderField('S', (r) => r.paymentOrCodFee),
+      sumOrderField('T', (r) => r.marketingCost),
+      sumOrderField('U', (r) => r.totalCost),
+      sumOrderField('V', (r) => r.netProfit),
       '',
-      pnl.totalDailyMetaAds + periodAdSpend > 0
-        ? `Fixed Meta Ads (${pnl.currency} ${pnl.totalDailyMetaAds}) + Extra (${pnl.currency} ${periodAdSpend}) deducted in Sheet 1`
-        : '',
+      footerNoteParts.join(' · '),
     ];
 
     totalValues.forEach((v, colZero) => {
