@@ -219,6 +219,7 @@ class WhatsAppManager {
       sessionPersisted: localRegistered || remoteSessionActive,
       remoteSessionActive,
       activeHostKind: meta.activeHostKind || null,
+      hostKind: detectHostRuntimeKind(),
       lastError: this.lastError,
     };
   }

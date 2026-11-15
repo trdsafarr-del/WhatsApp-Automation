@@ -428,6 +428,8 @@ test('isHostHeartbeatRecent and getWhatsAppDisplayState handle cloud-synced Verc
       connectedAt: '2026-11-13T10:30:00.000Z',
       lastHeartbeatAt: '2026-11-13T11:59:10.000Z',
       remoteSessionActive: true,
+      activeHostKind: 'railway',
+      hostKind: 'serverless',
       sessionPersisted: true,
       isServerless: true,
     },
@@ -440,6 +442,26 @@ test('isHostHeartbeatRecent and getWhatsAppDisplayState handle cloud-synced Verc
   assert.equal(remoteLive.statusLabel, 'Connected on Host · Live');
   assert.equal(remoteLive.sidebarLabel, 'Connected (Host)');
 
+  // A paused Railway server viewing itself MUST report Session Paused (never fake WA Live)
+  const pausedRailway = getWhatsAppDisplayState(
+    {
+      status: 'disconnected',
+      phoneNumber: '+919266424088',
+      connectedAt: '2026-11-13T10:30:00.000Z',
+      lastHeartbeatAt: '2026-11-13T11:59:10.000Z',
+      remoteSessionActive: true,
+      activeHostKind: 'railway',
+      hostKind: 'railway',
+      sessionPersisted: true,
+      isServerless: false,
+    },
+    now
+  );
+  assert.equal(pausedRailway.isLinked, false);
+  assert.equal(pausedRailway.isHostLive, false);
+  assert.equal(pausedRailway.statusLabel, 'Session Paused');
+  assert.equal(pausedRailway.sidebarLabel, 'Paused');
+
   const remoteStale = getWhatsAppDisplayState(
     {
       status: 'disconnected',
@@ -447,6 +469,8 @@ test('isHostHeartbeatRecent and getWhatsAppDisplayState handle cloud-synced Verc
       connectedAt: '2026-11-13T10:30:00.000Z',
       lastHeartbeatAt: '2026-11-13T11:40:00.000Z',
       remoteSessionActive: true,
+      activeHostKind: 'railway',
+      hostKind: 'serverless',
       sessionPersisted: true,
       isServerless: true,
     },

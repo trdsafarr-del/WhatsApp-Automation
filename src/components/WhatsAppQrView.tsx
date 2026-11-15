@@ -46,7 +46,12 @@ export function WhatsAppQrView({
     : null;
 
   const showLinkedCard =
-    display.isLinked && !isQrReady && !isConnecting && !formattedPairingCode;
+    (display.isLinked || display.statusLabel === 'Session Paused') &&
+    !isQrReady &&
+    !isConnecting &&
+    !formattedPairingCode;
+  const canPauseOnThisHost =
+    display.isLocalConnected && whatsapp.hostKind === 'dev_preview';
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -110,9 +115,9 @@ export function WhatsAppQrView({
             <span
               data-testid="whatsapp-connection-status"
               className={`text-xs font-semibold ${
-                display.isLinked
+                display.isHostLive
                   ? 'text-emerald-400'
-                  : isQrReady
+                  : isQrReady || display.statusLabel === 'Session Paused'
                     ? 'text-amber-300'
                     : 'text-slate-400'
               }`}
@@ -124,25 +129,51 @@ export function WhatsAppQrView({
           <div className="mt-6 flex flex-col items-center text-center">
             {showLinkedCard ? (
               <div className="w-full space-y-5 text-left" data-testid="whatsapp-linked-card">
-                <div className="flex items-start gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
-                  <CheckCircle2
-                    className="mt-0.5 h-5 w-5 text-emerald-400 shrink-0"
-                    aria-hidden="true"
-                  />
+                <div
+                  className={`flex items-start gap-3 rounded-xl border p-4 ${
+                    display.isHostLive
+                      ? 'border-emerald-500/30 bg-emerald-500/10'
+                      : 'border-amber-500/35 bg-amber-500/10'
+                  }`}
+                >
+                  {display.isHostLive ? (
+                    <CheckCircle2
+                      className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <AlertTriangle
+                      className="mt-0.5 h-5 w-5 shrink-0 text-amber-300"
+                      aria-hidden="true"
+                    />
+                  )}
                   <div>
                     <p className="text-sm font-semibold text-white">
                       {whatsapp.pushName || 'WhatsApp Linked Device'}
                     </p>
-                    <p className="mt-0.5 font-mono text-sm text-emerald-200 tabular-nums">
-                      {whatsapp.phoneNumber || 'Active Session'}
+                    <p
+                      className={`mt-0.5 font-mono text-sm tabular-nums ${
+                        display.isHostLive ? 'text-emerald-200' : 'text-amber-200'
+                      }`}
+                    >
+                      {whatsapp.phoneNumber || 'Saved Session'}
                     </p>
+                    {!display.isHostLive && (
+                      <p className="mt-1 text-xs text-amber-200">
+                        WhatsApp socket is currently paused on this server. Click Restore Saved Session below to resume 24/7 dispatch immediately.
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 <dl className="divide-y divide-slate-800 text-xs sm:text-sm">
                   <div className="flex items-center justify-between gap-3 py-2.5">
                     <dt className="shrink-0 text-slate-400">Session Persistence</dt>
-                    <dd className="text-right font-medium text-emerald-400">
+                    <dd
+                      className={`text-right font-medium ${
+                        display.isHostLive ? 'text-emerald-400' : 'text-amber-300'
+                      }`}
+                    >
                       {display.persistenceLabel}
                     </dd>
                   </div>
@@ -174,7 +205,7 @@ export function WhatsAppQrView({
                   <p className="rounded-lg border border-slate-800 bg-slate-950/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-400">
                     {whatsapp.isServerless
                       ? 'Already logged in on your host server and synced to this dashboard via Upstash Redis.'
-                      : 'Saved session credentials found in Redis. Click Restore Saved Session if the socket is idle.'}
+                      : 'Already running live on your 24/7 Railway/cloud host and synced via Upstash Redis.'}
                   </p>
                 )}
 
@@ -190,14 +221,16 @@ export function WhatsAppQrView({
                         <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                         Refresh Socket (Stay Logged In)
                       </button>
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => void onPause()}
-                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-amber-500/35 bg-amber-500/15 px-4 py-2 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-500/25 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
-                      >
-                        Pause Here (Let Railway Run 24/7)
-                      </button>
+                      {canPauseOnThisHost && (
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void onPause()}
+                          className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-amber-500/35 bg-amber-500/15 px-4 py-2 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-500/25 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
+                        >
+                          Pause Dev Socket (Let Railway Run 24/7)
+                        </button>
+                      )}
                     </>
                   ) : !whatsapp.isServerless ? (
                     <button

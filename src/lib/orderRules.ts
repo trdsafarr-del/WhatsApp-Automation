@@ -704,6 +704,8 @@ export function getWhatsAppDisplayState(
     lastHeartbeatAt?: string | null;
     sessionPersisted?: boolean;
     remoteSessionActive?: boolean;
+    activeHostKind?: string | null;
+    hostKind?: string | null;
     isServerless?: boolean;
     qrDataUrl?: string | null;
   },
@@ -713,13 +715,21 @@ export function getWhatsAppDisplayState(
   const hasRemoteMeta = Boolean(
     whatsapp.remoteSessionActive || (whatsapp.connectedAt && whatsapp.phoneNumber)
   );
-  const isRemoteLinked = !isLocalConnected && hasRemoteMeta && Boolean(whatsapp.phoneNumber);
+  const isMirrorHost = Boolean(
+    whatsapp.isServerless ||
+      (whatsapp.hostKind === 'dev_preview' &&
+        (whatsapp.activeHostKind === 'railway' || whatsapp.activeHostKind === 'cloud'))
+  );
+  const isRemoteLinked =
+    isMirrorHost && !isLocalConnected && hasRemoteMeta && Boolean(whatsapp.phoneNumber);
   const isLinked = isLocalConnected || isRemoteLinked;
   const isHostLive =
     isLocalConnected || (isRemoteLinked && isHostHeartbeatRecent(whatsapp.lastHeartbeatAt, nowMs));
 
   const isQrReady = whatsapp.status === 'qr_ready' && Boolean(whatsapp.qrDataUrl);
   const isConnecting = whatsapp.status === 'connecting';
+  const isSavedButPaused =
+    !isLinked && !isQrReady && !isConnecting && Boolean(whatsapp.sessionPersisted || hasRemoteMeta);
 
   const statusLabel = isLocalConnected
     ? 'Connected · 24/7 Active'
@@ -731,7 +741,9 @@ export function getWhatsAppDisplayState(
         ? 'Scan QR Now'
         : isConnecting
           ? 'Connecting...'
-          : 'Not Linked';
+          : isSavedButPaused
+            ? 'Session Paused'
+            : 'Not Linked';
 
   const sidebarLabel = isLocalConnected
     ? 'Connected'
@@ -743,7 +755,9 @@ export function getWhatsAppDisplayState(
         ? 'Scan QR'
         : isConnecting
           ? 'Connecting...'
-          : 'Unlinked';
+          : isSavedButPaused
+            ? 'Paused'
+            : 'Unlinked';
 
   const persistenceLabel = isLocalConnected
     ? whatsapp.sessionPersisted
@@ -751,7 +765,9 @@ export function getWhatsAppDisplayState(
       : 'Active in Memory'
     : isRemoteLinked
       ? 'Saved in Cloud Redis (Host Linked)'
-      : 'Not Saved';
+      : isSavedButPaused
+        ? 'Saved (Socket Paused — Click Restore)'
+        : 'Not Saved';
 
   return {
     isLocalConnected,

@@ -603,10 +603,14 @@ export default function App() {
                 <span aria-hidden="true">·</span>
                 <span
                   className={`font-medium whitespace-nowrap shrink-0 ${
-                    waDisplay.isLinked ? 'text-emerald-400' : 'text-amber-300'
+                    waDisplay.isHostLive ? 'text-emerald-400' : 'text-amber-300'
                   }`}
                 >
-                  {waDisplay.isLinked ? 'WA Live' : 'WA Unlinked'}
+                  {waDisplay.isHostLive
+                    ? 'WA Live'
+                    : waDisplay.statusLabel === 'Session Paused'
+                      ? 'WA Paused'
+                      : 'WA Unlinked'}
                 </span>
               </div>
               <h1 className="truncate font-display text-sm font-semibold text-white sm:text-base">
@@ -712,6 +716,30 @@ export default function App() {
                 </button>
               </div>
             )}
+
+            {!isLoading &&
+              !whatsapp.isServerless &&
+              !waDisplay.isHostLive &&
+              whatsapp.sessionPersisted &&
+              whatsapp.status !== 'connecting' && (
+                <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/12 px-4 py-3 text-xs text-amber-100 backdrop-blur-md sm:flex-row sm:items-center">
+                  <p className="leading-relaxed">
+                    <span className="font-semibold text-amber-200">
+                      WhatsApp Socket Paused on This Server:
+                    </span>{' '}
+                    Queued orders cannot send until WhatsApp reconnects here.
+                    {whatsapp.lastError ? ` (${whatsapp.lastError})` : ''}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={whatsappBusy}
+                    onClick={() => void handleWhatsAppRestart()}
+                    className="shrink-0 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {whatsappBusy ? 'Connecting...' : 'Resume WhatsApp Now'}
+                  </button>
+                </div>
+              )}
 
             {isLoading ? (
               <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">

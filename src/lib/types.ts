@@ -95,6 +95,7 @@ export interface WhatsAppState {
   sessionPersisted: boolean;
   remoteSessionActive?: boolean;
   activeHostKind?: string | null;
+  hostKind?: string | null;
   lastError: string | null;
 }
 
