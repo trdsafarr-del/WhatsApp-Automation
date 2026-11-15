@@ -18,6 +18,7 @@ export interface ShopifyRawOrder {
   total_price?: string;
   currency?: string;
   financial_status?: string;
+  fulfillment_status?: string | null;
   payment_gateway_names?: string[];
   tags?: string;
   note?: string | null;
@@ -171,6 +172,7 @@ export function parseShopifyRawOrder(
     currency: raw.currency || 'INR',
     lineItemsSummary,
     financialStatus: raw.financial_status || 'pending',
+    fulfillmentStatus: raw.fulfillment_status || null,
     paymentMethod,
     deliverySummary,
     orderNote,

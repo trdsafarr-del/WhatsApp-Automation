@@ -3,17 +3,22 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
   buildDeployEnvSnippet,
+  buildOrdersPdfSummaryAndRows,
   computeOrderMetrics,
   extractShopifyCustomerPhone,
   extractShopifyTrackingInfo,
   formatOrderTemplate,
   formatPollPayload,
+  getDispatchStatusInfo,
   getSyncStartCutoffIso,
   getWhatsAppDisplayState,
   hasConfiguredShopify,
+  hasHighRtoTag,
   inferInitialPollStatus,
   isHostHeartbeatRecent,
+  isOrderDispatched,
   isOrderOnOrAfterStartDate,
+  isOrderReadyToDispatch,
   isTransientWhatsAppError,
   isWhatsAppConnectionReplaced,
   mergeShopifyTags,
@@ -471,4 +476,109 @@ test('isHostHeartbeatRecent and getWhatsAppDisplayState handle cloud-synced Verc
     'tok_123'
   );
   assert.equal(readCleanEnvVar({}, ['UPSTASH_REDIS_REST_URL']), '');
+});
+
+test('Today Dispatch and PDF summary helpers classify confirmed un-dispatched vs fulfilled orders accurately', () => {
+  const baseOrder: OrderRecord = {
+    id: 'ord-1',
+    shopifyOrderId: '1',
+    orderNumber: '#1315',
+    customerName: 'Lakshmi p Blgr',
+    customerPhone: '+918951722802',
+    customerEmail: '',
+    totalPrice: '1075.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Chocolate Cookies Tin (500g)',
+    financialStatus: 'pending',
+    fulfillmentStatus: null,
+    deliverySummary: 'Chitradurga, 577522',
+    shopifyTags: 'cod, confirm',
+    pollStatus: 'confirmed',
+    whatsappMessageId: 'msg-1',
+    pollQuestion: 'Confirm?',
+    pollSentAt: '2026-11-13T06:00:00.000Z',
+    respondedAt: '2026-11-13T06:10:00.000Z',
+    responseChannel: 'whatsapp_poll',
+    shopifySynced: true,
+    createdAt: '2026-11-13T05:55:00.000Z',
+    events: [],
+  };
+
+  // Confirmed and no tracking/fulfillment -> Ready to dispatch today
+  assert.equal(isOrderDispatched(baseOrder), false);
+  assert.equal(isOrderReadyToDispatch(baseOrder), true);
+  assert.deepEqual(getDispatchStatusInfo(baseOrder), {
+    code: 'ready',
+    label: 'Dispatch Today',
+  });
+
+  // Confirmed and tracking added -> Already dispatched
+  const shippedOrder: OrderRecord = {
+    ...baseOrder,
+    id: 'ord-2',
+    orderNumber: '#1314',
+    trackingUrl: 'https://track.example/123',
+  };
+  assert.equal(isOrderDispatched(shippedOrder), true);
+  assert.equal(isOrderReadyToDispatch(shippedOrder), false);
+  assert.deepEqual(getDispatchStatusInfo(shippedOrder), {
+    code: 'dispatched',
+    label: 'Dispatched',
+  });
+
+  // Confirmed and marked fulfilled in Shopify -> Dispatched even without tracking URL
+  const fulfilledNoUrl: OrderRecord = {
+    ...baseOrder,
+    id: 'ord-3',
+    orderNumber: '#1313',
+    fulfillmentStatus: 'fulfilled',
+  };
+  assert.equal(isOrderDispatched(fulfilledNoUrl), true);
+
+  // Pending / cancelled orders are not Ready to dispatch
+  const pendingOrder: OrderRecord = {
+    ...baseOrder,
+    id: 'ord-4',
+    orderNumber: '#1312',
+    pollStatus: 'poll_sent',
+    shopifyTags: 'waiting for confirmation',
+  };
+  const cancelledOrder: OrderRecord = {
+    ...baseOrder,
+    id: 'ord-5',
+    orderNumber: '#1311',
+    pollStatus: 'cancelled_by_user',
+    shopifyTags: 'cancelled by user',
+  };
+
+  const report = buildOrdersPdfSummaryAndRows([
+    baseOrder,
+    shippedOrder,
+    pendingOrder,
+    cancelledOrder,
+  ]);
+  assert.equal(report.total, 4);
+  assert.equal(report.confirmed, 2);
+  assert.equal(report.readyToDispatch, 1);
+  assert.equal(report.dispatched, 1);
+  assert.equal(report.pending, 1);
+  assert.equal(report.cancelled, 1);
+  assert.equal(report.rows[0].itemsSummary, '1x Chocolate Cookies Tin (500g)');
+  assert.equal(report.rows[0].dispatchStatus, 'Dispatch Today');
+  assert.equal(report.rows[0].highRto, false);
+
+  assert.equal(hasHighRtoTag('cod, HIGH RTO Risk, Magic, RTO Risk - low'), true);
+  assert.equal(hasHighRtoTag('High RTO, confirm'), true);
+  assert.equal(hasHighRtoTag('RTO Risk - High'), true);
+  assert.equal(hasHighRtoTag('cod, MEDIUM RTO Risk, RTO Risk - low'), false);
+  assert.equal(hasHighRtoTag(''), false);
+
+  const highRtoOrder: OrderRecord = {
+    ...baseOrder,
+    id: 'ord-6',
+    orderNumber: '#1318',
+    shopifyTags: 'cod, HIGH RTO Risk, Magic, waiting for confirmation',
+  };
+  const rtoReport = buildOrdersPdfSummaryAndRows([highRtoOrder]);
+  assert.equal(rtoReport.rows[0].highRto, true);
 });

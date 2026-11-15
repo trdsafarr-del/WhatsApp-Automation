@@ -791,3 +791,181 @@ export function readCleanEnvVar(
   }
   return '';
 }
+
+export type DispatchStatusCode = 'ready' | 'dispatched' | 'cancelled' | 'pending';
+
+/**
+ * Checks whether a Shopify order has already been dispatched/fulfilled
+ * (via Shopify fulfillment_status or attached/sent tracking number/URL).
+ */
+export function isOrderDispatched(
+  order: Pick<
+    OrderRecord,
+    'fulfillmentStatus' | 'trackingNumber' | 'trackingUrl' | 'trackingSentAt' | 'trackingSentValue'
+  >
+): boolean {
+  const fStatus = (order.fulfillmentStatus || '').trim().toLowerCase();
+  if (fStatus === 'fulfilled') return true;
+  return Boolean(
+    order.trackingUrl?.trim() ||
+      order.trackingNumber?.trim() ||
+      order.trackingSentAt ||
+      order.trackingSentValue?.trim()
+  );
+}
+
+/**
+ * Checks whether an order is confirmed by the customer AND still waiting to be dispatched today.
+ */
+export function isOrderReadyToDispatch(
+  order: Pick<
+    OrderRecord,
+    | 'pollStatus'
+    | 'fulfillmentStatus'
+    | 'trackingNumber'
+    | 'trackingUrl'
+    | 'trackingSentAt'
+    | 'trackingSentValue'
+  >
+): boolean {
+  return order.pollStatus === 'confirmed' && !isOrderDispatched(order);
+}
+
+/**
+ * Returns a concise status code and label for the "Today Dispatch" column.
+ */
+export function getDispatchStatusInfo(
+  order: Pick<
+    OrderRecord,
+    | 'pollStatus'
+    | 'fulfillmentStatus'
+    | 'trackingNumber'
+    | 'trackingUrl'
+    | 'trackingSentAt'
+    | 'trackingSentValue'
+  >
+): { code: DispatchStatusCode; label: string } {
+  if (isOrderDispatched(order)) {
+    return { code: 'dispatched', label: 'Dispatched' };
+  }
+  if (isOrderReadyToDispatch(order)) {
+    return { code: 'ready', label: 'Dispatch Today' };
+  }
+  if (order.pollStatus === 'cancelled_by_user') {
+    return { code: 'cancelled', label: 'Cancelled' };
+  }
+  return { code: 'pending', label: 'Awaiting Confirm' };
+}
+
+/**
+ * Detects whether an order's Shopify tags contain a High RTO indicator
+ * (e.g. "HIGH RTO Risk", "High RTO", "high_rto", "RTO Risk - High")
+ * without matching low/medium RTO tags.
+ */
+export function hasHighRtoTag(shopifyTags?: string | null): boolean {
+  if (!shopifyTags) return false;
+  const tags = shopifyTags
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+
+  return tags.some(
+    (tag) =>
+      tag.includes('high rto') ||
+      tag.includes('high_rto') ||
+      tag.includes('high-rto') ||
+      tag.includes('rto risk - high') ||
+      tag.includes('rto risk: high') ||
+      tag.includes('rto high')
+  );
+}
+
+export interface PdfOrderRowData {
+  orderNumber: string;
+  dateTimeLabel: string;
+  customerLabel: string;
+  itemsSummary: string;
+  amountLabel: string;
+  confirmStatus: string;
+  dispatchStatus: string;
+  dispatchCode: DispatchStatusCode;
+  deliverySummary: string;
+  shopifyTags: string;
+  highRto: boolean;
+}
+
+export interface PdfReportSummary {
+  total: number;
+  confirmed: number;
+  readyToDispatch: number;
+  dispatched: number;
+  pending: number;
+  cancelled: number;
+  rows: PdfOrderRowData[];
+}
+
+/**
+ * Computes summary counters and formatted table rows for the Export PDF dispatch report.
+ */
+export function buildOrdersPdfSummaryAndRows(orders: OrderRecord[]): PdfReportSummary {
+  let confirmed = 0;
+  let readyToDispatch = 0;
+  let dispatched = 0;
+  let pending = 0;
+  let cancelled = 0;
+
+  const rows: PdfOrderRowData[] = orders.map((order) => {
+    if (order.pollStatus === 'confirmed') confirmed += 1;
+    else if (order.pollStatus === 'cancelled_by_user') cancelled += 1;
+    else if (order.pollStatus === 'poll_sent' || order.pollStatus === 'queued') pending += 1;
+
+    const dispatchInfo = getDispatchStatusInfo(order);
+    if (dispatchInfo.code === 'dispatched') dispatched += 1;
+    if (dispatchInfo.code === 'ready') readyToDispatch += 1;
+
+    const confirmStatus =
+      order.pollStatus === 'confirmed'
+        ? 'Confirmed'
+        : order.pollStatus === 'cancelled_by_user'
+          ? 'Cancelled'
+          : order.pollStatus === 'poll_sent'
+            ? 'Poll Sent'
+            : order.pollStatus === 'failed'
+              ? 'Failed'
+              : 'Queued';
+
+    const parsedDate = new Date(order.createdAt);
+    const dateTimeLabel = Number.isNaN(parsedDate.getTime())
+      ? order.createdAt
+      : parsedDate.toLocaleString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+
+    return {
+      orderNumber: order.orderNumber,
+      dateTimeLabel,
+      customerLabel: `${order.customerName}\n${order.customerPhone || 'No phone'}`,
+      itemsSummary: order.lineItemsSummary || '—',
+      amountLabel: `${order.currency} ${order.totalPrice}`,
+      confirmStatus,
+      dispatchStatus: dispatchInfo.label,
+      dispatchCode: dispatchInfo.code,
+      deliverySummary: order.deliverySummary || '—',
+      shopifyTags: order.shopifyTags || '—',
+      highRto: hasHighRtoTag(order.shopifyTags),
+    };
+  });
+
+  return {
+    total: orders.length,
+    confirmed,
+    readyToDispatch,
+    dispatched,
+    pending,
+    cancelled,
+    rows,
+  };
+}

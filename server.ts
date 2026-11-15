@@ -238,6 +238,7 @@ async function startServer() {
       trackingSentValue: existing.trackingSentValue,
     };
     if (payload.tags !== undefined) existing.shopifyTags = payload.tags;
+    if (parsed.fulfillmentStatus !== undefined) existing.fulfillmentStatus = parsed.fulfillmentStatus;
     if (parsed.trackingUrl) existing.trackingUrl = parsed.trackingUrl;
     if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;
     if (parsed.trackingCompany) existing.trackingCompany = parsed.trackingCompany;
