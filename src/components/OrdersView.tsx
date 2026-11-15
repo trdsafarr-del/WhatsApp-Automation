@@ -17,7 +17,12 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { getDispatchStatusInfo, hasHighRtoTag, isOrderReadyToDispatch } from '../lib/orderRules';
+import {
+  getDispatchStatusInfo,
+  hasHighRtoTag,
+  isOrderDispatchedToday,
+  isOrderReadyToDispatch,
+} from '../lib/orderRules';
 import { exportOrdersToPdf } from '../lib/exportOrdersPdf';
 import type { AppSettings, OrderMetrics, OrderRecord, PollStatus } from '../lib/types';
 
@@ -37,7 +42,14 @@ interface OrdersViewProps {
   syncMessage: string | null;
 }
 
-type FilterTab = 'all' | 'today_dispatch' | 'high_rto' | 'pending' | 'confirmed' | 'cancelled';
+type FilterTab =
+  | 'all'
+  | 'today_dispatch'
+  | 'today_dispatched'
+  | 'high_rto'
+  | 'pending'
+  | 'confirmed'
+  | 'cancelled';
 type InspectorTab = 'details' | 'activity';
 
 function formatRelativeTime(iso: string | null): string {
@@ -147,6 +159,11 @@ export function OrdersView({
     [orders]
   );
 
+  const todayDispatchedCount = useMemo(
+    () => orders.filter((o) => isOrderDispatchedToday(o)).length,
+    [orders]
+  );
+
   const highRtoCount = useMemo(
     () => orders.filter((o) => hasHighRtoTag(o.shopifyTags)).length,
     [orders]
@@ -156,6 +173,9 @@ export function OrdersView({
     const q = search.trim().toLowerCase();
     return orders.filter((order) => {
       if (filter === 'today_dispatch' && !isOrderReadyToDispatch(order)) {
+        return false;
+      }
+      if (filter === 'today_dispatched' && !isOrderDispatchedToday(order)) {
         return false;
       }
       if (filter === 'high_rto' && !hasHighRtoTag(order.shopifyTags)) {
@@ -185,6 +205,8 @@ export function OrdersView({
     switch (filter) {
       case 'today_dispatch':
         return `Today Dispatch (${readyToDispatchCount})`;
+      case 'today_dispatched':
+        return `Today Dispatched (${todayDispatchedCount})`;
       case 'high_rto':
         return `High RTO Risk (${highRtoCount})`;
       case 'pending':
@@ -196,7 +218,7 @@ export function OrdersView({
       default:
         return 'All Orders';
     }
-  }, [filter, readyToDispatchCount, highRtoCount]);
+  }, [filter, readyToDispatchCount, todayDispatchedCount, highRtoCount]);
 
   function handleExportPdf() {
     if (filteredOrders.length === 0) return;
@@ -496,6 +518,7 @@ export function OrdersView({
               [
                 { id: 'all', label: `All (${orders.length})` },
                 { id: 'today_dispatch', label: `Today Dispatch (${readyToDispatchCount})` },
+                { id: 'today_dispatched', label: `Today Dispatched (${todayDispatchedCount})` },
                 { id: 'high_rto', label: `High RTO (${highRtoCount})` },
                 { id: 'pending', label: 'Pending' },
                 { id: 'confirmed', label: 'Confirmed' },
@@ -512,7 +535,11 @@ export function OrdersView({
                   filter === tab.id
                     ? tab.id === 'high_rto'
                       ? 'bg-amber-400/20 text-amber-200 ring-1 ring-inset ring-amber-400/40'
-                      : 'bg-slate-800 text-white shadow-xs'
+                      : tab.id === 'today_dispatch'
+                        ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-inset ring-emerald-400/40'
+                        : tab.id === 'today_dispatched'
+                          ? 'bg-sky-500/20 text-sky-200 ring-1 ring-inset ring-sky-400/40'
+                          : 'bg-slate-800 text-white shadow-xs'
                     : 'text-slate-400 hover:text-slate-100'
                 }`}
               >

@@ -815,6 +815,16 @@ export function isOrderDispatched(
 }
 
 /**
+ * Converts an ISO timestamp or Date into a YYYY-MM-DD calendar date in IST (+05:30).
+ */
+export function getIstDateKey(value: string | Date): string | null {
+  const ms = value instanceof Date ? value.getTime() : Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  const IST_OFFSET_MS = 330 * 60 * 1000;
+  return new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/**
  * Checks whether an order is confirmed by the customer AND still waiting to be dispatched today.
  */
 export function isOrderReadyToDispatch(
@@ -829,6 +839,32 @@ export function isOrderReadyToDispatch(
   >
 ): boolean {
   return order.pollStatus === 'confirmed' && !isOrderDispatched(order);
+}
+
+/**
+ * Checks whether an order has been dispatched/fulfilled on today's IST calendar date.
+ */
+export function isOrderDispatchedToday(
+  order: Pick<
+    OrderRecord,
+    | 'fulfillmentStatus'
+    | 'fulfilledAt'
+    | 'trackingNumber'
+    | 'trackingUrl'
+    | 'trackingSentAt'
+    | 'trackingSentValue'
+    | 'respondedAt'
+    | 'createdAt'
+  >,
+  nowMs = Date.now()
+): boolean {
+  if (!isOrderDispatched(order)) return false;
+  const todayKey = getIstDateKey(new Date(nowMs));
+  if (!todayKey) return false;
+  const refTimestamp =
+    order.fulfilledAt || order.trackingSentAt || order.respondedAt || order.createdAt;
+  if (!refTimestamp) return false;
+  return getIstDateKey(refTimestamp) === todayKey;
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   formatOrderTemplate,
   formatPollPayload,
   getDispatchStatusInfo,
+  getIstDateKey,
   getSyncStartCutoffIso,
   getWhatsAppDisplayState,
   hasConfiguredShopify,
@@ -17,6 +18,7 @@ import {
   inferInitialPollStatus,
   isHostHeartbeatRecent,
   isOrderDispatched,
+  isOrderDispatchedToday,
   isOrderOnOrAfterStartDate,
   isOrderReadyToDispatch,
   isTransientWhatsAppError,
@@ -581,4 +583,42 @@ test('Today Dispatch and PDF summary helpers classify confirmed un-dispatched vs
   };
   const rtoReport = buildOrdersPdfSummaryAndRows([highRtoOrder]);
   assert.equal(rtoReport.rows[0].highRto, true);
+
+  // Today Dispatched (IST date matching)
+  const todayNov15Ms = Date.parse('2026-11-15T08:15:00.000Z'); // 13:45 IST on 2026-11-15
+  assert.equal(getIstDateKey('2026-11-15T00:22:39+05:30'), '2026-11-15');
+  assert.equal(
+    isOrderDispatchedToday(
+      {
+        ...shippedOrder,
+        trackingSentAt: '2026-11-15T08:12:34.171Z',
+        createdAt: '2026-11-14T13:56:15+05:30',
+      },
+      todayNov15Ms
+    ),
+    true
+  );
+  assert.equal(
+    isOrderDispatchedToday(
+      {
+        ...shippedOrder,
+        trackingSentAt: '2026-11-14T05:49:57.276Z',
+        createdAt: '2026-11-14T10:37:32+05:30',
+      },
+      todayNov15Ms
+    ),
+    false
+  );
+  assert.equal(
+    isOrderDispatchedToday(
+      {
+        ...fulfilledNoUrl,
+        fulfilledAt: '2026-11-15T06:00:00.000Z',
+        createdAt: '2026-11-14T10:00:00+05:30',
+      },
+      todayNov15Ms
+    ),
+    true
+  );
+  assert.equal(isOrderDispatchedToday(baseOrder, todayNov15Ms), false);
 });

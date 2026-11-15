@@ -173,6 +173,7 @@ export function parseShopifyRawOrder(
     lineItemsSummary,
     financialStatus: raw.financial_status || 'pending',
     fulfillmentStatus: raw.fulfillment_status || null,
+    fulfilledAt: tracking.fulfilledAt || null,
     paymentMethod,
     deliverySummary,
     orderNote,

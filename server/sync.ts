@@ -160,6 +160,10 @@ export async function syncShopifyOrdersNow(
             existing.fulfillmentStatus = parsed.fulfillmentStatus;
             changed = true;
           }
+          if (parsed.fulfilledAt && existing.fulfilledAt !== parsed.fulfilledAt) {
+            existing.fulfilledAt = parsed.fulfilledAt;
+            changed = true;
+          }
           if (parsed.trackingUrl && existing.trackingUrl !== parsed.trackingUrl) {
             existing.trackingUrl = parsed.trackingUrl;
             changed = true;
