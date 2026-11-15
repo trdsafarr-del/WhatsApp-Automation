@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   hasConfiguredShopify,
   isOrderOnOrAfterStartDate,
+  mergeProgressedOrderRecords,
   readCleanEnvVar,
   selectPriorityAuthFiles,
 } from '../src/lib/orderRules.js';
@@ -32,6 +33,7 @@ export interface DatabaseState {
     mode: WhatsAppState['mode'];
     connectedAt: string | null;
     lastHeartbeatAt?: string | null;
+    activeHostKind?: string | null;
     phoneNumber: string | null;
     pushName: string | null;
   };
@@ -201,14 +203,32 @@ class PersistentStore {
             ...(parsed.settings || {}),
             whatsappMode: 'baileys_qr',
           });
-          const nonSeedOrders = Array.isArray(parsed.orders)
+          const remoteOrders = Array.isArray(parsed.orders)
             ? parsed.orders.filter(
                 (o) =>
                   !LEGACY_SEED_ORDER_IDS.has(o.id) &&
                   isOrderOnOrAfterStartDate(o.createdAt, mergedSettings.syncStartDate)
               )
             : [];
-          const { cleaned: cleanedOrders } = dedupeOrderEvents(nonSeedOrders);
+          const mergedByKey = new Map<string, OrderRecord>();
+          for (const remote of remoteOrders) {
+            mergedByKey.set(remote.shopifyOrderId || remote.id, remote);
+          }
+          for (const local of this.state.orders) {
+            if (
+              LEGACY_SEED_ORDER_IDS.has(local.id) ||
+              !isOrderOnOrAfterStartDate(local.createdAt, mergedSettings.syncStartDate)
+            ) {
+              continue;
+            }
+            const key = local.shopifyOrderId || local.id;
+            const prev = mergedByKey.get(key);
+            mergedByKey.set(key, prev ? mergeProgressedOrderRecords(local, prev) : local);
+          }
+          const combinedOrders = Array.from(mergedByKey.values()).sort(
+            (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+          );
+          const { cleaned: cleanedOrders } = dedupeOrderEvents(combinedOrders);
           this.state = {
             settings: mergedSettings,
             orders: cleanedOrders,
@@ -216,6 +236,7 @@ class PersistentStore {
               mode: 'baileys_qr',
               connectedAt: parsed.whatsappMeta?.connectedAt || null,
               lastHeartbeatAt: parsed.whatsappMeta?.lastHeartbeatAt || null,
+              activeHostKind: parsed.whatsappMeta?.activeHostKind || null,
               phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
               pushName: parsed.whatsappMeta?.pushName || null,
             },
@@ -276,6 +297,7 @@ class PersistentStore {
           mode: 'baileys_qr',
           connectedAt: parsed.whatsappMeta?.connectedAt || null,
           lastHeartbeatAt: parsed.whatsappMeta?.lastHeartbeatAt || null,
+          activeHostKind: parsed.whatsappMeta?.activeHostKind || null,
           phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
           pushName: parsed.whatsappMeta?.pushName || null,
         },
@@ -312,6 +334,7 @@ class PersistentStore {
         mode: 'baileys_qr',
         connectedAt: null,
         lastHeartbeatAt: null,
+        activeHostKind: null,
         phoneNumber: null,
         pushName: null,
       },

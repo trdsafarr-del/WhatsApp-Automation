@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import {
   DEFAULT_SETTINGS,
+  detectHostRuntimeKind,
   formatJidToDisplayPhone,
   formatOrderTemplate,
   formatPollPayload,
@@ -13,6 +14,7 @@ import {
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
   shouldAutoDispatchPoll,
+  shouldSkipAutoRestoreForRemoteHost,
 } from '../src/lib/orderRules.js';
 import type { OrderRecord, WhatsAppEngineMode, WhatsAppState } from '../src/lib/types.js';
 import { hasLiveShopifyCredentials, updateShopifyOrderTags } from './shopify.js';
@@ -59,6 +61,7 @@ class WhatsAppManager {
   private lastError: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private queueFlushTimer: NodeJS.Timeout | null = null;
   private authBackupTimer: NodeJS.Timeout | null = null;
   private credsSaveQueue: Promise<void> = Promise.resolve();
   private isInitializing = false;
@@ -122,6 +125,19 @@ class WhatsAppManager {
   private async restorePersistedSession() {
     if (process.env.VERCEL) return;
     await store.ensureHydrated();
+    const meta = store.getWhatsAppMeta();
+    const currentHost = detectHostRuntimeKind();
+    if (
+      shouldSkipAutoRestoreForRemoteHost({
+        currentHost,
+        activeHostKind: meta.activeHostKind,
+        lastHeartbeatAt: meta.lastHeartbeatAt,
+      })
+    ) {
+      // Leave the 24/7 Railway / cloud production WhatsApp socket undisturbed
+      return;
+    }
+
     if (!this.hasSavedAuth() && store.isCloudSyncEnabled()) {
       await store.restoreAuthFiles(AUTH_DIR);
     }
@@ -152,7 +168,10 @@ class WhatsAppManager {
       if (this.status !== 'connected') return;
       const now = new Date().toISOString();
       this.lastHeartbeatAt = now;
-      store.updateWhatsAppMeta({ lastHeartbeatAt: now });
+      store.updateWhatsAppMeta({
+        lastHeartbeatAt: now,
+        activeHostKind: detectHostRuntimeKind(),
+      });
       if (this.sock) {
         try {
           await this.sock.sendPresenceUpdate('available');
@@ -161,12 +180,23 @@ class WhatsAppManager {
         }
       }
     }, 45_000);
+
+    if (this.queueFlushTimer) clearInterval(this.queueFlushTimer);
+    this.queueFlushTimer = setInterval(() => {
+      if (this.isConnected() && store.getQueuedOrders().length > 0) {
+        void this.flushQueuedOrders();
+      }
+    }, 15_000);
   }
 
   private stopHeartbeat() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this.queueFlushTimer) {
+      clearInterval(this.queueFlushTimer);
+      this.queueFlushTimer = null;
     }
   }
 
@@ -188,6 +218,7 @@ class WhatsAppManager {
       reconnectCount: this.reconnectCount,
       sessionPersisted: localRegistered || remoteSessionActive,
       remoteSessionActive,
+      activeHostKind: meta.activeHostKind || null,
       lastError: this.lastError,
     };
   }
@@ -348,6 +379,7 @@ class WhatsAppManager {
             mode: 'baileys_qr',
             connectedAt: now,
             lastHeartbeatAt: now,
+            activeHostKind: detectHostRuntimeKind(),
             phoneNumber: userId ? formatJidToDisplayPhone(userId) : 'Linked Device',
             pushName: sock.user?.name || 'WhatsApp Business',
           });
@@ -592,6 +624,14 @@ class WhatsAppManager {
         await this.dispatchOrderPoll(order);
       }
     }
+  }
+
+  async shutdownGracefully(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    await this.closeSocketOnly();
   }
 
   private async closeSocketOnly() {

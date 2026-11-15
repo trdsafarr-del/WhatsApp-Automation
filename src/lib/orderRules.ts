@@ -1408,3 +1408,111 @@ export function buildDailyReportSummary(orders: OrderRecord[]): DailyReportSumma
   };
 }
 
+export type HostRuntimeKind = 'railway' | 'cloud' | 'dev_preview' | 'serverless';
+
+/**
+ * Identifies whether the current Node process is running on Railway, another 24/7 cloud host,
+ * Vercel serverless, or a temporary local/AI Studio dev preview.
+ */
+export function detectHostRuntimeKind(
+  env: Record<string, string | undefined> = process.env
+): HostRuntimeKind {
+  if (env.VERCEL) return 'serverless';
+  if (env.RAILWAY_ENVIRONMENT || env.RAILWAY_SERVICE_ID || env.RAILWAY_PROJECT_ID) {
+    return 'railway';
+  }
+  if (env.RENDER || env.FLY_APP_NAME || env.NODE_ENV === 'production') {
+    return 'cloud';
+  }
+  return 'dev_preview';
+}
+
+/**
+ * Prevents a temporary dev preview server from auto-connecting Baileys and stealing
+ * the single active WhatsApp Web socket away from a live 24/7 Railway/cloud host.
+ */
+export function shouldSkipAutoRestoreForRemoteHost(
+  params: {
+    currentHost: HostRuntimeKind;
+    activeHostKind?: string | null;
+    lastHeartbeatAt?: string | null;
+  },
+  nowMs = Date.now()
+): boolean {
+  if (params.currentHost !== 'dev_preview') return false;
+  const remoteIsProduction =
+    params.activeHostKind === 'railway' || params.activeHostKind === 'cloud';
+  if (!remoteIsProduction) return false;
+  return isHostHeartbeatRecent(params.lastHeartbeatAt, nowMs, 240_000);
+}
+
+const POLL_PROGRESSION_RANK: Record<OrderRecord['pollStatus'], number> = {
+  queued: 1,
+  failed: 2,
+  poll_sent: 3,
+  confirmed: 4,
+  cancelled_by_user: 4,
+};
+
+/**
+ * Merges two snapshots of the same order without ever regressing a progressed pollStatus
+ * (e.g. keeps poll_sent/confirmed even if another serverless container wrote queued earlier).
+ */
+export function mergeProgressedOrderRecords(
+  primary: OrderRecord,
+  secondary: OrderRecord
+): OrderRecord {
+  const rankPrimary = POLL_PROGRESSION_RANK[primary.pollStatus] ?? 0;
+  const rankSecondary = POLL_PROGRESSION_RANK[secondary.pollStatus] ?? 0;
+
+  let winner = primary;
+  let loser = secondary;
+  if (rankSecondary > rankPrimary) {
+    winner = secondary;
+    loser = primary;
+  } else if (rankSecondary === rankPrimary) {
+    const score = (o: OrderRecord) =>
+      (o.respondedAt ? 8 : 0) +
+      (o.pollSentAt ? 4 : 0) +
+      (o.trackingSentAt ? 2 : 0) +
+      (o.events?.length || 0) * 0.01;
+    if (score(secondary) > score(primary)) {
+      winner = secondary;
+      loser = primary;
+    }
+  }
+
+  const seenEvents = new Set<string>();
+  const mergedEvents = [...(winner.events || []), ...(loser.events || [])]
+    .filter((evt) => {
+      const key = `${evt.actor}|${evt.message}|${evt.timestamp.slice(0, 16)}`;
+      if (seenEvents.has(key)) return false;
+      seenEvents.add(key);
+      return true;
+    })
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+
+  return {
+    ...winner,
+    shopifyTags:
+      winner.shopifyTags && winner.shopifyTags.length >= (loser.shopifyTags?.length || 0)
+        ? winner.shopifyTags
+        : loser.shopifyTags || winner.shopifyTags,
+    fulfillmentStatus: winner.fulfillmentStatus || loser.fulfillmentStatus || null,
+    shipmentStatus: winner.shipmentStatus || loser.shipmentStatus || null,
+    fulfilledAt: winner.fulfilledAt || loser.fulfilledAt || null,
+    trackingUrl: winner.trackingUrl || loser.trackingUrl || '',
+    trackingNumber: winner.trackingNumber || loser.trackingNumber || '',
+    trackingCompany: winner.trackingCompany || loser.trackingCompany || '',
+    trackingSentAt: winner.trackingSentAt || loser.trackingSentAt || null,
+    trackingSentValue: winner.trackingSentValue || loser.trackingSentValue || null,
+    whatsappMessageId: winner.whatsappMessageId || loser.whatsappMessageId || null,
+    whatsappTargetJid: winner.whatsappTargetJid || loser.whatsappTargetJid || null,
+    pollSentAt: winner.pollSentAt || loser.pollSentAt || null,
+    respondedAt: winner.respondedAt || loser.respondedAt || null,
+    responseChannel: winner.responseChannel || loser.responseChannel || null,
+    events: mergedEvents,
+  };
+}
+
+

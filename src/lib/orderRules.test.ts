@@ -6,6 +6,7 @@ import {
   buildDeployEnvSnippet,
   buildOrdersPdfSummaryAndRows,
   computeOrderMetrics,
+  detectHostRuntimeKind,
   extractShopifyCustomerPhone,
   extractShopifyTrackingInfo,
   filterOrdersByIstDateRange,
@@ -32,6 +33,7 @@ import {
   isOrderTrackingAdded,
   isTransientWhatsAppError,
   isWhatsAppConnectionReplaced,
+  mergeProgressedOrderRecords,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   readCleanEnvVar,
@@ -40,6 +42,7 @@ import {
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
   shouldPreserveRecentLocalTags,
+  shouldSkipAutoRestoreForRemoteHost,
 } from './orderRules.js';
 import type { OrderRecord } from './types.js';
 
@@ -884,4 +887,92 @@ test('Daily report summary, IST date-range filter, and WhatsApp/tracking report 
   assert.equal(fullSummary.totals.cancelledOrders, 1);
   assert.equal(fullSummary.totals.cancelledValue, 800);
 });
+
+test('Multi-host Railway session guard and non-regressive order merge keep 24/7 dispatch uninterrupted', () => {
+  assert.equal(detectHostRuntimeKind({ RAILWAY_ENVIRONMENT: 'production' }), 'railway');
+  assert.equal(detectHostRuntimeKind({ VERCEL: '1' }), 'serverless');
+  assert.equal(detectHostRuntimeKind({ NODE_ENV: 'production' }), 'cloud');
+  assert.equal(detectHostRuntimeKind({ NODE_ENV: 'development' }), 'dev_preview');
+
+  const now = Date.parse('2026-11-15T12:00:00.000Z');
+  // Dev preview MUST skip auto-connecting when Railway is live and heartbeating
+  assert.equal(
+    shouldSkipAutoRestoreForRemoteHost(
+      {
+        currentHost: 'dev_preview',
+        activeHostKind: 'railway',
+        lastHeartbeatAt: '2026-11-15T11:58:00.000Z',
+      },
+      now
+    ),
+    true
+  );
+  // Railway itself MUST still auto-restore on boot even if activeHostKind was railway
+  assert.equal(
+    shouldSkipAutoRestoreForRemoteHost(
+      {
+        currentHost: 'railway',
+        activeHostKind: 'railway',
+        lastHeartbeatAt: '2026-11-15T11:58:00.000Z',
+      },
+      now
+    ),
+    false
+  );
+  // If heartbeat is stale (>4m), dev preview can restore
+  assert.equal(
+    shouldSkipAutoRestoreForRemoteHost(
+      {
+        currentHost: 'dev_preview',
+        activeHostKind: 'railway',
+        lastHeartbeatAt: '2026-11-15T11:40:00.000Z',
+      },
+      now
+    ),
+    false
+  );
+
+  // Non-regressive order merge keeps poll_sent/confirmed over stale queued snapshot
+  const sentOrder: OrderRecord = {
+    id: 'ord-merge-1',
+    shopifyOrderId: '999',
+    orderNumber: '#1341',
+    customerName: 'Snehal',
+    customerPhone: '+917039155606',
+    customerEmail: '',
+    totalPrice: '950.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cookies',
+    financialStatus: 'paid',
+    shopifyTags: 'Magic, waiting for confirmation',
+    pollStatus: 'poll_sent',
+    whatsappMessageId: 'wa-msg-1',
+    pollQuestion: 'Confirm?',
+    pollSentAt: '2026-11-15T11:35:41.000Z',
+    respondedAt: null,
+    responseChannel: null,
+    shopifySynced: true,
+    createdAt: '2026-11-15T11:15:00.000Z',
+    events: [
+      { id: 'e1', timestamp: '2026-11-15T11:35:41.000Z', actor: 'whatsapp', message: 'Poll sent' },
+    ],
+  };
+  const staleQueuedOrder: OrderRecord = {
+    ...sentOrder,
+    pollStatus: 'queued',
+    whatsappMessageId: null,
+    pollSentAt: null,
+    trackingUrl: 'https://track.example/1',
+    events: [
+      { id: 'e0', timestamp: '2026-11-15T11:15:00.000Z', actor: 'shopify', message: 'Order read' },
+    ],
+  };
+
+  const merged = mergeProgressedOrderRecords(staleQueuedOrder, sentOrder);
+  assert.equal(merged.pollStatus, 'poll_sent');
+  assert.equal(merged.whatsappMessageId, 'wa-msg-1');
+  assert.equal(merged.trackingUrl, 'https://track.example/1');
+  assert.equal(merged.events.length, 2);
+});
+
 

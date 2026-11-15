@@ -345,17 +345,37 @@ async function startServer() {
     setTimeout(() => {
       if (hasLiveShopifyCredentials(store.getSettings())) {
         void syncShopifyOrdersNow('auto');
+      } else if (whatsappManager.isConnected()) {
+        void whatsappManager.flushQueuedOrders();
       }
     }, 2_000);
     setInterval(() => {
       if (hasLiveShopifyCredentials(store.getSettings())) {
         void syncShopifyOrdersNow('auto');
+      } else if (whatsappManager.isConnected()) {
+        void whatsappManager.flushQueuedOrders();
       }
     }, 30_000);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`OrderPulse server running on http://0.0.0.0:${PORT}`);
+  });
+
+  const handleShutdown = async () => {
+    await whatsappManager.shutdownGracefully();
+    await store.flushRemote();
+    server.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+
+  process.once('SIGTERM', () => {
+    void handleShutdown();
+  });
+  process.once('SIGINT', () => {
+    void handleShutdown();
   });
 }
 
