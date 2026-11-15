@@ -17,6 +17,7 @@ interface WhatsAppQrViewProps {
   onConnect: (mode: WhatsAppEngineMode, fresh?: boolean) => Promise<void>;
   onRequestPairingCode: (phoneNumber: string) => Promise<void>;
   onRestart: () => Promise<void>;
+  onPause: () => Promise<void>;
   onDisconnect: () => Promise<void>;
   isBusy: boolean;
 }
@@ -26,6 +27,7 @@ export function WhatsAppQrView({
   onConnect,
   onRequestPairingCode,
   onRestart,
+  onPause,
   onDisconnect,
   isBusy,
 }: WhatsAppQrViewProps) {
@@ -175,15 +177,25 @@ export function WhatsAppQrView({
 
                 <div className="flex flex-wrap items-center gap-3 pt-2">
                   {display.isLocalConnected ? (
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void onRestart()}
-                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                      Refresh Socket (Stay Logged In)
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void onRestart()}
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 whitespace-nowrap shrink-0"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                        Refresh Socket (Stay Logged In)
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void onPause()}
+                        className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-2 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 whitespace-nowrap shrink-0"
+                      >
+                        Pause Here (Let Railway Run 24/7)
+                      </button>
+                    </>
                   ) : !whatsapp.isServerless ? (
                     <button
                       type="button"

@@ -85,6 +85,11 @@ app.post('/api/whatsapp/disconnect', async (_req: Request, res: Response) => {
   res.json({ whatsapp: state });
 });
 
+app.post('/api/whatsapp/pause', async (_req: Request, res: Response) => {
+  const state = await whatsappManager.disconnect(false);
+  res.json({ whatsapp: state });
+});
+
 app.post('/api/settings', async (req: Request, res: Response) => {
   await store.ensureHydrated();
   const body = (req.body || {}) as Partial<AppSettings>;

@@ -638,13 +638,18 @@ class WhatsAppManager {
     this.qrRaw = null;
     this.pairingCode = null;
     this.lastHeartbeatAt = null;
-    this.lastError = null;
-    store.updateWhatsAppMeta({
-      connectedAt: null,
-      lastHeartbeatAt: null,
-      phoneNumber: null,
-      pushName: null,
-    });
+    if (clearAuth) {
+      this.lastError = null;
+      store.updateWhatsAppMeta({
+        connectedAt: null,
+        lastHeartbeatAt: null,
+        phoneNumber: null,
+        pushName: null,
+      });
+    } else {
+      this.lastError =
+        'WhatsApp socket paused on this server. Click Restore Saved Session if you want to resume here instead of Railway.';
+    }
     return this.getState();
   }
 

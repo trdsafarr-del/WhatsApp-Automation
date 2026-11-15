@@ -95,6 +95,11 @@ async function startServer() {
     res.json({ whatsapp: state });
   });
 
+  app.post('/api/whatsapp/pause', async (_req: Request, res: Response) => {
+    const state = await whatsappManager.disconnect(false);
+    res.json({ whatsapp: state });
+  });
+
   // Save Shopify & Poll automation settings
   app.post('/api/settings', async (req: Request, res: Response) => {
     await store.ensureHydrated();

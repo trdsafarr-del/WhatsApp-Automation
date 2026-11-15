@@ -273,6 +273,19 @@ export default function App() {
     }
   };
 
+  const handleWhatsAppPause = async () => {
+    setWhatsappBusy(true);
+    try {
+      const res = await fetch('/api/whatsapp/pause', { method: 'POST' });
+      if (res.ok) {
+        const data = (await res.json()) as { whatsapp: WhatsAppState };
+        setWhatsapp(data.whatsapp);
+      }
+    } finally {
+      setWhatsappBusy(false);
+    }
+  };
+
   const handleSaveSettings = async (next: Partial<AppSettings>): Promise<boolean> => {
     const res = await fetch('/api/settings', {
       method: 'POST',
@@ -511,6 +524,7 @@ export default function App() {
                 onConnect={handleWhatsAppConnect}
                 onRequestPairingCode={handleWhatsAppPairingCode}
                 onRestart={handleWhatsAppRestart}
+                onPause={handleWhatsAppPause}
                 onDisconnect={handleWhatsAppDisconnect}
                 isBusy={whatsappBusy}
               />
