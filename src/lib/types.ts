@@ -37,6 +37,8 @@ export interface OrderRecord {
   fulfilledAt?: string | null;
   paymentMethod?: string;
   deliverySummary?: string;
+  destinationPincode?: string;
+  orderWeightGrams?: number;
   orderNote?: string;
   noteUpdatedAt?: string | null;
   trackingNumber?: string;
@@ -44,6 +46,23 @@ export interface OrderRecord {
   trackingCompany?: string;
   trackingSentAt?: string | null;
   trackingSentValue?: string | null;
+  delhiveryShippingCost?: number | null;
+  delhiveryCodFee?: number | null;
+  delhiveryRtoCost?: number | null;
+  delhiveryChargeSource?: 'delhivery_api' | 'delhivery_wallet' | 'estimated' | null;
+  delhiveryChargedWeightGrams?: number | null;
+  delhiveryLastSyncedAt?: string | null;
+  settlementStatus?: 'settled' | 'pending_remittance' | 'in_transit' | 'no_payout' | null;
+  settledAmount?: number | null;
+  settledAt?: string | null;
+  settlementReference?: string | null;
+  pickedUpAt?: string | null;
+  expectedDeliveryAt?: string | null;
+  deliveredAt?: string | null;
+  deliveryAttemptsCount?: number | null;
+  lastCourierScanLocation?: string | null;
+  lastCourierScanRemark?: string | null;
+  lastCourierScanAt?: string | null;
   shopifyTags: string;
   pollStatus: PollStatus;
   whatsappMessageId: string | null;
@@ -79,6 +98,19 @@ export interface AppSettings {
   cancelReplyMessage: string;
   trackingMessageTemplate: string;
   syncStartDate: string;
+  delhiveryApiToken: string;
+  delhiveryPickupPincode: string;
+  delhiveryBillingMode: 'E' | 'S';
+  delhiveryDefaultWeightGrams: number;
+  cogsPercent: number;
+  packagingCostPerOrder: number;
+  fallbackForwardShippingCost: number;
+  fallbackRtoShippingCost: number;
+  fallbackCodFee: number;
+  prepaidGatewayPercent: number;
+  marketingCostPerOrder: number;
+  deliverySlaDays?: number;
+  pickupSlaHours?: number;
 }
 
 export interface WhatsAppState {

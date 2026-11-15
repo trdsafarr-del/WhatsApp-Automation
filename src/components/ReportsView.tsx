@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Banknote,
   Calendar,
   CheckCircle2,
   Clock,
   FileDown,
   FilterX,
+  IndianRupee,
   Package,
   RotateCcw,
   Search,
@@ -15,6 +17,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import { exportDailyReportToPdf } from '../lib/exportDailyReportPdf';
+import { ProfitLossPanel } from './ProfitLossPanel';
+import { SettlementDelayPanel } from './SettlementDelayPanel';
 import {
   buildDailyReportSummary,
   filterOrdersByIstDateRange,
@@ -34,8 +38,29 @@ interface ReportsViewProps {
   orders: OrderRecord[];
   settings: AppSettings;
   onInspectOrder: (orderId: string) => void;
+  onSaveSettings: (next: Partial<AppSettings>) => Promise<boolean>;
+  onSyncDelhivery: () => Promise<{
+    ok: boolean;
+    trackedCount?: number;
+    chargesUpdatedCount?: number;
+    warning?: string;
+    error?: string;
+  }>;
+  onImportDelhiveryCsv: (csvText: string) => Promise<{
+    ok: boolean;
+    updatedCount?: number;
+    parsedCount?: number;
+    error?: string;
+  }>;
+  onSettleOrder: (
+    orderId: string,
+    params: { settled: boolean; reference?: string; amount?: number }
+  ) => Promise<boolean>;
+  onSettleBulk: (orderIds: string[], reference?: string) => Promise<boolean>;
+  onOpenDelhiverySettings: () => void;
 }
 
+type ReportSectionTab = 'dispatch' | 'pnl' | 'settlement_delays';
 type DatePreset = 'today' | 'yesterday' | 'last_7_days' | 'all' | 'custom';
 type ReportCategoryFilter =
   | 'all'
@@ -65,11 +90,22 @@ function pctOf(part: number, total: number): number {
   return Math.round((part / total) * 100);
 }
 
-export function ReportsView({ orders, settings, onInspectOrder }: ReportsViewProps) {
+export function ReportsView({
+  orders,
+  settings,
+  onInspectOrder,
+  onSaveSettings,
+  onSyncDelhivery,
+  onImportDelhiveryCsv,
+  onSettleOrder,
+  onSettleBulk,
+  onOpenDelhiverySettings,
+}: ReportsViewProps) {
   const todayIst = useMemo(() => getIstDateKey(new Date()) || '2026-11-15', []);
   const yesterdayIst = useMemo(() => shiftIstDateKey(todayIst, -1), [todayIst]);
   const last7StartIst = useMemo(() => shiftIstDateKey(todayIst, -6), [todayIst]);
 
+  const [reportTab, setReportTab] = useState<ReportSectionTab>('dispatch');
   // Default to Last 7 Days so the multi-day Date-Wise Breakdown ledger renders immediately
   const [preset, setPreset] = useState<DatePreset>('last_7_days');
   const [fromDate, setFromDate] = useState<string>(last7StartIst);
@@ -200,21 +236,78 @@ export function ReportsView({ orders, settings, onInspectOrder }: ReportsViewPro
         <div className="flex flex-col gap-3 border-b border-slate-800/80 bg-slate-950/60 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden="true" />
               <h2 className="font-display text-sm font-semibold text-white sm:text-base">
-                {settings.shopName} · Order &amp; Dispatch Report
+                {settings.shopName} ·{' '}
+                {reportTab === 'pnl'
+                  ? 'Profit & Loss Statement'
+                  : reportTab === 'settlement_delays'
+                    ? 'Payment Settlements & Delivery Delays'
+                    : 'Order & Dispatch Report'}
               </h2>
               <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-300">
                 {periodLabel}
               </span>
             </div>
             <p className="mt-0.5 text-xs text-slate-400">
-              Date-wise IST (+05:30) analytics across Shopify orders, WhatsApp confirmations, tracking &amp; courier movement.
+              {reportTab === 'pnl'
+                ? 'Visual revenue, COGS, Delhivery One shipping & RTO loss breakdown for the selected IST date range.'
+                : reportTab === 'settlement_delays'
+                  ? 'Track Prepaid vs COD bank remittance UTRs, pending COD cashflow, pickup lag & courier delivery SLA delays.'
+                  : 'Date-wise IST (+05:30) analytics across Shopify orders, WhatsApp confirmations, tracking & courier movement.'}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {category !== 'all' || highRtoOnly || searchQuery.trim() ? (
+            <div
+              role="tablist"
+              aria-label="Report Type"
+              className="no-scrollbar flex flex-nowrap items-center gap-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/90 p-1"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={reportTab === 'dispatch'}
+                onClick={() => setReportTab('dispatch')}
+                className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
+                  reportTab === 'dispatch'
+                    ? 'bg-slate-800 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Truck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                Orders &amp; Dispatch
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={reportTab === 'pnl'}
+                onClick={() => setReportTab('pnl')}
+                className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
+                  reportTab === 'pnl'
+                    ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-inset ring-emerald-400/40'
+                    : 'text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <IndianRupee className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                Profit &amp; Loss
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={reportTab === 'settlement_delays'}
+                onClick={() => setReportTab('settlement_delays')}
+                className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
+                  reportTab === 'settlement_delays'
+                    ? 'bg-amber-400/20 text-amber-200 ring-1 ring-inset ring-amber-400/40'
+                    : 'text-slate-400 hover:text-slate-100'
+                }`}
+              >
+                <Banknote className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
+                Settlement &amp; Delays
+              </button>
+            </div>
+
+            {reportTab === 'dispatch' && (category !== 'all' || highRtoOnly || searchQuery.trim()) ? (
               <button
                 type="button"
                 onClick={() => triggerPdfDownload(categoryFilteredOrders, category.replaceAll('_', ' ').toUpperCase())}
@@ -225,15 +318,17 @@ export function ReportsView({ orders, settings, onInspectOrder }: ReportsViewPro
                 Filtered PDF ({categoryFilteredOrders.length})
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => triggerPdfDownload(dateFilteredOrders)}
-              disabled={dateFilteredOrders.length === 0}
-              className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap sm:flex-initial sm:text-sm"
-            >
-              <FileDown className="h-4 w-4" aria-hidden="true" />
-              Export Report PDF ({dateFilteredOrders.length})
-            </button>
+            {reportTab === 'dispatch' && (
+              <button
+                type="button"
+                onClick={() => triggerPdfDownload(dateFilteredOrders)}
+                disabled={dateFilteredOrders.length === 0}
+                className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap sm:flex-initial sm:text-sm"
+              >
+                <FileDown className="h-4 w-4" aria-hidden="true" />
+                Export Report PDF ({dateFilteredOrders.length})
+              </button>
+            )}
           </div>
         </div>
 
@@ -314,6 +409,31 @@ export function ReportsView({ orders, settings, onInspectOrder }: ReportsViewPro
         </div>
       )}
 
+      {reportTab === 'pnl' ? (
+        <ProfitLossPanel
+          orders={dateFilteredOrders}
+          settings={settings}
+          periodLabel={periodLabel}
+          onSaveSettings={onSaveSettings}
+          onSyncDelhivery={onSyncDelhivery}
+          onImportDelhiveryCsv={onImportDelhiveryCsv}
+          onOpenDelhiverySettings={onOpenDelhiverySettings}
+          onInspectOrder={onInspectOrder}
+        />
+      ) : reportTab === 'settlement_delays' ? (
+        <SettlementDelayPanel
+          orders={dateFilteredOrders}
+          settings={settings}
+          periodLabel={periodLabel}
+          onSaveSettings={onSaveSettings}
+          onSyncDelhivery={onSyncDelhivery}
+          onImportDelhiveryCsv={onImportDelhiveryCsv}
+          onSettleOrder={onSettleOrder}
+          onSettleBulk={onSettleBulk}
+          onInspectOrder={onInspectOrder}
+        />
+      ) : (
+        <>
       {/* 6-Card Executive KPI Strip (Orders + Revenue Value) */}
       <section
         aria-label="Selected Period Metrics"
@@ -1066,6 +1186,8 @@ export function ReportsView({ orders, settings, onInspectOrder }: ReportsViewPro
           </>
         )}
       </section>
+        </>
+      )}
     </div>
   );
 }

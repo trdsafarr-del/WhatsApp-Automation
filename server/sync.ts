@@ -7,6 +7,7 @@ import {
   shouldPreserveRecentLocalNote,
   shouldPreserveRecentLocalTags,
 } from '../src/lib/orderRules.js';
+import { hasDelhiveryCredentials, syncDelhiveryOrdersNow } from './delhivery.js';
 import {
   fetchShopifyOrders,
   hasLiveShopifyCredentials,
@@ -23,6 +24,7 @@ let syncInFlight: Promise<{
   error?: string;
 }> | null = null;
 let lastAutoSyncAtMs = 0;
+let lastAutoDelhiverySyncAtMs = 0;
 
 /**
  * Syncs latest orders from Shopify Admin API into the persistent store,
@@ -149,6 +151,14 @@ export async function syncShopifyOrdersNow(
             existing.deliverySummary = parsed.deliverySummary;
             changed = true;
           }
+          if (!existing.destinationPincode && parsed.destinationPincode) {
+            existing.destinationPincode = parsed.destinationPincode;
+            changed = true;
+          }
+          if (!existing.orderWeightGrams && parsed.orderWeightGrams) {
+            existing.orderWeightGrams = parsed.orderWeightGrams;
+            changed = true;
+          }
           if (
             !shouldPreserveRecentLocalNote(existing) &&
             raw.note !== undefined &&
@@ -206,6 +216,20 @@ export async function syncShopifyOrdersNow(
 
       if (whatsappManager.isConnected()) {
         await whatsappManager.flushQueuedOrders();
+      }
+
+      if (hasDelhiveryCredentials(settings)) {
+        const shouldSyncDelhivery =
+          source === 'manual' || Date.now() - lastAutoDelhiverySyncAtMs >= 120_000;
+        if (shouldSyncDelhivery) {
+          lastAutoDelhiverySyncAtMs = Date.now();
+          await syncDelhiveryOrdersNow(
+            store.getOrders(),
+            store.getSettings(),
+            (order) => store.upsertOrder(order),
+            (pin) => store.updateSettings({ delhiveryPickupPincode: pin })
+          );
+        }
       }
 
       return { ok: true, importedCount, dispatchedCount, trackingSentCount };

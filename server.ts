@@ -19,6 +19,12 @@ import {
   verifyShopifyWebhookHmac,
   type ShopifyRawOrder,
 } from './server/shopify.js';
+import {
+  hasDelhiveryCredentials,
+  importDelhiveryBillingCsvToOrders,
+  syncDelhiveryOrdersNow,
+  testDelhiveryConnection,
+} from './server/delhivery.js';
 import { store } from './server/store.js';
 import { syncShopifyOrdersNow } from './server/sync.js';
 import { whatsappManager } from './server/whatsapp.js';
@@ -36,6 +42,7 @@ async function startServer() {
 
   app.use(
     express.json({
+      limit: '4mb',
       verify: (req: RawBodyRequest, _res, buf) => {
         req.rawBody = buf;
       },
@@ -144,8 +151,134 @@ async function startServer() {
       cancelReplyMessage: body.cancelReplyMessage ?? cur.cancelReplyMessage,
       trackingMessageTemplate: body.trackingMessageTemplate ?? cur.trackingMessageTemplate,
       syncStartDate: body.syncStartDate ?? cur.syncStartDate,
+      delhiveryApiToken: body.delhiveryApiToken ?? cur.delhiveryApiToken,
+      delhiveryPickupPincode: body.delhiveryPickupPincode ?? cur.delhiveryPickupPincode,
+      delhiveryBillingMode:
+        body.delhiveryBillingMode === 'S' || body.delhiveryBillingMode === 'E'
+          ? body.delhiveryBillingMode
+          : cur.delhiveryBillingMode,
+      delhiveryDefaultWeightGrams:
+        typeof body.delhiveryDefaultWeightGrams === 'number' &&
+        Number.isFinite(body.delhiveryDefaultWeightGrams)
+          ? Math.max(50, body.delhiveryDefaultWeightGrams)
+          : cur.delhiveryDefaultWeightGrams,
+      cogsPercent:
+        typeof body.cogsPercent === 'number' && Number.isFinite(body.cogsPercent)
+          ? Math.max(0, Math.min(100, body.cogsPercent))
+          : cur.cogsPercent,
+      packagingCostPerOrder:
+        typeof body.packagingCostPerOrder === 'number' &&
+        Number.isFinite(body.packagingCostPerOrder)
+          ? Math.max(0, body.packagingCostPerOrder)
+          : cur.packagingCostPerOrder,
+      fallbackForwardShippingCost:
+        typeof body.fallbackForwardShippingCost === 'number' &&
+        Number.isFinite(body.fallbackForwardShippingCost)
+          ? Math.max(0, body.fallbackForwardShippingCost)
+          : cur.fallbackForwardShippingCost,
+      fallbackRtoShippingCost:
+        typeof body.fallbackRtoShippingCost === 'number' &&
+        Number.isFinite(body.fallbackRtoShippingCost)
+          ? Math.max(0, body.fallbackRtoShippingCost)
+          : cur.fallbackRtoShippingCost,
+      fallbackCodFee:
+        typeof body.fallbackCodFee === 'number' && Number.isFinite(body.fallbackCodFee)
+          ? Math.max(0, body.fallbackCodFee)
+          : cur.fallbackCodFee,
+      prepaidGatewayPercent:
+        typeof body.prepaidGatewayPercent === 'number' &&
+        Number.isFinite(body.prepaidGatewayPercent)
+          ? Math.max(0, Math.min(25, body.prepaidGatewayPercent))
+          : cur.prepaidGatewayPercent,
+      marketingCostPerOrder:
+        typeof body.marketingCostPerOrder === 'number' &&
+        Number.isFinite(body.marketingCostPerOrder)
+          ? Math.max(0, body.marketingCostPerOrder)
+          : cur.marketingCostPerOrder,
+      deliverySlaDays:
+        typeof body.deliverySlaDays === 'number' && Number.isFinite(body.deliverySlaDays)
+          ? Math.max(1, Math.min(30, body.deliverySlaDays))
+          : cur.deliverySlaDays ?? 4,
+      pickupSlaHours:
+        typeof body.pickupSlaHours === 'number' && Number.isFinite(body.pickupSlaHours)
+          ? Math.max(6, Math.min(168, body.pickupSlaHours))
+          : cur.pickupSlaHours ?? 48,
     });
+    const tokenChanged =
+      typeof body.delhiveryApiToken === 'string' &&
+      body.delhiveryApiToken.trim() !== (cur.delhiveryApiToken || '').trim();
+    if (tokenChanged && hasDelhiveryCredentials(updated)) {
+      void syncDelhiveryOrdersNow(
+        store.getOrders(),
+        store.getSettings(),
+        (order) => store.upsertOrder(order),
+        (pin) => store.updateSettings({ delhiveryPickupPincode: pin })
+      );
+    }
     res.json({ settings: updated });
+  });
+
+  // Test Delhivery One API token
+  app.post('/api/delhivery/test', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const result = await testDelhiveryConnection(store.getSettings());
+    if (result.ok && result.detectedOriginPin && !store.getSettings().delhiveryPickupPincode) {
+      store.updateSettings({ delhiveryPickupPincode: result.detectedOriginPin });
+    }
+    res.status(result.ok ? 200 : 400).json(result);
+  });
+
+  // Sync live Delhivery One tracking & shipping/RTO/COD invoice charges
+  app.post('/api/delhivery/sync', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const result = await syncDelhiveryOrdersNow(
+      store.getOrders(),
+      store.getSettings(),
+      (order) => store.upsertOrder(order),
+      (pin) => store.updateSettings({ delhiveryPickupPincode: pin })
+    );
+    await store.flushRemote();
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    const orders = store.getOrders();
+    res.json({
+      ok: true,
+      trackedCount: result.trackedCount,
+      chargesUpdatedCount: result.chargesUpdatedCount,
+      detectedOriginPin: result.detectedOriginPin,
+      warning: result.warning,
+      settings: store.getSettings(),
+      orders,
+      metrics: computeOrderMetrics(orders),
+    });
+  });
+
+  // Import exact per-AWB deductions from Delhivery One Wallet / Passbook / Invoice CSV
+  app.post('/api/delhivery/import-csv', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const csvText = typeof req.body?.csvText === 'string' ? req.body.csvText : '';
+    if (!csvText.trim()) {
+      res.status(400).json({ ok: false, error: 'Upload a valid Delhivery One CSV file.' });
+      return;
+    }
+    const result = importDelhiveryBillingCsvToOrders(csvText, store.getOrders(), (order) =>
+      store.upsertOrder(order)
+    );
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    await store.flushRemote();
+    const orders = store.getOrders();
+    res.json({
+      ok: true,
+      updatedCount: result.updatedCount,
+      parsedCount: result.parsedCount,
+      orders,
+      metrics: computeOrderMetrics(orders),
+    });
   });
 
   // Test live Shopify Admin API connection
@@ -387,6 +520,90 @@ async function startServer() {
       shopifySynced: shopifyResult.synced,
       shopifyError: shopifyResult.error,
       order: store.getOrderById(order.id),
+      orders: allOrders,
+      metrics: computeOrderMetrics(allOrders),
+    });
+  });
+
+  // Mark / undo COD payment remittance settlement for an order
+  app.post('/api/orders/:id/settle', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const order = store.getOrderById(String(req.params.id));
+    if (!order) {
+      res.status(404).json({ error: 'Order not found' });
+      return;
+    }
+
+    const settled = req.body?.settled !== false;
+    const reference =
+      typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
+    const amountRaw = Number(req.body?.amount);
+    const defaultVal = Number.parseFloat(order.totalPrice || '0') || 0;
+
+    if (settled) {
+      order.settlementStatus = 'settled';
+      order.settledAmount =
+        Number.isFinite(amountRaw) && amountRaw > 0 ? amountRaw : defaultVal;
+      order.settledAt = new Date().toISOString();
+      order.settlementReference = reference || order.settlementReference || 'Manual Bank Settlement';
+      store.appendOrderEvent(order.id, {
+        actor: 'system',
+        message: `Payment marked settled (${order.currency} ${order.settledAmount}${reference ? ` · UTR: ${reference}` : ''})`,
+      });
+    } else {
+      order.settlementStatus = 'pending_remittance';
+      order.settledAmount = null;
+      order.settledAt = null;
+      order.settlementReference = null;
+      store.appendOrderEvent(order.id, {
+        actor: 'system',
+        message: 'Payment settlement status reverted to Pending COD Remittance',
+      });
+    }
+
+    store.upsertOrder(order);
+    await store.flushRemote();
+    const allOrders = store.getOrders();
+    res.json({
+      ok: true,
+      order: store.getOrderById(order.id),
+      orders: allOrders,
+      metrics: computeOrderMetrics(allOrders),
+    });
+  });
+
+  // Bulk mark COD orders as settled with shared UTR / remittance ref
+  app.post('/api/orders/settle-bulk', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const orderIds = Array.isArray(req.body?.orderIds)
+      ? req.body.orderIds.filter((id: unknown): id is string => typeof id === 'string')
+      : [];
+    const reference =
+      typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
+    const nowIso = new Date().toISOString();
+    let updatedCount = 0;
+
+    for (const id of orderIds) {
+      const order = store.getOrderById(id);
+      if (!order) continue;
+      const val = Number.parseFloat(order.totalPrice || '0') || 0;
+      order.settlementStatus = 'settled';
+      order.settledAmount = val;
+      order.settledAt = nowIso;
+      order.settlementReference = reference || 'Bulk Bank Settlement';
+      store.upsertOrder(order);
+      store.appendOrderEvent(order.id, {
+        actor: 'system',
+        message: `COD Remittance settled (${order.currency} ${val}${reference ? ` · UTR: ${reference}` : ''})`,
+      });
+      updatedCount += 1;
+    }
+
+    await store.flushRemote();
+    const allOrders = store.getOrders();
+    res.json({
+      ok: true,
+      updatedCount,
       orders: allOrders,
       metrics: computeOrderMetrics(allOrders),
     });

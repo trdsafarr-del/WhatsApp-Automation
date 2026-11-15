@@ -63,6 +63,10 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
       settings.shopifyWebhookSecret || process.env.SHOPIFY_WEBHOOK_SECRET || '',
     syncStartDate:
       settings.syncStartDate || process.env.SYNC_START_DATE || DEFAULT_SETTINGS.syncStartDate,
+    delhiveryApiToken:
+      settings.delhiveryApiToken || process.env.DELHIVERY_API_TOKEN || '',
+    delhiveryPickupPincode:
+      settings.delhiveryPickupPincode || process.env.DELHIVERY_PICKUP_PINCODE || '',
   };
 }
 

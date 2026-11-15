@@ -5,8 +5,14 @@ import {
   buildDailyReportSummary,
   buildDeployEnvSnippet,
   buildOrdersPdfSummaryAndRows,
+  buildProfitLossReport,
+  buildSettlementAndDelaySummary,
+  calculateOrderPnl,
+  computeBillableParcelWeightGrams,
+  computeIncrementalRtoLegCost,
   computeOrderMetrics,
   detectHostRuntimeKind,
+  extractCleanIndianPincode,
   extractShopifyCustomerPhone,
   extractShopifyTrackingInfo,
   filterOrdersByIstDateRange,
@@ -15,6 +21,8 @@ import {
   formatPollPayload,
   getDispatchStatusInfo,
   getIstDateKey,
+  getOrderDeliveryDelayInfo,
+  getOrderSettlementInfo,
   getSyncStartCutoffIso,
   getWhatsAppDisplayState,
   hasConfiguredShopify,
@@ -36,6 +44,7 @@ import {
   mergeProgressedOrderRecords,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
+  parseDelhiveryBillingCsv,
   readCleanEnvVar,
   resolvePollVoteAction,
   selectPriorityAuthFiles,
@@ -44,6 +53,7 @@ import {
   shouldPreserveRecentLocalNote,
   shouldPreserveRecentLocalTags,
   shouldSkipAutoRestoreForRemoteHost,
+  splitDelhiveryChargeWithGst,
 } from './orderRules.js';
 import type { OrderRecord } from './types.js';
 
@@ -1023,4 +1033,345 @@ test('Multi-host Railway session guard and non-regressive order merge keep 24/7 
   const mergedWithNote = mergeProgressedOrderRecords(olderNoteOrder, fresherNoteOrder);
   assert.equal(mergedWithNote.orderNote, 'Call before delivery · urgent');
   assert.equal(mergedWithNote.noteUpdatedAt, '2026-11-15T11:55:00.000Z');
+});
+
+test('extractCleanIndianPincode, calculateOrderPnl, buildProfitLossReport, and Delhivery charge preservation work accurately', () => {
+  assert.equal(extractCleanIndianPincode('Chitradurga, 577522'), '577522');
+  assert.equal(extractCleanIndianPincode('110001'), '110001');
+  assert.equal(extractCleanIndianPincode('No pin here'), '');
+
+  const costAssumptions = {
+    cogsPercent: 35,
+    packagingCostPerOrder: 25,
+    fallbackForwardShippingCost: 75,
+    fallbackRtoShippingCost: 75,
+    fallbackCodFee: 25,
+    prepaidGatewayPercent: 2,
+    marketingCostPerOrder: 0,
+  };
+
+  const baseOrder: OrderRecord = {
+    id: 'pnl-1',
+    shopifyOrderId: '501',
+    orderNumber: '#1501',
+    customerName: 'Asha',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '1000.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cookies',
+    financialStatus: 'pending',
+    paymentMethod: 'COD',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'delivered',
+    shopifyTags: 'cod, confirm',
+    pollStatus: 'confirmed',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: null,
+    responseChannel: null,
+    shopifySynced: true,
+    createdAt: '2026-11-15T06:00:00.000Z',
+    events: [],
+    delhiveryShippingCost: 82,
+    delhiveryCodFee: 30,
+    delhiveryRtoCost: 0,
+    delhiveryChargeSource: 'delhivery_api',
+  };
+
+  // 1) Delivered COD with live Delhivery API charge:
+  // Rev 1000 - COGS 350 - Pack 25 - Fwd 82 - COD 30 = Net Profit 513
+  const deliveredPnl = calculateOrderPnl(baseOrder, costAssumptions);
+  assert.equal(deliveredPnl.outcome, 'delivered');
+  assert.equal(deliveredPnl.chargeSource, 'delhivery_api');
+  assert.equal(deliveredPnl.realizedRevenue, 1000);
+  assert.equal(deliveredPnl.cogsCost, 350);
+  assert.equal(deliveredPnl.forwardShippingCost, 82);
+  assert.equal(deliveredPnl.paymentOrCodFee, 30);
+  assert.equal(deliveredPnl.netProfit, 513);
+
+  // 2) RTO Return with Delhivery API forward + return freight:
+  // Rev 0 - (Fwd 80 + RTO 80 + Pack 25) = Net Loss -185
+  const rtoOrder: OrderRecord = {
+    ...baseOrder,
+    id: 'pnl-2',
+    orderNumber: '#1502',
+    shipmentStatus: 'rto_delivered',
+    delhiveryShippingCost: 80,
+    delhiveryRtoCost: 80,
+    delhiveryCodFee: 0,
+    delhiveryChargeSource: 'delhivery_api',
+  };
+  const rtoPnl = calculateOrderPnl(rtoOrder, costAssumptions);
+  assert.equal(rtoPnl.outcome, 'rto_return');
+  assert.equal(rtoPnl.realizedRevenue, 0);
+  assert.equal(rtoPnl.totalCost, 185);
+  assert.equal(rtoPnl.netProfit, -185);
+
+  // 3) In-Transit Prepaid using fallback shipping + 2% PG fee (excluded from realized revenue, included in expected):
+  // Expected Rev 1000 - COGS 350 - Pack 25 - Fwd 75 - PG 20 = Est. +530
+  const inTransitPrepaid: OrderRecord = {
+    ...baseOrder,
+    id: 'pnl-3',
+    orderNumber: '#1503',
+    paymentMethod: 'Prepaid',
+    financialStatus: 'paid',
+    shipmentStatus: 'in_transit',
+    delhiveryShippingCost: null,
+    delhiveryCodFee: null,
+    delhiveryRtoCost: null,
+    delhiveryChargeSource: null,
+  };
+  const transitPnl = calculateOrderPnl(inTransitPrepaid, costAssumptions);
+  assert.equal(transitPnl.outcome, 'in_transit');
+  assert.equal(transitPnl.chargeSource, 'estimated');
+  assert.equal(transitPnl.realizedRevenue, 0);
+  assert.equal(transitPnl.expectedRevenue, 1000);
+  assert.equal(transitPnl.paymentOrCodFee, 20);
+  assert.equal(transitPnl.netProfit, 530);
+
+  // 4) Cancelled via WhatsApp -> ₹0 cost, saves fwd+rto+pack = 175
+  const cancelledOrder: OrderRecord = {
+    ...baseOrder,
+    id: 'pnl-4',
+    orderNumber: '#1504',
+    pollStatus: 'cancelled_by_user',
+    fulfillmentStatus: null,
+    shipmentStatus: null,
+    delhiveryShippingCost: null,
+    delhiveryCodFee: null,
+    delhiveryRtoCost: null,
+    delhiveryChargeSource: null,
+  };
+
+  const report = buildProfitLossReport(
+    [baseOrder, rtoOrder, inTransitPrepaid, cancelledOrder],
+    costAssumptions,
+    100 // Period ad spend extra
+  );
+  assert.equal(report.deliveredCount, 1);
+  assert.equal(report.rtoCount, 1);
+  assert.equal(report.inTransitCount, 1);
+  assert.equal(report.cancelledCount, 1);
+  assert.equal(report.delhiverySyncedCount, 2);
+  assert.equal(report.realizedRevenue, 1000);
+  assert.equal(report.inTransitExpectedRevenue, 1000);
+  assert.equal(report.totalRtoLoss, 185);
+  // Realized Net = (513 - 185) - 100 extra ads = 228
+  assert.equal(report.netRealizedProfit, 228);
+  assert.equal(report.projectedNetProfit, 758); // 228 + 530 transit expected
+  assert.equal(report.whatsappRtoSavings, 175); // 1 * (75 + 75 + 25)
+  assert.equal(report.dailyPnlRows.length, 1);
+
+  // Non-regressive merge retains Delhivery shipping charges even if Shopify refresh arrives without them
+  const freshShopifyCopy: OrderRecord = {
+    ...baseOrder,
+    delhiveryShippingCost: null,
+    delhiveryCodFee: null,
+    delhiveryRtoCost: null,
+    delhiveryChargeSource: null,
+    delhiveryLastSyncedAt: null,
+  };
+  const mergedDelhivery = mergeProgressedOrderRecords(freshShopifyCopy, baseOrder);
+  assert.equal(mergedDelhivery.delhiveryShippingCost, 82);
+  assert.equal(mergedDelhivery.delhiveryCodFee, 30);
+  assert.equal(mergedDelhivery.delhiveryChargeSource, 'delhivery_api');
+});
+
+test('parseDelhiveryBillingCsv, payment settlement ledger, and delivery delay SLA tracker work accurately', () => {
+  const walletAndRemitCsv = [
+    'AWB Number,Order ID,Transaction Type,Forward Charge,RTO Charge,COD Charge,UTR,Remittance Amount',
+    'DLV111,#1601,Freight Debit,78,0,28,,',
+    'DLV111,#1601,COD Remittance,0,0,0,UTR998877,1200',
+    'DLV222,#1602,RTO Freight,74,74,0,,',
+  ].join('\n');
+
+  const parsedEntries = parseDelhiveryBillingCsv(walletAndRemitCsv);
+  assert.equal(parsedEntries.length, 2);
+  assert.deepEqual(parsedEntries[0], {
+    awb: 'DLV111',
+    orderNumber: '#1601',
+    forwardShippingCost: 78,
+    rtoShippingCost: 0,
+    codFee: 28,
+    utrNumber: 'UTR998877',
+    remittedAmount: 1200,
+  });
+  assert.deepEqual(parsedEntries[1], {
+    awb: 'DLV222',
+    orderNumber: '#1602',
+    forwardShippingCost: 74,
+    rtoShippingCost: 74,
+    codFee: 0,
+  });
+
+  const nowMs = Date.parse('2026-11-15T12:00:00.000Z');
+  const commonBase: OrderRecord = {
+    id: 'sd-1',
+    shopifyOrderId: '601',
+    orderNumber: '#1601',
+    customerName: 'Kavita',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '1200.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Gift Box',
+    financialStatus: 'pending',
+    paymentMethod: 'COD',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'delivered',
+    shopifyTags: 'cod, confirm',
+    pollStatus: 'confirmed',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: null,
+    responseChannel: null,
+    shopifySynced: true,
+    createdAt: '2026-11-08T06:00:00.000Z',
+    pickedUpAt: '2026-11-08T10:00:00.000Z',
+    expectedDeliveryAt: '2026-11-12T10:00:00.000Z',
+    deliveredAt: '2026-11-11T14:00:00.000Z', // 3.1d <= 4d SLA & before EDD -> On Time
+    events: [],
+  };
+
+  // 1) Delivered COD pending remittance (waiting 4 days)
+  const pendingCodOrder: OrderRecord = {
+    ...commonBase,
+    settlementStatus: null,
+  };
+  const pendingSettle = getOrderSettlementInfo(pendingCodOrder, nowMs);
+  assert.equal(pendingSettle.status, 'pending_remittance');
+  assert.equal(pendingSettle.pendingAmount, 1200);
+  assert.equal(pendingSettle.daysSinceDelivery, 3);
+  const onTimeDelay = getOrderDeliveryDelayInfo(pendingCodOrder, DEFAULT_SETTINGS, nowMs);
+  assert.equal(onTimeDelay.state, 'delivered_on_time');
+  assert.equal(onTimeDelay.isActiveDelay, false);
+
+  // 2) Settled COD with UTR
+  const settledCodOrder: OrderRecord = {
+    ...commonBase,
+    id: 'sd-2',
+    orderNumber: '#1602',
+    settlementStatus: 'settled',
+    settledAmount: 1200,
+    settlementReference: 'UTR998877',
+    deliveredAt: '2026-11-14T10:00:00.000Z', // 6d > 4d SLA & past EDD -> Delivered Late
+  };
+  assert.equal(getOrderSettlementInfo(settledCodOrder, nowMs).status, 'settled');
+  assert.equal(getOrderDeliveryDelayInfo(settledCodOrder, DEFAULT_SETTINGS, nowMs).state, 'delivered_late');
+
+  // 3) Pickup Delayed (> 48h still awaiting pickup)
+  const pickupDelayedOrder: OrderRecord = {
+    ...commonBase,
+    id: 'sd-3',
+    orderNumber: '#1603',
+    paymentMethod: 'Prepaid',
+    financialStatus: 'paid',
+    shipmentStatus: 'confirmed',
+    trackingNumber: 'DLV333',
+    fulfilledAt: '2026-11-12T06:00:00.000Z', // 78h ago
+    pickedUpAt: null,
+    deliveredAt: null,
+    expectedDeliveryAt: null,
+  };
+  assert.equal(getOrderSettlementInfo(pickupDelayedOrder, nowMs).status, 'settled');
+  const pickupDelayInfo = getOrderDeliveryDelayInfo(pickupDelayedOrder, DEFAULT_SETTINGS, nowMs);
+  assert.equal(pickupDelayInfo.state, 'pickup_delayed');
+  assert.equal(pickupDelayInfo.isActiveDelay, true);
+
+  // 4) NDR Attempt / In Transit stuck
+  const ndrOrder: OrderRecord = {
+    ...commonBase,
+    id: 'sd-4',
+    orderNumber: '#1604',
+    shipmentStatus: 'attempted_delivery',
+    deliveryAttemptsCount: 2,
+    deliveredAt: null,
+    totalPrice: '900.00',
+  };
+  const ndrDelay = getOrderDeliveryDelayInfo(ndrOrder, DEFAULT_SETTINGS, nowMs);
+  assert.equal(ndrDelay.state, 'ndr_attempt');
+  assert.equal(ndrDelay.isActiveDelay, true);
+  assert.equal(getOrderSettlementInfo(ndrOrder, nowMs).status, 'in_transit');
+
+  // 5) Summary totals & non-regressive retention of settled UTR and wallet source
+  const summary = buildSettlementAndDelaySummary(
+    [pendingCodOrder, settledCodOrder, pickupDelayedOrder, ndrOrder],
+    DEFAULT_SETTINGS,
+    nowMs
+  );
+  assert.equal(summary.pendingCodRemittanceTotal, 1200);
+  assert.equal(summary.codSettledTotal, 1200);
+  assert.equal(summary.prepaidSettledTotal, 1200);
+  assert.equal(summary.settledTotal, 2400);
+  assert.equal(summary.inTransitCodTotal, 900);
+  assert.equal(summary.activeDelayedCount, 2);
+  assert.equal(summary.pickupDelayedCount, 1);
+  assert.equal(summary.ndrAttemptCount, 1);
+  assert.equal(summary.deliveredOnTimeCount, 1);
+  assert.equal(summary.deliveredLateCount, 1);
+  assert.equal(summary.onTimeDeliveryRate, 50);
+
+  const staleOrder = {
+    ...pendingCodOrder,
+    settlementStatus: null,
+    settlementReference: null,
+    pickedUpAt: null,
+    delhiveryChargeSource: null,
+  } as OrderRecord;
+  const enrichedSettled: OrderRecord = {
+    ...settledCodOrder,
+    id: pendingCodOrder.id,
+    pickedUpAt: '2026-11-08T10:00:00.000Z',
+    delhiveryChargeSource: 'delhivery_wallet',
+    delhiveryShippingCost: 78,
+  };
+  const mergedSettle = mergeProgressedOrderRecords(staleOrder, enrichedSettled);
+  assert.equal(mergedSettle.settlementStatus, 'settled');
+  assert.equal(mergedSettle.settlementReference, 'UTR998877');
+  assert.equal(mergedSettle.pickedUpAt, '2026-11-08T10:00:00.000Z');
+  assert.equal(mergedSettle.delhiveryChargeSource, 'delhivery_wallet');
+  assert.equal(mergedSettle.delhiveryShippingCost, 78);
+});
+
+test('computeBillableParcelWeightGrams and splitDelhiveryChargeWithGst handle volumetric weight and GST split accurately', () => {
+  // Single tin box: 550g dead vs 14x14x9cm (353g volumetric) -> 550g billable
+  const singleTin = computeBillableParcelWeightGrams(550, 14, 14, 9);
+  assert.deepEqual(singleTin, {
+    deadWeightGrams: 550,
+    volumetricWeightGrams: 353,
+    billableWeightGrams: 550,
+  });
+
+  // Two-tin box (#1339): 1000g dead vs 24x24x11cm (1267g volumetric) -> 1267g billable
+  const doubleTin = computeBillableParcelWeightGrams(1000, 24, 24, 11);
+  assert.deepEqual(doubleTin, {
+    deadWeightGrams: 1000,
+    volumetricWeightGrams: 1267,
+    billableWeightGrams: 1267,
+  });
+
+  // Live Kinko COD breakdown: total=130.01, gross=110.17, charge_COD=40 -> COD+GST=47.20, freight+GST=82.81
+  const codSplit = splitDelhiveryChargeWithGst(130.01, 110.17, 40);
+  assert.equal(codSplit.totalAmount, 130.01);
+  assert.equal(codSplit.codFee, 47.2);
+  assert.equal(codSplit.shippingCost, 82.81);
+  assert.equal(Math.round((codSplit.shippingCost + codSplit.codFee) * 100) / 100, 130.01);
+
+  // Prepaid breakdown: total=148.86, gross=126.16, charge_COD=0 -> codFee=0, shippingCost=148.86
+  const prepaidSplit = splitDelhiveryChargeWithGst(148.86, 126.16, 0);
+  assert.deepEqual(prepaidSplit, {
+    totalAmount: 148.86,
+    shippingCost: 148.86,
+    codFee: 0,
+  });
+
+  // RTO two-way Kinko quote (Zone C: ss=RTO 278.57 includes fwd 148.86 + return 129.71)
+  assert.equal(computeIncrementalRtoLegCost(278.57, 148.86, true), 129.71);
+  // Zone E (#1327): ss=RTO 583.43 includes fwd 304.47 + return 278.96
+  assert.equal(computeIncrementalRtoLegCost(583.43, 304.47, true), 278.96);
+  // If charge_DL was 0 in ss=RTO, keep return leg untouched
+  assert.equal(computeIncrementalRtoLegCost(129.71, 148.86, false), 129.71);
 });

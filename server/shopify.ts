@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   DEFAULT_SETTINGS,
+  extractCleanIndianPincode,
   extractShopifyCustomerPhone,
   extractShopifyTrackingInfo,
   getSyncStartCutoffIso,
@@ -16,6 +17,7 @@ export interface ShopifyRawOrder {
   created_at?: string;
   cancelled_at?: string | null;
   total_price?: string;
+  total_weight?: number;
   currency?: string;
   financial_status?: string;
   fulfillment_status?: string | null;
@@ -154,6 +156,13 @@ export function parseShopifyRawOrder(
   ].filter(Boolean);
   const deliverySummary = deliveryParts.join(', ');
   const paymentMethod = inferPaymentMethod(raw);
+  const destinationPincode =
+    extractCleanIndianPincode(raw.shipping_address?.zip) ||
+    extractCleanIndianPincode(deliverySummary);
+  const orderWeightGrams =
+    typeof raw.total_weight === 'number' && Number.isFinite(raw.total_weight) && raw.total_weight > 0
+      ? Math.round(raw.total_weight)
+      : undefined;
   const orderNote = raw.note?.trim() || '';
   const tracking = extractShopifyTrackingInfo(raw);
   const initialPollStatus = inferInitialPollStatus(raw, settings);
@@ -177,6 +186,8 @@ export function parseShopifyRawOrder(
     fulfilledAt: tracking.fulfilledAt || null,
     paymentMethod,
     deliverySummary,
+    destinationPincode,
+    orderWeightGrams,
     orderNote,
     trackingNumber: tracking.trackingNumber || undefined,
     trackingUrl: tracking.trackingUrl || undefined,
@@ -328,6 +339,57 @@ export async function testShopifyConnection(
       error: err instanceof Error ? err.message : 'Network error connecting to Shopify',
     };
   }
+}
+
+export async function fetchShopifyOriginPincode(settings: AppSettings): Promise<string> {
+  if (!hasLiveShopifyCredentials(settings)) return '';
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) return '';
+
+  try {
+    const locRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/locations.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': auth.token,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    if (locRes.ok) {
+      const locData = (await locRes.json()) as {
+        locations?: Array<{ zip?: string | null; active?: boolean }>;
+      };
+      const list = Array.isArray(locData.locations) ? locData.locations : [];
+      const activeFirst = [
+        ...list.filter((l) => l.active !== false),
+        ...list.filter((l) => l.active === false),
+      ];
+      for (const loc of activeFirst) {
+        const pin = extractCleanIndianPincode(loc.zip);
+        if (pin) return pin;
+      }
+    }
+  } catch {
+    // Fallback to shop.json
+  }
+
+  try {
+    const shopRes = await fetch(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
+      headers: {
+        'X-Shopify-Access-Token': auth.token,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (shopRes.ok) {
+      const shopData = (await shopRes.json()) as { shop?: { zip?: string | null } };
+      return extractCleanIndianPincode(shopData.shop?.zip);
+    }
+  } catch {
+    // Ignore errors safely
+  }
+  return '';
 }
 
 export async function fetchShopifyOrders(

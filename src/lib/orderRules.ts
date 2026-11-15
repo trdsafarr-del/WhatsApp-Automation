@@ -26,6 +26,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trackingMessageTemplate:
     'Hi {{customer_name}}, your order {{order_number}} at {{shop_name}} has been shipped{{tracking_company_phrase}}! Track your order here: {{tracking_link}}',
   syncStartDate: '2026-11-13',
+  delhiveryApiToken: '',
+  delhiveryPickupPincode: '',
+  delhiveryBillingMode: 'E',
+  delhiveryDefaultWeightGrams: 500,
+  cogsPercent: 35,
+  packagingCostPerOrder: 25,
+  fallbackForwardShippingCost: 75,
+  fallbackRtoShippingCost: 75,
+  fallbackCodFee: 25,
+  prepaidGatewayPercent: 2,
+  marketingCostPerOrder: 0,
+  deliverySlaDays: 4,
+  pickupSlaHours: 48,
 };
 
 /**
@@ -1548,6 +1561,35 @@ export function mergeProgressedOrderRecords(
     trackingCompany: winner.trackingCompany || loser.trackingCompany || '',
     trackingSentAt: winner.trackingSentAt || loser.trackingSentAt || null,
     trackingSentValue: winner.trackingSentValue || loser.trackingSentValue || null,
+    destinationPincode: winner.destinationPincode || loser.destinationPincode || '',
+    orderWeightGrams: winner.orderWeightGrams || loser.orderWeightGrams,
+    delhiveryShippingCost:
+      winner.delhiveryShippingCost ?? loser.delhiveryShippingCost ?? null,
+    delhiveryCodFee: winner.delhiveryCodFee ?? loser.delhiveryCodFee ?? null,
+    delhiveryRtoCost: winner.delhiveryRtoCost ?? loser.delhiveryRtoCost ?? null,
+    delhiveryChargeSource:
+      winner.delhiveryChargeSource || loser.delhiveryChargeSource || null,
+    delhiveryChargedWeightGrams:
+      winner.delhiveryChargedWeightGrams ?? loser.delhiveryChargedWeightGrams ?? null,
+    delhiveryLastSyncedAt:
+      winner.delhiveryLastSyncedAt || loser.delhiveryLastSyncedAt || null,
+    settlementStatus:
+      winner.settlementStatus === 'settled' || loser.settlementStatus === 'settled'
+        ? 'settled'
+        : winner.settlementStatus || loser.settlementStatus || null,
+    settledAmount: winner.settledAmount ?? loser.settledAmount ?? null,
+    settledAt: winner.settledAt || loser.settledAt || null,
+    settlementReference: winner.settlementReference || loser.settlementReference || null,
+    pickedUpAt: winner.pickedUpAt || loser.pickedUpAt || null,
+    expectedDeliveryAt: winner.expectedDeliveryAt || loser.expectedDeliveryAt || null,
+    deliveredAt: winner.deliveredAt || loser.deliveredAt || null,
+    deliveryAttemptsCount:
+      Math.max(winner.deliveryAttemptsCount ?? 0, loser.deliveryAttemptsCount ?? 0) || null,
+    lastCourierScanLocation:
+      winner.lastCourierScanLocation || loser.lastCourierScanLocation || null,
+    lastCourierScanRemark:
+      winner.lastCourierScanRemark || loser.lastCourierScanRemark || null,
+    lastCourierScanAt: winner.lastCourierScanAt || loser.lastCourierScanAt || null,
     whatsappMessageId: winner.whatsappMessageId || loser.whatsappMessageId || null,
     whatsappTargetJid: winner.whatsappTargetJid || loser.whatsappTargetJid || null,
     pollSentAt: winner.pollSentAt || loser.pollSentAt || null,
@@ -1556,5 +1598,1231 @@ export function mergeProgressedOrderRecords(
     events: mergedEvents,
   };
 }
+
+/**
+ * Extracts a clean 6-digit Indian pincode from a shipping zip or delivery summary string.
+ */
+export function extractCleanIndianPincode(raw?: string | null): string {
+  if (!raw) return '';
+  const match = raw.match(/\b(\d{6})\b/);
+  return match ? match[1] : '';
+}
+
+export interface BillableWeightResult {
+  deadWeightGrams: number | null;
+  volumetricWeightGrams: number | null;
+  billableWeightGrams: number | null;
+}
+
+/**
+ * Computes dead weight, volumetric weight (L * W * H / 5000 in grams),
+ * and Delhivery's billable weight = max(deadWeight, volumetricWeight).
+ */
+export function computeBillableParcelWeightGrams(
+  deadWeightGrams?: number | null,
+  lengthCm?: number | null,
+  widthCm?: number | null,
+  heightCm?: number | null
+): BillableWeightResult {
+  const dead =
+    typeof deadWeightGrams === 'number' && Number.isFinite(deadWeightGrams) && deadWeightGrams > 0
+      ? Math.round(deadWeightGrams)
+      : null;
+
+  const hasDims =
+    typeof lengthCm === 'number' &&
+    Number.isFinite(lengthCm) &&
+    lengthCm > 0 &&
+    typeof widthCm === 'number' &&
+    Number.isFinite(widthCm) &&
+    widthCm > 0 &&
+    typeof heightCm === 'number' &&
+    Number.isFinite(heightCm) &&
+    heightCm > 0;
+
+  const vol = hasDims
+    ? Math.round((((lengthCm as number) * (widthCm as number) * (heightCm as number)) / 5000) * 1000)
+    : null;
+
+  const billable =
+    dead !== null && vol !== null ? Math.max(dead, vol) : dead ?? vol ?? null;
+
+  return {
+    deadWeightGrams: dead,
+    volumetricWeightGrams: vol,
+    billableWeightGrams: billable,
+  };
+}
+
+/**
+ * Splits a Delhivery Kinko invoice response cleanly into GST-inclusive forward freight
+ * and GST-inclusive COD fee so shippingCost + codFee === totalAmount without attributing
+ * COD GST into freight charges.
+ */
+export function splitDelhiveryChargeWithGst(
+  totalAmount: number,
+  grossAmount?: number | null,
+  preTaxCodCharge?: number | null
+): { totalAmount: number; shippingCost: number; codFee: number } {
+  const cleanTotal =
+    Number.isFinite(totalAmount) && totalAmount > 0 ? round2(totalAmount) : 0;
+  const cleanCodPreTax =
+    typeof preTaxCodCharge === 'number' && Number.isFinite(preTaxCodCharge) && preTaxCodCharge > 0
+      ? preTaxCodCharge
+      : 0;
+  const cleanGross =
+    typeof grossAmount === 'number' && Number.isFinite(grossAmount) && grossAmount > 0
+      ? grossAmount
+      : 0;
+
+  if (cleanTotal <= 0) {
+    return { totalAmount: 0, shippingCost: 0, codFee: 0 };
+  }
+
+  if (cleanCodPreTax <= 0) {
+    return { totalAmount: cleanTotal, shippingCost: cleanTotal, codFee: 0 };
+  }
+
+  const gstMultiplier =
+    cleanGross > 0 && cleanTotal >= cleanGross ? cleanTotal / cleanGross : 1;
+  const codFee = Math.min(cleanTotal, round2(cleanCodPreTax * gstMultiplier));
+  const shippingCost = round2(Math.max(0, cleanTotal - codFee));
+
+  return {
+    totalAmount: cleanTotal,
+    shippingCost,
+    codFee,
+  };
+}
+
+/**
+ * Extracts the incremental RTO return-leg charge from Delhivery Kinko's `ss=RTO` quote.
+ * Delhivery Kinko includes both `charge_DL` (forward) and `charge_RTO` (return) inside
+ * `total_amount` when `ss=RTO`, so subtracting the GST-inclusive forward freight avoids
+ * double-counting forward shipping in Order P&L.
+ */
+export function computeIncrementalRtoLegCost(
+  rtoTotalAmount: number,
+  forwardFreightCost: number,
+  includesForwardCharge = true
+): number {
+  const cleanRtoTotal =
+    Number.isFinite(rtoTotalAmount) && rtoTotalAmount > 0 ? round2(rtoTotalAmount) : 0;
+  if (cleanRtoTotal <= 0) return 0;
+  if (!includesForwardCharge) return cleanRtoTotal;
+  const cleanFwd =
+    Number.isFinite(forwardFreightCost) && forwardFreightCost > 0
+      ? round2(forwardFreightCost)
+      : 0;
+  const diff = round2(cleanRtoTotal - cleanFwd);
+  return diff > 0 ? diff : cleanRtoTotal;
+}
+
+export type PnlOutcomeCategory =
+  | 'delivered'
+  | 'in_transit'
+  | 'ready_or_pending'
+  | 'rto_return'
+  | 'cancelled';
+
+export interface OrderPnlBreakdown {
+  orderId: string;
+  orderNumber: string;
+  createdAt: string;
+  dateKey: string;
+  dateLabel: string;
+  customerName: string;
+  paymentMethod: string;
+  currency: string;
+  outcome: PnlOutcomeCategory;
+  outcomeLabel: string;
+  orderValue: number;
+  realizedRevenue: number;
+  expectedRevenue: number;
+  cogsCost: number;
+  packagingCost: number;
+  forwardShippingCost: number;
+  rtoShippingCost: number;
+  paymentOrCodFee: number;
+  marketingCost: number;
+  totalCost: number;
+  netProfit: number;
+  chargeSource: 'delhivery_api' | 'delhivery_wallet' | 'estimated' | 'none';
+  chargedWeightGrams?: number | null;
+}
+
+export interface DailyPnlRow {
+  dateKey: string;
+  dateLabel: string;
+  totalOrders: number;
+  deliveredOrders: number;
+  inTransitOrders: number;
+  rtoOrders: number;
+  cancelledOrders: number;
+  realizedRevenue: number;
+  expectedTransitRevenue: number;
+  totalCosts: number;
+  rtoLoss: number;
+  netRealizedProfit: number;
+  projectedNetProfit: number;
+}
+
+export interface ProfitLossReportSummary {
+  currency: string;
+  totalOrders: number;
+  deliveredCount: number;
+  inTransitCount: number;
+  readyOrPendingCount: number;
+  rtoCount: number;
+  cancelledCount: number;
+  delhiverySyncedCount: number;
+  grossOrderValue: number;
+  realizedRevenue: number;
+  inTransitExpectedRevenue: number;
+  totalCogs: number;
+  totalPackagingCost: number;
+  totalForwardShipping: number;
+  totalRtoShippingCost: number;
+  totalRtoLoss: number;
+  totalPaymentFees: number;
+  totalMarketingCost: number;
+  totalRealizedCosts: number;
+  netRealizedProfit: number;
+  projectedTransitProfit: number;
+  projectedNetProfit: number;
+  netMarginPct: number;
+  avgProfitPerDelivered: number;
+  whatsappRtoSavings: number;
+  dailyPnlRows: DailyPnlRow[];
+  orderRows: OrderPnlBreakdown[];
+}
+
+export type CostAssumptions = Pick<
+  AppSettings,
+  | 'cogsPercent'
+  | 'packagingCostPerOrder'
+  | 'fallbackForwardShippingCost'
+  | 'fallbackRtoShippingCost'
+  | 'fallbackCodFee'
+  | 'prepaidGatewayPercent'
+  | 'marketingCostPerOrder'
+>;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function isCodPaymentMethod(order: Pick<OrderRecord, 'paymentMethod' | 'financialStatus'>): boolean {
+  const pm = (order.paymentMethod || '').trim().toLowerCase();
+  if (pm.includes('cod') || pm.includes('cash')) return true;
+  if (pm.includes('prepaid') || pm.includes('paid')) return false;
+  return (order.financialStatus || '').trim().toLowerCase() === 'pending';
+}
+
+/**
+ * Calculates per-order unit economics & net Profit/Loss using synced Delhivery One charges
+ * when available, falling back cleanly to the configured shipping/COGS/packaging/COD rules.
+ */
+export function calculateOrderPnl(
+  order: OrderRecord,
+  costSettings: CostAssumptions
+): OrderPnlBreakdown {
+  const parsedVal = Number.parseFloat(order.totalPrice || '0');
+  const orderValue = Number.isFinite(parsedVal) && parsedVal > 0 ? round2(parsedVal) : 0;
+  const dateKey = getIstDateKey(order.createdAt) || 'Unknown';
+  const dateLabel = dateKey === 'Unknown' ? 'Unknown' : formatIstDateDisplay(dateKey);
+  const isCod = isCodPaymentMethod(order);
+
+  const cogsPct = Math.max(0, Math.min(100, Number(costSettings.cogsPercent) || 0));
+  const packCost = Math.max(0, Number(costSettings.packagingCostPerOrder) || 0);
+  const fwdShipping =
+    typeof order.delhiveryShippingCost === 'number' && Number.isFinite(order.delhiveryShippingCost)
+      ? Math.max(0, order.delhiveryShippingCost)
+      : Math.max(0, Number(costSettings.fallbackForwardShippingCost) || 0);
+  const rtoReturnLeg =
+    typeof order.delhiveryRtoCost === 'number' && Number.isFinite(order.delhiveryRtoCost)
+      ? Math.max(0, order.delhiveryRtoCost)
+      : Math.max(0, Number(costSettings.fallbackRtoShippingCost) || 0);
+  const codFee = isCod
+    ? typeof order.delhiveryCodFee === 'number' && Number.isFinite(order.delhiveryCodFee)
+      ? Math.max(0, order.delhiveryCodFee)
+      : Math.max(0, Number(costSettings.fallbackCodFee) || 0)
+    : 0;
+  const pgFee = !isCod
+    ? round2((orderValue * Math.max(0, Number(costSettings.prepaidGatewayPercent) || 0)) / 100)
+    : 0;
+  const marketingCost = Math.max(0, Number(costSettings.marketingCostPerOrder) || 0);
+
+  const source: 'delhivery_api' | 'delhivery_wallet' | 'estimated' =
+    order.delhiveryChargeSource === 'delhivery_wallet'
+      ? 'delhivery_wallet'
+      : order.delhiveryChargeSource === 'delhivery_api'
+        ? 'delhivery_api'
+        : 'estimated';
+  const chargedWeightGrams =
+    order.delhiveryChargedWeightGrams ?? order.orderWeightGrams ?? null;
+
+  if (order.pollStatus === 'cancelled_by_user') {
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      createdAt: order.createdAt,
+      dateKey,
+      dateLabel,
+      customerName: order.customerName,
+      paymentMethod: isCod ? 'COD' : 'Prepaid',
+      currency: order.currency || 'INR',
+      outcome: 'cancelled',
+      outcomeLabel: 'Cancelled',
+      orderValue,
+      realizedRevenue: 0,
+      expectedRevenue: 0,
+      cogsCost: 0,
+      packagingCost: 0,
+      forwardShippingCost: 0,
+      rtoShippingCost: 0,
+      paymentOrCodFee: 0,
+      marketingCost: 0,
+      totalCost: 0,
+      netProfit: 0,
+      chargeSource: 'none',
+    };
+  }
+
+  if (isOrderRtoReturn(order)) {
+    const totalCost = round2(fwdShipping + rtoReturnLeg + packCost + marketingCost);
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      createdAt: order.createdAt,
+      dateKey,
+      dateLabel,
+      customerName: order.customerName,
+      paymentMethod: isCod ? 'COD' : 'Prepaid',
+      currency: order.currency || 'INR',
+      outcome: 'rto_return',
+      outcomeLabel: 'RTO Return',
+      orderValue,
+      realizedRevenue: 0,
+      expectedRevenue: 0,
+      cogsCost: 0,
+      packagingCost: round2(packCost),
+      forwardShippingCost: round2(fwdShipping),
+      rtoShippingCost: round2(rtoReturnLeg),
+      paymentOrCodFee: 0,
+      marketingCost: round2(marketingCost),
+      totalCost,
+      netProfit: round2(-totalCost),
+      chargeSource: source,
+      chargedWeightGrams,
+    };
+  }
+
+  if (isOrderDelivered(order)) {
+    const cogsCost = round2((orderValue * cogsPct) / 100);
+    const paymentOrCodFee = round2(isCod ? codFee : pgFee);
+    const totalCost = round2(cogsCost + packCost + fwdShipping + paymentOrCodFee + marketingCost);
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      createdAt: order.createdAt,
+      dateKey,
+      dateLabel,
+      customerName: order.customerName,
+      paymentMethod: isCod ? 'COD' : 'Prepaid',
+      currency: order.currency || 'INR',
+      outcome: 'delivered',
+      outcomeLabel: 'Delivered',
+      orderValue,
+      realizedRevenue: orderValue,
+      expectedRevenue: orderValue,
+      cogsCost,
+      packagingCost: round2(packCost),
+      forwardShippingCost: round2(fwdShipping),
+      rtoShippingCost: 0,
+      paymentOrCodFee,
+      marketingCost: round2(marketingCost),
+      totalCost,
+      netProfit: round2(orderValue - totalCost),
+      chargeSource: source,
+      chargedWeightGrams,
+    };
+  }
+
+  // Orders fulfilled / tracking added / in transit (not yet delivered or RTO)
+  const dispatched = isOrderDispatched(order) || isOrderInTransit(order) || isOrderTrackingAdded(order);
+  if (dispatched) {
+    const cogsCost = round2((orderValue * cogsPct) / 100);
+    const paymentOrCodFee = round2(isCod ? codFee : pgFee);
+    const totalCost = round2(cogsCost + packCost + fwdShipping + paymentOrCodFee + marketingCost);
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      createdAt: order.createdAt,
+      dateKey,
+      dateLabel,
+      customerName: order.customerName,
+      paymentMethod: isCod ? 'COD' : 'Prepaid',
+      currency: order.currency || 'INR',
+      outcome: 'in_transit',
+      outcomeLabel: isOrderInTransit(order) ? 'In Transit' : 'Tracking Added',
+      orderValue,
+      realizedRevenue: 0,
+      expectedRevenue: orderValue,
+      cogsCost,
+      packagingCost: round2(packCost),
+      forwardShippingCost: round2(fwdShipping),
+      rtoShippingCost: 0,
+      paymentOrCodFee,
+      marketingCost: round2(marketingCost),
+      totalCost,
+      netProfit: round2(orderValue - totalCost),
+      chargeSource: source,
+      chargedWeightGrams,
+    };
+  }
+
+  return {
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    createdAt: order.createdAt,
+    dateKey,
+    dateLabel,
+    customerName: order.customerName,
+    paymentMethod: isCod ? 'COD' : 'Prepaid',
+    currency: order.currency || 'INR',
+    outcome: 'ready_or_pending',
+    outcomeLabel: order.pollStatus === 'confirmed' ? 'Ready to Dispatch' : 'Awaiting Confirm',
+    orderValue,
+    realizedRevenue: 0,
+    expectedRevenue: 0,
+    cogsCost: 0,
+    packagingCost: 0,
+    forwardShippingCost: 0,
+    rtoShippingCost: 0,
+    paymentOrCodFee: 0,
+    marketingCost: 0,
+    totalCost: 0,
+    netProfit: 0,
+    chargeSource: 'none',
+  };
+}
+
+/**
+ * Aggregates Profit & Loss totals, daily breakdown rows, and WhatsApp RTO savings
+ * across the given orders and cost settings.
+ */
+export function buildProfitLossReport(
+  orders: OrderRecord[],
+  costSettings: CostAssumptions,
+  periodAdSpendExtra = 0
+): ProfitLossReportSummary {
+  const extraAds = Math.max(0, Number(periodAdSpendExtra) || 0);
+  const orderRows = orders.map((o) => calculateOrderPnl(o, costSettings));
+
+  let currency = 'INR';
+  let deliveredCount = 0;
+  let inTransitCount = 0;
+  let readyOrPendingCount = 0;
+  let rtoCount = 0;
+  let cancelledCount = 0;
+  let delhiverySyncedCount = 0;
+
+  let grossOrderValue = 0;
+  let realizedRevenue = 0;
+  let inTransitExpectedRevenue = 0;
+
+  let totalCogs = 0;
+  let totalPackagingCost = 0;
+  let totalForwardShipping = 0;
+  let totalRtoShippingCost = 0;
+  let totalRtoLoss = 0;
+  let totalPaymentFees = 0;
+  let totalMarketingCost = 0;
+  let projectedTransitProfit = 0;
+
+  const dailyMap = new Map<string, DailyPnlRow>();
+
+  for (let i = 0; i < orders.length; i += 1) {
+    const order = orders[i];
+    const row = orderRows[i];
+    if (order.currency) currency = order.currency;
+    if (
+      order.delhiveryChargeSource === 'delhivery_api' ||
+      order.delhiveryChargeSource === 'delhivery_wallet'
+    ) {
+      delhiverySyncedCount += 1;
+    }
+
+    grossOrderValue += row.orderValue;
+
+    let day = dailyMap.get(row.dateKey);
+    if (!day) {
+      day = {
+        dateKey: row.dateKey,
+        dateLabel: row.dateLabel,
+        totalOrders: 0,
+        deliveredOrders: 0,
+        inTransitOrders: 0,
+        rtoOrders: 0,
+        cancelledOrders: 0,
+        realizedRevenue: 0,
+        expectedTransitRevenue: 0,
+        totalCosts: 0,
+        rtoLoss: 0,
+        netRealizedProfit: 0,
+        projectedNetProfit: 0,
+      };
+      dailyMap.set(row.dateKey, day);
+    }
+
+    day.totalOrders += 1;
+
+    if (row.outcome === 'delivered') {
+      deliveredCount += 1;
+      realizedRevenue += row.realizedRevenue;
+      totalCogs += row.cogsCost;
+      totalPackagingCost += row.packagingCost;
+      totalForwardShipping += row.forwardShippingCost;
+      totalPaymentFees += row.paymentOrCodFee;
+      totalMarketingCost += row.marketingCost;
+
+      day.deliveredOrders += 1;
+      day.realizedRevenue += row.realizedRevenue;
+      day.totalCosts += row.totalCost;
+      day.netRealizedProfit += row.netProfit;
+      day.projectedNetProfit += row.netProfit;
+    } else if (row.outcome === 'rto_return') {
+      rtoCount += 1;
+      totalPackagingCost += row.packagingCost;
+      totalForwardShipping += row.forwardShippingCost;
+      totalRtoShippingCost += row.rtoShippingCost;
+      totalMarketingCost += row.marketingCost;
+      totalRtoLoss += row.totalCost;
+
+      day.rtoOrders += 1;
+      day.totalCosts += row.totalCost;
+      day.rtoLoss += row.totalCost;
+      day.netRealizedProfit += row.netProfit; // negative
+      day.projectedNetProfit += row.netProfit;
+    } else if (row.outcome === 'in_transit') {
+      inTransitCount += 1;
+      inTransitExpectedRevenue += row.expectedRevenue;
+      projectedTransitProfit += row.netProfit;
+
+      day.inTransitOrders += 1;
+      day.expectedTransitRevenue += row.expectedRevenue;
+      day.projectedNetProfit += row.netProfit;
+    } else if (row.outcome === 'cancelled') {
+      cancelledCount += 1;
+      day.cancelledOrders += 1;
+    } else {
+      readyOrPendingCount += 1;
+    }
+  }
+
+  const totalRealizedCosts = round2(
+    totalCogs +
+      totalPackagingCost +
+      totalForwardShipping +
+      totalRtoShippingCost +
+      totalPaymentFees +
+      totalMarketingCost +
+      extraAds
+  );
+
+  const netRealizedProfit = round2(realizedRevenue - totalRealizedCosts);
+  const projectedNetProfit = round2(netRealizedProfit + projectedTransitProfit);
+  const netMarginPct =
+    realizedRevenue > 0 ? Math.round((netRealizedProfit / realizedRevenue) * 100) : 0;
+  const avgProfitPerDelivered =
+    deliveredCount > 0 ? round2(netRealizedProfit / deliveredCount) : 0;
+
+  const perOrderPreventedLoss =
+    Math.max(0, Number(costSettings.fallbackForwardShippingCost) || 0) +
+    Math.max(0, Number(costSettings.fallbackRtoShippingCost) || 0) +
+    Math.max(0, Number(costSettings.packagingCostPerOrder) || 0);
+  const whatsappRtoSavings = round2(cancelledCount * perOrderPreventedLoss);
+
+  const dailyPnlRows = Array.from(dailyMap.values())
+    .sort((a, b) => b.dateKey.localeCompare(a.dateKey))
+    .map((d) => ({
+      ...d,
+      realizedRevenue: round2(d.realizedRevenue),
+      expectedTransitRevenue: round2(d.expectedTransitRevenue),
+      totalCosts: round2(d.totalCosts),
+      rtoLoss: round2(d.rtoLoss),
+      netRealizedProfit: round2(d.netRealizedProfit),
+      projectedNetProfit: round2(d.projectedNetProfit),
+    }));
+
+  return {
+    currency,
+    totalOrders: orders.length,
+    deliveredCount,
+    inTransitCount,
+    readyOrPendingCount,
+    rtoCount,
+    cancelledCount,
+    delhiverySyncedCount,
+    grossOrderValue: round2(grossOrderValue),
+    realizedRevenue: round2(realizedRevenue),
+    inTransitExpectedRevenue: round2(inTransitExpectedRevenue),
+    totalCogs: round2(totalCogs),
+    totalPackagingCost: round2(totalPackagingCost),
+    totalForwardShipping: round2(totalForwardShipping),
+    totalRtoShippingCost: round2(totalRtoShippingCost),
+    totalRtoLoss: round2(totalRtoLoss),
+    totalPaymentFees: round2(totalPaymentFees),
+    totalMarketingCost: round2(totalMarketingCost + extraAds),
+    totalRealizedCosts,
+    netRealizedProfit,
+    projectedTransitProfit: round2(projectedTransitProfit),
+    projectedNetProfit,
+    netMarginPct,
+    avgProfitPerDelivered,
+    whatsappRtoSavings,
+    dailyPnlRows,
+    orderRows,
+  };
+}
+
+export interface ParsedDelhiveryLedgerEntry {
+  awb: string;
+  orderNumber: string;
+  forwardShippingCost: number;
+  rtoShippingCost: number;
+  codFee: number;
+  utrNumber?: string;
+  remittedAmount?: number;
+}
+
+function splitCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseNumericCharge(raw?: string): number {
+  if (!raw) return 0;
+  const cleaned = raw.replace(/[₹,\s]|INR|Rs\.?/gi, '').trim();
+  const num = Number.parseFloat(cleaned);
+  return Number.isFinite(num) ? Math.abs(num) : 0;
+}
+
+/**
+ * Parses a Delhivery One Wallet / Passbook / Invoice / COD Remittance CSV export
+ * into per-AWB or per-Order actual billed charges and optional UTR COD remittance payouts.
+ */
+export function parseDelhiveryBillingCsv(csvText: string): ParsedDelhiveryLedgerEntry[] {
+  const lines = csvText
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase());
+  const findCol = (patterns: RegExp[]): number =>
+    headers.findIndex((h) => patterns.some((p) => p.test(h)));
+
+  const awbCol = findCol([/^awb/, /waybill/, /tracking/]);
+  const orderCol = findCol([/order.?id/, /order.?num/, /reference/, /ref.?no/]);
+  const fwdCol = findCol([/forward/, /freight/, /shipping.?charge/, /dl.?charge/, /base.?charge/]);
+  const rtoCol = findCol([/^rto/, /rto.?charge/, /return.?charge/]);
+  const codCol = findCol([/^cod.?charge/, /cod.?fee/]);
+  const totalCol = findCol([/total.?amount/, /total.?charge/, /^debit$/, /^amount$/, /^charge$/, /billed/]);
+  const typeCol = findCol([/transaction.?type/, /charge.?type/, /^type$/, /description/, /remarks/, /status/]);
+  const utrCol = findCol([/\butr\b/, /remittance.?id/, /bank.?ref/, /settlement.?ref/]);
+  const remitCol = findCol([
+    /remit.*amount/,
+    /remitted/,
+    /cod.?collected/,
+    /cod.?amount/,
+    /cod.?value/,
+    /payout/,
+    /settled.?amount/,
+  ]);
+
+  if (awbCol === -1 && orderCol === -1) return [];
+
+  const map = new Map<string, ParsedDelhiveryLedgerEntry>();
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const row = splitCsvLine(lines[i]);
+    const awb = awbCol >= 0 ? (row[awbCol] || '').trim() : '';
+    const orderNumber = orderCol >= 0 ? (row[orderCol] || '').trim() : '';
+    if (!awb && !orderNumber) continue;
+
+    const key = awb ? `awb:${awb}` : `ord:${orderNumber.replace(/^#/, '')}`;
+    const existing = map.get(key) || {
+      awb,
+      orderNumber,
+      forwardShippingCost: 0,
+      rtoShippingCost: 0,
+      codFee: 0,
+    };
+
+    const fwd = fwdCol >= 0 ? parseNumericCharge(row[fwdCol]) : 0;
+    const rto = rtoCol >= 0 ? parseNumericCharge(row[rtoCol]) : 0;
+    const cod = codCol >= 0 ? parseNumericCharge(row[codCol]) : 0;
+    const total = totalCol >= 0 ? parseNumericCharge(row[totalCol]) : 0;
+    const txType = (typeCol >= 0 ? row[typeCol] || '' : '').toLowerCase();
+    const utr = utrCol >= 0 ? (row[utrCol] || '').trim() : '';
+    const remittedAmt = remitCol >= 0 ? parseNumericCharge(row[remitCol]) : 0;
+
+    if (utr || remittedAmt > 0 || txType.includes('remit')) {
+      if (utr) existing.utrNumber = utr;
+      if (remittedAmt > 0) {
+        existing.remittedAmount = round2((existing.remittedAmount || 0) + remittedAmt);
+      } else if (total > 0 && txType.includes('remit')) {
+        existing.remittedAmount = round2((existing.remittedAmount || 0) + total);
+      }
+    }
+
+    if (fwd > 0 || rto > 0 || cod > 0) {
+      existing.forwardShippingCost = round2(existing.forwardShippingCost + fwd);
+      existing.rtoShippingCost = round2(existing.rtoShippingCost + rto);
+      existing.codFee = round2(existing.codFee + cod);
+    } else if (total > 0 && !txType.includes('remit')) {
+      if (txType.includes('refund') || txType.includes('credit') || txType.includes('recharge')) {
+        // Skip wallet top-ups if no UTR attached
+      } else if (txType.includes('rto') || txType.includes('return')) {
+        existing.rtoShippingCost = round2(existing.rtoShippingCost + total);
+      } else if (txType.includes('cod')) {
+        existing.codFee = round2(existing.codFee + total);
+      } else {
+        existing.forwardShippingCost = round2(existing.forwardShippingCost + total);
+      }
+    }
+
+    if (
+      existing.forwardShippingCost > 0 ||
+      existing.rtoShippingCost > 0 ||
+      existing.codFee > 0 ||
+      existing.utrNumber ||
+      (existing.remittedAmount ?? 0) > 0
+    ) {
+      map.set(key, existing);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+export type OrderSettlementCategory =
+  | 'settled'
+  | 'pending_remittance'
+  | 'in_transit'
+  | 'no_payout'
+  | 'unshipped';
+
+export interface OrderSettlementInfo {
+  status: OrderSettlementCategory;
+  label: string;
+  paymentMode: 'COD' | 'Prepaid';
+  orderValue: number;
+  settledAmount: number;
+  pendingAmount: number;
+  daysSinceDelivery: number | null;
+  reference: string;
+  settledAt: string | null;
+}
+
+/**
+ * Classifies each order's cashflow / bank settlement state (Prepaid paid vs COD pending remittance vs Settled).
+ */
+export function getOrderSettlementInfo(
+  order: OrderRecord,
+  nowMs = Date.now()
+): OrderSettlementInfo {
+  const parsed = Number.parseFloat(order.totalPrice || '0');
+  const orderValue = Number.isFinite(parsed) && parsed > 0 ? round2(parsed) : 0;
+  const isCod = isCodPaymentMethod(order);
+  const paymentMode: 'COD' | 'Prepaid' = isCod ? 'COD' : 'Prepaid';
+
+  if (order.pollStatus === 'cancelled_by_user' || isOrderRtoReturn(order)) {
+    return {
+      status: 'no_payout',
+      label: isOrderRtoReturn(order) ? 'RTO (No Payout)' : 'Cancelled (₹0)',
+      paymentMode,
+      orderValue,
+      settledAmount: 0,
+      pendingAmount: 0,
+      daysSinceDelivery: null,
+      reference: order.settlementReference || '',
+      settledAt: null,
+    };
+  }
+
+  const delivered = isOrderDelivered(order);
+  const deliveryRefIso = order.deliveredAt || order.lastCourierScanAt || order.respondedAt;
+  const deliveryMs = deliveryRefIso ? Date.parse(deliveryRefIso) : Number.NaN;
+  const daysSinceDelivery =
+    delivered && Number.isFinite(deliveryMs) && nowMs >= deliveryMs
+      ? Math.max(0, Math.floor((nowMs - deliveryMs) / 86_400_000))
+      : null;
+
+  if (order.settlementStatus === 'settled') {
+    const settledAmt =
+      typeof order.settledAmount === 'number' && Number.isFinite(order.settledAmount)
+        ? round2(order.settledAmount)
+        : orderValue;
+    return {
+      status: 'settled',
+      label: isCod ? 'COD Settled (Bank)' : 'Prepaid Settled',
+      paymentMode,
+      orderValue,
+      settledAmount: settledAmt,
+      pendingAmount: 0,
+      daysSinceDelivery,
+      reference: order.settlementReference || '',
+      settledAt: order.settledAt || null,
+    };
+  }
+
+  if (!isCod && (order.financialStatus === 'paid' || delivered)) {
+    return {
+      status: 'settled',
+      label: 'Prepaid Paid',
+      paymentMode,
+      orderValue,
+      settledAmount: orderValue,
+      pendingAmount: 0,
+      daysSinceDelivery,
+      reference: order.settlementReference || 'Shopify Prepaid',
+      settledAt: order.createdAt,
+    };
+  }
+
+  if (isCod && delivered) {
+    return {
+      status: 'pending_remittance',
+      label: 'COD Pending Remittance',
+      paymentMode,
+      orderValue,
+      settledAmount: 0,
+      pendingAmount: orderValue,
+      daysSinceDelivery,
+      reference: '',
+      settledAt: null,
+    };
+  }
+
+  if (isOrderInTransit(order) || isOrderTrackingAdded(order) || isOrderDispatched(order)) {
+    return {
+      status: 'in_transit',
+      label: isCod ? 'COD In Transit' : 'Prepaid In Transit',
+      paymentMode,
+      orderValue,
+      settledAmount: 0,
+      pendingAmount: 0,
+      daysSinceDelivery: null,
+      reference: '',
+      settledAt: null,
+    };
+  }
+
+  return {
+    status: 'unshipped',
+    label: 'Awaiting Dispatch',
+    paymentMode,
+    orderValue,
+    settledAmount: 0,
+    pendingAmount: 0,
+    daysSinceDelivery: null,
+    reference: '',
+    settledAt: null,
+  };
+}
+
+export type DeliveryDelayState =
+  | 'delivered_on_time'
+  | 'delivered_late'
+  | 'ndr_attempt'
+  | 'transit_delayed'
+  | 'pickup_delayed'
+  | 'on_time'
+  | 'rto_return'
+  | 'unshipped';
+
+export interface OrderDeliveryDelayInfo {
+  state: DeliveryDelayState;
+  isActiveDelay: boolean;
+  isDelayedAny: boolean;
+  label: string;
+  reason: string;
+  transitDays: number | null;
+  hoursSinceTracking: number | null;
+}
+
+/**
+ * Evaluates courier SLA, pickup lag, Delhivery Expected Delivery Date breaches, and NDR attempts.
+ */
+export function getOrderDeliveryDelayInfo(
+  order: OrderRecord,
+  settings: Pick<AppSettings, 'deliverySlaDays' | 'pickupSlaHours'>,
+  nowMs = Date.now()
+): OrderDeliveryDelayInfo {
+  const slaDays = Math.max(1, Number(settings.deliverySlaDays) || 4);
+  const pickupSlaHours = Math.max(12, Number(settings.pickupSlaHours) || 48);
+
+  if (isOrderRtoReturn(order)) {
+    return {
+      state: 'rto_return',
+      isActiveDelay: false,
+      isDelayedAny: false,
+      label: 'RTO Returned',
+      reason: order.lastCourierScanRemark || 'Returned to origin',
+      transitDays: null,
+      hoursSinceTracking: null,
+    };
+  }
+
+  if (order.pollStatus === 'cancelled_by_user') {
+    return {
+      state: 'unshipped',
+      isActiveDelay: false,
+      isDelayedAny: false,
+      label: 'Cancelled',
+      reason: 'Cancelled before shipping',
+      transitDays: null,
+      hoursSinceTracking: null,
+    };
+  }
+
+  const startIso =
+    order.pickedUpAt || order.fulfilledAt || order.trackingSentAt || order.respondedAt || order.createdAt;
+  const startMs = Date.parse(startIso);
+  const validStart = Number.isFinite(startMs);
+  const eddMs = order.expectedDeliveryAt ? Date.parse(order.expectedDeliveryAt) : Number.NaN;
+
+  if (isOrderDelivered(order)) {
+    const endIso = order.deliveredAt || order.lastCourierScanAt || order.respondedAt || order.createdAt;
+    const endMs = Date.parse(endIso);
+    const transitDays =
+      validStart && Number.isFinite(endMs) && endMs >= startMs
+        ? Math.max(0, Math.round(((endMs - startMs) / 86_400_000) * 10) / 10)
+        : null;
+    const breachedEdd = Number.isFinite(eddMs) && Number.isFinite(endMs) && endMs > eddMs;
+    const breachedSla = transitDays !== null && transitDays > slaDays;
+    const late = breachedEdd || breachedSla;
+    return {
+      state: late ? 'delivered_late' : 'delivered_on_time',
+      isActiveDelay: false,
+      isDelayedAny: late,
+      label: late ? 'Delivered Late' : 'Delivered On-Time',
+      reason: breachedEdd
+        ? 'Delivered after Delhivery EDD'
+        : breachedSla
+          ? `Took ${transitDays}d (> ${slaDays}d SLA)`
+          : transitDays !== null
+            ? `Delivered in ${transitDays}d`
+            : 'Delivered within SLA',
+      transitDays,
+      hoursSinceTracking: null,
+    };
+  }
+
+  if (isOrderInTransit(order)) {
+    const transitDays =
+      validStart && nowMs >= startMs
+        ? Math.max(0, Math.round(((nowMs - startMs) / 86_400_000) * 10) / 10)
+        : 0;
+    const attempts = order.deliveryAttemptsCount ?? 0;
+    const ship = (order.shipmentStatus || '').toLowerCase();
+
+    if (ship === 'attempted_delivery' || attempts > 1) {
+      return {
+        state: 'ndr_attempt',
+        isActiveDelay: true,
+        isDelayedAny: true,
+        label: attempts > 1 ? `NDR (${attempts} Attempts)` : 'NDR / Attempted',
+        reason: order.lastCourierScanRemark || 'Delivery failed/attempted — needs customer follow-up',
+        transitDays,
+        hoursSinceTracking: null,
+      };
+    }
+
+    if (Number.isFinite(eddMs) && nowMs > eddMs) {
+      return {
+        state: 'transit_delayed',
+        isActiveDelay: true,
+        isDelayedAny: true,
+        label: 'Past Delhivery EDD',
+        reason: order.lastCourierScanLocation
+          ? `Still at ${order.lastCourierScanLocation} (${transitDays}d)`
+          : `Exceeded expected delivery date (${transitDays}d)`,
+        transitDays,
+        hoursSinceTracking: null,
+      };
+    }
+
+    if (transitDays > slaDays) {
+      return {
+        state: 'transit_delayed',
+        isActiveDelay: true,
+        isDelayedAny: true,
+        label: `Slow Transit (${transitDays}d)`,
+        reason: order.lastCourierScanLocation
+          ? `In transit > ${slaDays}d · Last scan: ${order.lastCourierScanLocation}`
+          : `In transit ${transitDays}d (> ${slaDays}d SLA)`,
+        transitDays,
+        hoursSinceTracking: null,
+      };
+    }
+
+    return {
+      state: 'on_time',
+      isActiveDelay: false,
+      isDelayedAny: false,
+      label: 'In Transit (On Time)',
+      reason: order.lastCourierScanLocation
+        ? `At ${order.lastCourierScanLocation} (${transitDays}d)`
+        : `Moving normally (${transitDays}d)`,
+      transitDays,
+      hoursSinceTracking: null,
+    };
+  }
+
+  if (isOrderTrackingAdded(order) || isOrderDispatched(order)) {
+    const trackIso = order.fulfilledAt || order.trackingSentAt || order.createdAt;
+    const trackMs = Date.parse(trackIso);
+    const hoursSinceTracking =
+      Number.isFinite(trackMs) && nowMs >= trackMs
+        ? Math.max(0, Math.round((nowMs - trackMs) / 3_600_000))
+        : 0;
+    const transitDays = Math.round((hoursSinceTracking / 24) * 10) / 10;
+
+    if (hoursSinceTracking >= pickupSlaHours) {
+      return {
+        state: 'pickup_delayed',
+        isActiveDelay: true,
+        isDelayedAny: true,
+        label: `Pickup Delayed (${hoursSinceTracking}h)`,
+        reason: `AWB created ${hoursSinceTracking}h ago, still not picked up by courier`,
+        transitDays,
+        hoursSinceTracking,
+      };
+    }
+
+    return {
+      state: 'on_time',
+      isActiveDelay: false,
+      isDelayedAny: false,
+      label: 'Awaiting Pickup',
+      reason: `Label added ${hoursSinceTracking}h ago`,
+      transitDays,
+      hoursSinceTracking,
+    };
+  }
+
+  return {
+    state: 'unshipped',
+    isActiveDelay: false,
+    isDelayedAny: false,
+    label: order.pollStatus === 'confirmed' ? 'Ready to Dispatch' : 'Awaiting Confirm',
+    reason: '',
+    transitDays: null,
+    hoursSinceTracking: null,
+  };
+}
+
+export interface SettlementDelayOrderRow {
+  order: OrderRecord;
+  dateLabel: string;
+  settlement: OrderSettlementInfo;
+  delay: OrderDeliveryDelayInfo;
+  shippingAndCodCost: number;
+}
+
+export interface SettlementDelaySummary {
+  currency: string;
+  settledTotal: number;
+  settledCount: number;
+  codSettledTotal: number;
+  codSettledCount: number;
+  prepaidSettledTotal: number;
+  prepaidSettledCount: number;
+  pendingCodRemittanceTotal: number;
+  pendingCodRemittanceCount: number;
+  avgCodRemittanceWaitDays: number | null;
+  inTransitCodTotal: number;
+  inTransitCodCount: number;
+  rtoNoPayoutValue: number;
+  rtoCount: number;
+  activeDelayedCount: number;
+  pickupDelayedCount: number;
+  transitDelayedCount: number;
+  ndrAttemptCount: number;
+  stuckOrderValue: number;
+  deliveredOnTimeCount: number;
+  deliveredLateCount: number;
+  onTimeDeliveryRate: number;
+  avgTransitDays: number | null;
+  rows: SettlementDelayOrderRow[];
+}
+
+/**
+ * Computes combined Payment Settlement (COD remittance vs Prepaid) and Delivery Delay/SLA analytics.
+ */
+export function buildSettlementAndDelaySummary(
+  orders: OrderRecord[],
+  settings: AppSettings,
+  nowMs = Date.now()
+): SettlementDelaySummary {
+  let currency = 'INR';
+  let settledTotal = 0;
+  let settledCount = 0;
+  let codSettledTotal = 0;
+  let codSettledCount = 0;
+  let prepaidSettledTotal = 0;
+  let prepaidSettledCount = 0;
+  let pendingCodRemittanceTotal = 0;
+  let pendingCodRemittanceCount = 0;
+  let codWaitDaysSum = 0;
+  let codWaitDaysN = 0;
+  let inTransitCodTotal = 0;
+  let inTransitCodCount = 0;
+  let rtoNoPayoutValue = 0;
+  let rtoCount = 0;
+
+  let activeDelayedCount = 0;
+  let pickupDelayedCount = 0;
+  let transitDelayedCount = 0;
+  let ndrAttemptCount = 0;
+  let stuckOrderValue = 0;
+  let deliveredOnTimeCount = 0;
+  let deliveredLateCount = 0;
+  let transitDaysSum = 0;
+  let transitDaysN = 0;
+
+  const rows: SettlementDelayOrderRow[] = [];
+
+  for (const order of orders) {
+    if (order.currency) currency = order.currency;
+    const settlement = getOrderSettlementInfo(order, nowMs);
+    const delay = getOrderDeliveryDelayInfo(order, settings, nowMs);
+    const dateKey = getIstDateKey(order.createdAt) || 'Unknown';
+    const dateLabel = dateKey === 'Unknown' ? 'Unknown' : formatIstDateDisplay(dateKey);
+
+    const fwd = order.delhiveryShippingCost ?? 0;
+    const rto = order.delhiveryRtoCost ?? 0;
+    const cod = order.delhiveryCodFee ?? 0;
+    const shippingAndCodCost = round2(
+      isOrderRtoReturn(order) ? fwd + rto : fwd + (settlement.paymentMode === 'COD' ? cod : 0)
+    );
+
+    if (settlement.status === 'settled') {
+      settledTotal += settlement.settledAmount;
+      settledCount += 1;
+      if (settlement.paymentMode === 'COD') {
+        codSettledTotal += settlement.settledAmount;
+        codSettledCount += 1;
+      } else {
+        prepaidSettledTotal += settlement.settledAmount;
+        prepaidSettledCount += 1;
+      }
+    } else if (settlement.status === 'pending_remittance') {
+      pendingCodRemittanceTotal += settlement.pendingAmount;
+      pendingCodRemittanceCount += 1;
+      if (settlement.daysSinceDelivery !== null) {
+        codWaitDaysSum += settlement.daysSinceDelivery;
+        codWaitDaysN += 1;
+      }
+    } else if (settlement.status === 'in_transit' && settlement.paymentMode === 'COD') {
+      inTransitCodTotal += settlement.orderValue;
+      inTransitCodCount += 1;
+    }
+
+    if (isOrderRtoReturn(order)) {
+      rtoCount += 1;
+      rtoNoPayoutValue += settlement.orderValue;
+    }
+
+    if (delay.isActiveDelay) {
+      activeDelayedCount += 1;
+      stuckOrderValue += settlement.orderValue;
+      if (delay.state === 'pickup_delayed') pickupDelayedCount += 1;
+      if (delay.state === 'transit_delayed') transitDelayedCount += 1;
+      if (delay.state === 'ndr_attempt') ndrAttemptCount += 1;
+    }
+
+    if (delay.state === 'delivered_on_time') {
+      deliveredOnTimeCount += 1;
+      if (delay.transitDays !== null) {
+        transitDaysSum += delay.transitDays;
+        transitDaysN += 1;
+      }
+    } else if (delay.state === 'delivered_late') {
+      deliveredLateCount += 1;
+      if (delay.transitDays !== null) {
+        transitDaysSum += delay.transitDays;
+        transitDaysN += 1;
+      }
+    }
+
+    rows.push({
+      order,
+      dateLabel,
+      settlement,
+      delay,
+      shippingAndCodCost,
+    });
+  }
+
+  const deliveredTotal = deliveredOnTimeCount + deliveredLateCount;
+  const onTimeDeliveryRate =
+    deliveredTotal > 0 ? Math.round((deliveredOnTimeCount / deliveredTotal) * 100) : 0;
+
+  return {
+    currency,
+    settledTotal: round2(settledTotal),
+    settledCount,
+    codSettledTotal: round2(codSettledTotal),
+    codSettledCount,
+    prepaidSettledTotal: round2(prepaidSettledTotal),
+    prepaidSettledCount,
+    pendingCodRemittanceTotal: round2(pendingCodRemittanceTotal),
+    pendingCodRemittanceCount,
+    avgCodRemittanceWaitDays:
+      codWaitDaysN > 0 ? Math.round((codWaitDaysSum / codWaitDaysN) * 10) / 10 : null,
+    inTransitCodTotal: round2(inTransitCodTotal),
+    inTransitCodCount,
+    rtoNoPayoutValue: round2(rtoNoPayoutValue),
+    rtoCount,
+    activeDelayedCount,
+    pickupDelayedCount,
+    transitDelayedCount,
+    ndrAttemptCount,
+    stuckOrderValue: round2(stuckOrderValue),
+    deliveredOnTimeCount,
+    deliveredLateCount,
+    onTimeDeliveryRate,
+    avgTransitDays:
+      transitDaysN > 0 ? Math.round((transitDaysSum / transitDaysN) * 10) / 10 : null,
+    rows,
+  };
+}
+
+
 
 

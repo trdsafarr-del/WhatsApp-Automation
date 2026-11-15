@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { OrdersView } from './components/OrdersView';
 import { ReportsView } from './components/ReportsView';
-import { SettingsView } from './components/SettingsView';
+import { SettingsView, type SettingsTab } from './components/SettingsView';
 import { SetupGuideView } from './components/SetupGuideView';
 import { WhatsAppQrView } from './components/WhatsAppQrView';
 import { DEFAULT_SETTINGS, getWhatsAppDisplayState, hasHighRtoTag } from './lib/orderRules';
@@ -70,6 +70,7 @@ const NAV_ITEMS: Array<{
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('orders');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('credentials');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -379,6 +380,114 @@ export default function App() {
   const handleTestShopify = async () => {
     const res = await fetch('/api/shopify/test', { method: 'POST' });
     return (await res.json()) as { ok: boolean; shopName?: string; error?: string };
+  };
+
+  const handleTestDelhivery = async () => {
+    try {
+      const res = await fetch('/api/delhivery/test', { method: 'POST' });
+      const data = (await res.json()) as {
+        ok: boolean;
+        sampleAmount?: number;
+        detectedOriginPin?: string;
+        warning?: string;
+        error?: string;
+      };
+      if (data.ok && data.detectedOriginPin) {
+        void fetchDashboard();
+      }
+      return data;
+    } catch {
+      return { ok: false, error: 'Network error testing Delhivery One token.' };
+    }
+  };
+
+  const handleSyncDelhivery = async () => {
+    try {
+      const res = await fetch('/api/delhivery/sync', { method: 'POST' });
+      const data = (await res.json()) as {
+        ok: boolean;
+        trackedCount?: number;
+        chargesUpdatedCount?: number;
+        detectedOriginPin?: string;
+        warning?: string;
+        settings?: AppSettings;
+        orders?: OrderRecord[];
+        metrics?: OrderMetrics;
+        error?: string;
+      };
+      if (data.settings) setSettings(data.settings);
+      if (data.orders) setOrders(data.orders);
+      if (data.metrics) setMetrics(data.metrics);
+      return data;
+    } catch {
+      return { ok: false, error: 'Network error syncing Delhivery One.' };
+    }
+  };
+
+  const handleImportDelhiveryCsv = async (csvText: string) => {
+    try {
+      const res = await fetch('/api/delhivery/import-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csvText }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        updatedCount?: number;
+        parsedCount?: number;
+        orders?: OrderRecord[];
+        metrics?: OrderMetrics;
+        error?: string;
+      };
+      if (data.orders) setOrders(data.orders);
+      if (data.metrics) setMetrics(data.metrics);
+      return data;
+    } catch {
+      return { ok: false, error: 'Network error importing Delhivery CSV.' };
+    }
+  };
+
+  const handleSettleOrder = async (
+    orderId: string,
+    params: { settled: boolean; reference?: string; amount?: number }
+  ): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/settle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as {
+        orders?: OrderRecord[];
+        metrics?: OrderMetrics;
+      };
+      if (data.orders) setOrders(data.orders);
+      if (data.metrics) setMetrics(data.metrics);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleSettleBulk = async (orderIds: string[], reference?: string): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/orders/settle-bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderIds, reference }),
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as {
+        orders?: OrderRecord[];
+        metrics?: OrderMetrics;
+      };
+      if (data.orders) setOrders(data.orders);
+      if (data.metrics) setMetrics(data.metrics);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const isShopifyLinked = Boolean(
@@ -814,6 +923,15 @@ export default function App() {
                   setSelectedOrderId(orderId);
                   setActiveTab('orders');
                 }}
+                onSaveSettings={handleSaveSettings}
+                onSyncDelhivery={handleSyncDelhivery}
+                onImportDelhiveryCsv={handleImportDelhiveryCsv}
+                onSettleOrder={handleSettleOrder}
+                onSettleBulk={handleSettleBulk}
+                onOpenDelhiverySettings={() => {
+                  setSettingsInitialTab('delhivery');
+                  setActiveTab('settings');
+                }}
               />
             ) : activeTab === 'whatsapp' ? (
               <WhatsAppQrView
@@ -828,8 +946,11 @@ export default function App() {
             ) : activeTab === 'settings' ? (
               <SettingsView
                 settings={settings}
+                initialTab={settingsInitialTab}
                 onSave={handleSaveSettings}
                 onTestShopify={handleTestShopify}
+                onTestDelhivery={handleTestDelhivery}
+                onSyncDelhivery={handleSyncDelhivery}
               />
             ) : (
               <SetupGuideView
