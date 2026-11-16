@@ -21,6 +21,7 @@ import {
   testDelhiveryConnection,
 } from '../server/delhivery.js';
 import { store } from '../server/store.js';
+import { registerStorefrontRoutes } from '../server/storefront.js';
 import { syncShopifyOrdersNow } from '../server/sync.js';
 import { whatsappManager } from '../server/whatsapp.js';
 
@@ -61,10 +62,14 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
     whatsapp: whatsappManager.getState(),
     settings: store.getSettings(),
     metrics: computeOrderMetrics(orders),
+    products: store.getProducts(),
+    storefrontConfig: store.getStorefrontConfig(),
     cloudSyncEnabled: store.isCloudSyncEnabled(),
     serverTime: new Date().toISOString(),
   });
 });
+
+registerStorefrontRoutes(app);
 
 app.post('/api/whatsapp/connect', async (req: Request, res: Response) => {
   await store.ensureHydrated();

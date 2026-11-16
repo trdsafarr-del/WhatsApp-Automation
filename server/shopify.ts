@@ -553,3 +553,385 @@ export async function updateShopifyOrderNote(
     };
   }
 }
+
+export interface ShopifyFetchedProduct {
+  shopifyProductId: string;
+  title: string;
+  handle: string;
+  status: 'active' | 'draft' | 'archived';
+  productType: string;
+  vendor: string;
+  imageUrl: string;
+  imageAlt: string;
+  price: string;
+  currency: string;
+  seoTitle: string;
+  seoDescription: string;
+  tags: string;
+}
+
+export async function fetchShopifyProducts(
+  settings: AppSettings
+): Promise<{ ok: boolean; products: ShopifyFetchedProduct[]; error?: string }> {
+  if (!hasLiveShopifyCredentials(settings)) {
+    return {
+      ok: false,
+      products: [],
+      error: 'Configure your Shopify Store Domain and credentials in Automation & Shopify first.',
+    };
+  }
+
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { ok: false, products: [], error: auth.error };
+  }
+
+  const query = `
+    query OrderPulseProducts($first: Int!) {
+      products(first: $first, sortKey: UPDATED_AT, reverse: true) {
+        edges {
+          node {
+            legacyResourceId
+            title
+            handle
+            status
+            productType
+            vendor
+            tags
+            seo {
+              title
+              description
+            }
+            featuredImage {
+              url
+              altText
+            }
+            priceRangeV2 {
+              minVariantPrice {
+                amount
+                currencyCode
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const res = await fetch(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': auth.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables: { first: 100 } }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return {
+        ok: false,
+        products: [],
+        error: `Shopify GraphQL ${res.status}: ${text.slice(0, 180)}`,
+      };
+    }
+
+    const json = (await res.json()) as {
+      data?: {
+        products?: {
+          edges?: Array<{
+            node?: {
+              legacyResourceId?: string;
+              title?: string;
+              handle?: string;
+              status?: string;
+              productType?: string;
+              vendor?: string;
+              tags?: string[];
+              seo?: { title?: string | null; description?: string | null } | null;
+              featuredImage?: { url?: string | null; altText?: string | null } | null;
+              priceRangeV2?: {
+                minVariantPrice?: { amount?: string; currencyCode?: string };
+              } | null;
+            };
+          }>;
+        };
+      };
+      errors?: Array<{ message?: string; extensions?: { code?: string } }>;
+    };
+
+    if (Array.isArray(json.errors) && json.errors.length > 0) {
+      const msg = json.errors.map((e) => e.message).filter(Boolean).join('; ');
+      if (msg.toLowerCase().includes('access denied') || msg.toLowerCase().includes('read_products')) {
+        return {
+          ok: false,
+          products: [],
+          error:
+            'Shopify app is missing "read_products" permission. Add read_products & write_products scopes in dev.shopify.com and re-approve the app.',
+        };
+      }
+      return { ok: false, products: [], error: msg || 'Shopify GraphQL returned errors.' };
+    }
+
+    const edges = json.data?.products?.edges || [];
+    const products: ShopifyFetchedProduct[] = edges
+      .map((edge) => edge.node)
+      .filter((n): n is NonNullable<typeof n> => Boolean(n?.legacyResourceId))
+      .map((n) => {
+        const rawStatus = (n.status || 'ACTIVE').toLowerCase();
+        const status: ShopifyFetchedProduct['status'] =
+          rawStatus === 'draft' ? 'draft' : rawStatus === 'archived' ? 'archived' : 'active';
+        return {
+          shopifyProductId: String(n.legacyResourceId),
+          title: n.title || 'Untitled Product',
+          handle: n.handle || '',
+          status,
+          productType: n.productType || '',
+          vendor: n.vendor || '',
+          imageUrl: n.featuredImage?.url || '',
+          imageAlt: n.featuredImage?.altText || '',
+          price: n.priceRangeV2?.minVariantPrice?.amount || '0.00',
+          currency: n.priceRangeV2?.minVariantPrice?.currencyCode || 'INR',
+          seoTitle: n.seo?.title || '',
+          seoDescription: n.seo?.description || '',
+          tags: Array.isArray(n.tags) ? n.tags.join(', ') : '',
+        };
+      });
+
+    return { ok: true, products };
+  } catch (err) {
+    return {
+      ok: false,
+      products: [],
+      error: err instanceof Error ? err.message : 'Network error fetching Shopify products',
+    };
+  }
+}
+
+export async function updateShopifyProductSeo(
+  settings: AppSettings,
+  input: {
+    shopifyProductId: string;
+    handle: string;
+    seoTitle: string;
+    seoDescription: string;
+    imageAlt?: string;
+  }
+): Promise<{ synced: boolean; error?: string }> {
+  if (!hasLiveShopifyCredentials(settings)) {
+    return {
+      synced: false,
+      error: 'Shopify credentials not configured (saved locally only).',
+    };
+  }
+  if (!/^\d+$/.test(input.shopifyProductId.trim())) {
+    return {
+      synced: false,
+      error: 'Sample/local product saved locally (sync real Shopify products to push live).',
+    };
+  }
+
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { synced: false, error: auth.error };
+  }
+
+  const mutation = `
+    mutation OrderPulseUpdateSeo($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product {
+          id
+          handle
+          seo {
+            title
+            description
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  try {
+    const res = await fetch(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': auth.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: mutation,
+        variables: {
+          input: {
+            id: `gid://shopify/Product/${input.shopifyProductId.trim()}`,
+            handle: input.handle.trim() || undefined,
+            seo: {
+              title: input.seoTitle.trim(),
+              description: input.seoDescription.trim(),
+            },
+          },
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      return { synced: false, error: `Shopify GraphQL ${res.status}: ${text.slice(0, 180)}` };
+    }
+
+    const json = (await res.json()) as {
+      data?: {
+        productUpdate?: {
+          userErrors?: Array<{ message?: string }>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+
+    if (Array.isArray(json.errors) && json.errors.length > 0) {
+      const msg = json.errors.map((e) => e.message).filter(Boolean).join('; ');
+      if (msg.toLowerCase().includes('access denied') || msg.toLowerCase().includes('write_products')) {
+        return {
+          synced: false,
+          error: 'Missing "write_products" scope in Shopify app (saved locally only).',
+        };
+      }
+      return { synced: false, error: msg };
+    }
+
+    const userErrors = json.data?.productUpdate?.userErrors || [];
+    if (userErrors.length > 0) {
+      return {
+        synced: false,
+        error: userErrors.map((e) => e.message).filter(Boolean).join('; '),
+      };
+    }
+
+    // Best-effort featured image alt text update via REST if provided
+    if (typeof input.imageAlt === 'string' && input.imageAlt.trim()) {
+      try {
+        const imgListRes = await fetch(
+          `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/products/${input.shopifyProductId.trim()}/images.json`,
+          {
+            headers: {
+              'X-Shopify-Access-Token': auth.token,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        if (imgListRes.ok) {
+          const imgListData = (await imgListRes.json()) as {
+            images?: Array<{ id?: number | string }>;
+          };
+          const firstImageId = imgListData.images?.[0]?.id;
+          if (firstImageId) {
+            await fetch(
+              `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/products/${input.shopifyProductId.trim()}/images/${firstImageId}.json`,
+              {
+                method: 'PUT',
+                headers: {
+                  'X-Shopify-Access-Token': auth.token,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  image: {
+                    id: firstImageId,
+                    alt: input.imageAlt.trim(),
+                  },
+                }),
+              }
+            );
+          }
+        }
+      } catch {
+        // Non-fatal if image alt update fails
+      }
+    }
+
+    return { synced: true };
+  } catch (err) {
+    return {
+      synced: false,
+      error: err instanceof Error ? err.message : 'Failed pushing SEO update to Shopify',
+    };
+  }
+}
+
+export async function installShopifyScriptTag(
+  settings: AppSettings,
+  widgetSrc: string
+): Promise<{ ok: boolean; alreadyInstalled?: boolean; error?: string }> {
+  if (!hasLiveShopifyCredentials(settings)) {
+    return { ok: false, error: 'Configure Shopify credentials first.' };
+  }
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { ok: false, error: auth.error };
+  }
+
+  try {
+    const listRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/script_tags.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': auth.token,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    if (!listRes.ok) {
+      const body = await listRes.text();
+      if (listRes.status === 403) {
+        return {
+          ok: false,
+          error:
+            'Shopify app does not have "write_script_tags" scope. Use the 1-line Liquid Snippet copy-paste option below instead (works on all themes without extra scopes).',
+        };
+      }
+      return { ok: false, error: `Shopify ScriptTag API ${listRes.status}: ${body.slice(0, 160)}` };
+    }
+
+    const existing = (await listRes.json()) as {
+      script_tags?: Array<{ id?: number; src?: string }>;
+    };
+    const already = (existing.script_tags || []).some((st) => st.src === widgetSrc);
+    if (already) {
+      return { ok: true, alreadyInstalled: true };
+    }
+
+    const createRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/script_tags.json`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': auth.token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          script_tag: {
+            event: 'onload',
+            src: widgetSrc,
+          },
+        }),
+      }
+    );
+
+    if (!createRes.ok) {
+      const body = await createRes.text();
+      return { ok: false, error: `ScriptTag install failed (${createRes.status}): ${body.slice(0, 160)}` };
+    }
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Network error installing Shopify ScriptTag',
+    };
+  }
+}

@@ -8,7 +8,17 @@ import {
   readCleanEnvVar,
   selectPriorityAuthFiles,
 } from '../src/lib/orderRules.js';
-import type { AppSettings, OrderEvent, OrderRecord, WhatsAppState } from '../src/lib/types.js';
+import {
+  DEFAULT_STOREFRONT_CONFIG,
+} from '../src/lib/storefrontRules.js';
+import type {
+  AppSettings,
+  OrderEvent,
+  OrderRecord,
+  ProductCatalogItem,
+  StorefrontConfig,
+  WhatsAppState,
+} from '../src/lib/types.js';
 
 const DATA_DIR = process.env.VERCEL
   ? '/tmp/orderpulse-data'
@@ -29,6 +39,8 @@ const REDIS_WA_CREDS_KEY = 'orderpulse:v1:wa_creds';
 export interface DatabaseState {
   settings: AppSettings;
   orders: OrderRecord[];
+  products: ProductCatalogItem[];
+  storefrontConfig: StorefrontConfig;
   whatsappMeta: {
     mode: WhatsAppState['mode'];
     connectedAt: string | null;
@@ -233,9 +245,27 @@ class PersistentStore {
             (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
           );
           const { cleaned: cleanedOrders } = dedupeOrderEvents(combinedOrders);
+          const remoteProducts = Array.isArray(parsed.products) ? parsed.products : [];
+          const mergedProductsMap = new Map<string, ProductCatalogItem>();
+          for (const rp of remoteProducts) {
+            mergedProductsMap.set(rp.shopifyProductId || rp.id, rp);
+          }
+          for (const lp of this.state.products) {
+            const key = lp.shopifyProductId || lp.id;
+            const prev = mergedProductsMap.get(key);
+            if (!prev || Date.parse(lp.updatedAt || '0') > Date.parse(prev.updatedAt || '0')) {
+              mergedProductsMap.set(key, lp);
+            }
+          }
+          const mergedStorefrontConfig: StorefrontConfig = {
+            ...DEFAULT_STOREFRONT_CONFIG,
+            ...(parsed.storefrontConfig || {}),
+          };
           this.state = {
             settings: mergedSettings,
             orders: cleanedOrders,
+            products: Array.from(mergedProductsMap.values()),
+            storefrontConfig: mergedStorefrontConfig,
             whatsappMeta: {
               mode: 'baileys_qr',
               connectedAt: parsed.whatsappMeta?.connectedAt || null,
@@ -249,6 +279,7 @@ class PersistentStore {
         } else if (
           hasConfiguredShopify(this.state.settings) ||
           this.state.orders.length > 0 ||
+          this.state.products.length > 0 ||
           this.state.whatsappMeta.phoneNumber
         ) {
           // First time Redis is connected on an already-configured host: seed Redis immediately
@@ -297,6 +328,11 @@ class PersistentStore {
       const loaded: DatabaseState = {
         settings: mergedSettings,
         orders: cleanedOrders,
+        products: Array.isArray(parsed.products) ? parsed.products : [],
+        storefrontConfig: {
+          ...DEFAULT_STOREFRONT_CONFIG,
+          ...(parsed.storefrontConfig || {}),
+        },
         whatsappMeta: {
           mode: 'baileys_qr',
           connectedAt: parsed.whatsappMeta?.connectedAt || null,
@@ -309,6 +345,7 @@ class PersistentStore {
       const needsRewrite =
         eventsDeduped ||
         !parsed.settings?.syncStartDate ||
+        !parsed.storefrontConfig ||
         (Array.isArray(parsed.orders) && cleanedOrders.length !== parsed.orders.length);
       return { state: loaded, needsRewrite };
     } catch {
@@ -334,6 +371,8 @@ class PersistentStore {
     const initial: DatabaseState = {
       settings: hydrateEnvDefaults(DEFAULT_SETTINGS),
       orders: [],
+      products: [],
+      storefrontConfig: { ...DEFAULT_STOREFRONT_CONFIG },
       whatsappMeta: {
         mode: 'baileys_qr',
         connectedAt: null,
@@ -579,6 +618,62 @@ class PersistentStore {
 
   getPollMessage(messageId: string): unknown | undefined {
     return this.pollMessages[messageId];
+  }
+
+  getProducts(): ProductCatalogItem[] {
+    return Array.isArray(this.state.products) ? this.state.products : [];
+  }
+
+  getProductById(id: string): ProductCatalogItem | undefined {
+    return this.getProducts().find((p) => p.id === id || p.shopifyProductId === id);
+  }
+
+  upsertProduct(product: ProductCatalogItem): ProductCatalogItem {
+    if (!Array.isArray(this.state.products)) {
+      this.state.products = [];
+    }
+    const idx = this.state.products.findIndex(
+      (p) => p.id === product.id || p.shopifyProductId === product.shopifyProductId
+    );
+    if (idx >= 0) {
+      this.state.products[idx] = product;
+    } else {
+      this.state.products.unshift(product);
+    }
+    this.persistState(this.state);
+    return product;
+  }
+
+  setProducts(products: ProductCatalogItem[]): ProductCatalogItem[] {
+    this.state.products = products;
+    this.persistState(this.state);
+    return this.state.products;
+  }
+
+  deleteProduct(id: string): boolean {
+    const prevLen = this.getProducts().length;
+    this.state.products = this.getProducts().filter((p) => p.id !== id && p.shopifyProductId !== id);
+    if (this.state.products.length !== prevLen) {
+      this.persistState(this.state);
+      return true;
+    }
+    return false;
+  }
+
+  getStorefrontConfig(): StorefrontConfig {
+    return {
+      ...DEFAULT_STOREFRONT_CONFIG,
+      ...(this.state.storefrontConfig || {}),
+    };
+  }
+
+  updateStorefrontConfig(partial: Partial<StorefrontConfig>): StorefrontConfig {
+    this.state.storefrontConfig = {
+      ...this.getStorefrontConfig(),
+      ...partial,
+    };
+    this.persistState(this.state);
+    return this.state.storefrontConfig;
   }
 }
 

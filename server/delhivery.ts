@@ -5,7 +5,11 @@ import {
   parseDelhiveryBillingCsv,
   splitDelhiveryChargeWithGst,
 } from '../src/lib/orderRules.js';
-import type { AppSettings, OrderRecord } from '../src/lib/types.js';
+import type {
+  AppSettings,
+  DelhiveryServiceabilityResult,
+  OrderRecord,
+} from '../src/lib/types.js';
 import { fetchShopifyOriginPincode, hasLiveShopifyCredentials } from './shopify.js';
 
 const DELHIVERY_BASE_URL = 'https://track.delhivery.com';
@@ -747,4 +751,151 @@ export function importDelhiveryBillingCsvToOrders(
     updatedCount,
     parsedCount: entries.length,
   };
+}
+
+const pincodeCache = new Map<
+  string,
+  { result: DelhiveryServiceabilityResult; expiresAtMs: number }
+>();
+
+/**
+ * Checks live Delhivery One pincode serviceability (`/c/api/pin-codes/json/?filter_codes=...`)
+ * with a 10-minute in-memory cache so Storefront widget checks stay sub-5ms on repeat visits.
+ */
+export async function checkDelhiveryPincodeServiceability(
+  token: string,
+  rawPincode: string
+): Promise<DelhiveryServiceabilityResult> {
+  const pincode = extractCleanIndianPincode(rawPincode);
+  if (!pincode) {
+    return {
+      pincode: rawPincode,
+      serviceable: false,
+      codAvailable: false,
+      prepaidAvailable: false,
+      pickupAvailable: false,
+      city: '',
+      state: '',
+      remarks: 'Invalid 6-digit Indian pincode.',
+      source: 'rules_only',
+    };
+  }
+
+  const cleanToken = (token || '').trim();
+  if (!cleanToken) {
+    return {
+      pincode,
+      serviceable: true,
+      codAvailable: true,
+      prepaidAvailable: true,
+      pickupAvailable: false,
+      city: '',
+      state: '',
+      remarks: 'Evaluated via catalog rules (Delhivery token not configured).',
+      source: 'rules_only',
+    };
+  }
+
+  const cacheKey = `${cleanToken.slice(-8)}:${pincode}`;
+  const cached = pincodeCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return cached.result;
+  }
+
+  try {
+    const res = await fetch(
+      `${DELHIVERY_BASE_URL}/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(pincode)}`,
+      {
+        headers: {
+          Authorization: `Token ${cleanToken}`,
+          Accept: 'application/json',
+        },
+      }
+    );
+
+    if (!res.ok) {
+      return {
+        pincode,
+        serviceable: true,
+        codAvailable: true,
+        prepaidAvailable: true,
+        pickupAvailable: false,
+        city: '',
+        state: '',
+        remarks: `Delhivery API ${res.status} — evaluated with catalog rules.`,
+        source: 'rules_only',
+      };
+    }
+
+    const data = (await res.json()) as {
+      delivery_codes?: Array<{
+        postal_code?: {
+          pin?: number | string;
+          city?: string;
+          state_code?: string;
+          cod?: string;
+          pre_paid?: string;
+          pickup?: string;
+          is_oda?: string;
+          remarks?: string;
+        };
+      }>;
+    };
+
+    const entry = data.delivery_codes?.[0]?.postal_code;
+    if (!entry) {
+      const result: DelhiveryServiceabilityResult = {
+        pincode,
+        serviceable: false,
+        codAvailable: false,
+        prepaidAvailable: false,
+        pickupAvailable: false,
+        city: '',
+        state: '',
+        remarks: `Pincode ${pincode} is currently unserviceable by Delhivery.`,
+        source: 'delhivery_api',
+      };
+      pincodeCache.set(cacheKey, { result, expiresAtMs: Date.now() + 10 * 60_000 });
+      return result;
+    }
+
+    const codAvailable = String(entry.cod || '').toUpperCase() === 'Y';
+    const prepaidAvailable = String(entry.pre_paid || '').toUpperCase() === 'Y';
+    const pickupAvailable = String(entry.pickup || '').toUpperCase() === 'Y';
+    const remarks = String(entry.remarks || '').trim();
+    const serviceable =
+      (codAvailable || prepaidAvailable) && !remarks.toLowerCase().includes('embargo');
+
+    const result: DelhiveryServiceabilityResult = {
+      pincode,
+      serviceable,
+      codAvailable,
+      prepaidAvailable,
+      pickupAvailable,
+      city: String(entry.city || '').trim(),
+      state: String(entry.state_code || '').trim(),
+      remarks:
+        remarks ||
+        (serviceable
+          ? entry.is_oda === 'Y'
+            ? 'Serviceable (Out of Delivery Area — extra transit time)'
+            : 'Serviceable via Delhivery'
+          : 'Not serviceable'),
+      source: 'delhivery_api',
+    };
+    pincodeCache.set(cacheKey, { result, expiresAtMs: Date.now() + 10 * 60_000 });
+    return result;
+  } catch {
+    return {
+      pincode,
+      serviceable: true,
+      codAvailable: true,
+      prepaidAvailable: true,
+      pickupAvailable: false,
+      city: '',
+      state: '',
+      remarks: 'Delhivery check timed out — evaluated with catalog rules.',
+      source: 'rules_only',
+    };
+  }
 }

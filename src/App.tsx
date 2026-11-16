@@ -4,33 +4,50 @@ import {
   BookOpen,
   Layers,
   LayoutList,
+  MapPin,
   Menu,
+  Palette,
   PanelLeft,
   PanelLeftClose,
   Pin,
   PinOff,
   QrCode,
   RefreshCw,
+  SearchCheck,
   SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { LiveAmbientBackground, type BackgroundMode } from './components/LiveAmbientBackground';
 import { OrdersView } from './components/OrdersView';
+import { PincodeCatalogView } from './components/PincodeCatalogView';
 import { ReportsView } from './components/ReportsView';
+import { SeoManagerView } from './components/SeoManagerView';
 import { SettingsView, type SettingsTab } from './components/SettingsView';
 import { SetupGuideView } from './components/SetupGuideView';
+import { ThemeStudioView } from './components/ThemeStudioView';
 import { WhatsAppQrView } from './components/WhatsAppQrView';
 import { DEFAULT_SETTINGS, getWhatsAppDisplayState, hasHighRtoTag } from './lib/orderRules';
+import { DEFAULT_STOREFRONT_CONFIG } from './lib/storefrontRules';
 import type {
   AppSettings,
   DashboardPayload,
   OrderMetrics,
   OrderRecord,
+  ProductCatalogItem,
+  StorefrontConfig,
   WhatsAppEngineMode,
   WhatsAppState,
 } from './lib/types';
 
-type ActiveTab = 'orders' | 'reports' | 'whatsapp' | 'settings' | 'setup';
+type ActiveTab =
+  | 'orders'
+  | 'reports'
+  | 'pincode'
+  | 'seo'
+  | 'theme'
+  | 'whatsapp'
+  | 'settings'
+  | 'setup';
 
 const SIDEBAR_PIN_STORAGE_KEY = 'orderpulse_sidebar_pinned';
 const BG_MODE_STORAGE_KEY = 'orderpulse_bg_mode';
@@ -65,17 +82,30 @@ const EMPTY_WHATSAPP: WhatsAppState = {
   lastError: null,
 };
 
+type NavSection = 'operations' | 'storefront' | 'system';
+
 const NAV_ITEMS: Array<{
   id: ActiveTab;
   label: string;
   shortLabel: string;
+  section: NavSection;
+  badge?: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: 'orders', label: 'Orders & Polls', shortLabel: 'Orders', icon: LayoutList },
-  { id: 'reports', label: 'Daily Reports & PDF', shortLabel: 'Reports', icon: BarChart3 },
-  { id: 'whatsapp', label: 'WhatsApp QR', shortLabel: 'WhatsApp', icon: QrCode },
-  { id: 'settings', label: 'Automation & Shopify', shortLabel: 'Automation', icon: SlidersHorizontal },
-  { id: 'setup', label: 'Install & Deploy', shortLabel: 'Deploy Guide', icon: BookOpen },
+  { id: 'orders', label: 'Orders & Polls', shortLabel: 'Orders', section: 'operations', icon: LayoutList },
+  { id: 'reports', label: 'Daily Reports & PDF', shortLabel: 'Reports', section: 'operations', icon: BarChart3 },
+  { id: 'whatsapp', label: 'WhatsApp QR', shortLabel: 'WhatsApp', section: 'operations', icon: QrCode },
+  { id: 'pincode', label: 'Pincode Catalog', shortLabel: 'Pincode', section: 'storefront', icon: MapPin },
+  { id: 'seo', label: 'SEO Manager', shortLabel: 'SEO', section: 'storefront', icon: SearchCheck },
+  { id: 'theme', label: 'Theme Studio', shortLabel: 'Theme', section: 'storefront', badge: 'Next', icon: Palette },
+  { id: 'settings', label: 'Automation & Shopify', shortLabel: 'Automation', section: 'system', icon: SlidersHorizontal },
+  { id: 'setup', label: 'Install & Deploy', shortLabel: 'Guide', section: 'system', icon: BookOpen },
+];
+
+const SIDEBAR_SECTIONS: Array<{ id: NavSection; title: string }> = [
+  { id: 'operations', title: 'Operations' },
+  { id: 'storefront', title: 'Storefront & SEO' },
+  { id: 'system', title: 'System' },
 ];
 
 export default function App() {
@@ -123,6 +153,10 @@ export default function App() {
   const [metrics, setMetrics] = useState<OrderMetrics>(EMPTY_METRICS);
   const [whatsapp, setWhatsapp] = useState<WhatsAppState>(EMPTY_WHATSAPP);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [products, setProducts] = useState<ProductCatalogItem[]>([]);
+  const [storefrontConfig, setStorefrontConfig] = useState<StorefrontConfig>(
+    DEFAULT_STOREFRONT_CONFIG
+  );
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -157,6 +191,16 @@ export default function App() {
       setOrders(data.orders);
       setMetrics(data.metrics);
       setWhatsapp(data.whatsapp);
+      if (Array.isArray(data.products)) {
+        setProducts(data.products);
+      }
+      if (data.storefrontConfig) {
+        setStorefrontConfig((prev) =>
+          JSON.stringify(prev) === JSON.stringify(data.storefrontConfig)
+            ? prev
+            : data.storefrontConfig!
+        );
+      }
       setCloudSyncEnabled(Boolean(data.cloudSyncEnabled));
       setSettings((prev) =>
         JSON.stringify(prev) === JSON.stringify(data.settings) ? prev : data.settings
@@ -570,6 +614,18 @@ export default function App() {
       breadcrumb: `${settings.shopName} / Reports & Analytics`,
       title: 'Date-Wise Order, Confirmation & Tracking Reports',
     },
+    pincode: {
+      breadcrumb: `${settings.shopName} / Storefront & SEO`,
+      title: 'Pincode-Based Product Catalog & Delivery Filter',
+    },
+    seo: {
+      breadcrumb: `${settings.shopName} / Storefront & SEO`,
+      title: 'Product SEO Audit, SERP Preview & Schema Manager',
+    },
+    theme: {
+      breadcrumb: `${settings.shopName} / Storefront & SEO`,
+      title: 'Theme Studio (Phase 1 — Coming Next)',
+    },
     whatsapp: {
       breadcrumb: `${settings.shopName} / WhatsApp QR`,
       title: '24/7 WhatsApp Linked Device Session',
@@ -645,30 +701,52 @@ export default function App() {
           )}
         </div>
 
-        <nav aria-label="Primary Navigation" className="flex-1 space-y-1.5 px-2.5 py-5">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = activeTab === item.id;
+        <nav
+          aria-label="Primary Navigation"
+          className="flex-1 space-y-4 overflow-y-auto px-2.5 py-4 no-scrollbar"
+        >
+          {SIDEBAR_SECTIONS.map((section) => {
+            const sectionItems = NAV_ITEMS.filter((i) => i.section === section.id);
             return (
-              <button
-                key={item.id}
-                type="button"
-                title={!sidebarExpanded ? item.label : undefined}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  if (!sidebarPinned) setSidebarHovered(false);
-                }}
-                className={`flex w-full items-center rounded-lg py-2.5 text-left text-sm font-medium transition-colors whitespace-nowrap ${
-                  sidebarExpanded ? 'gap-3 px-3' : 'justify-center px-2'
-                } ${
-                  active
-                    ? 'bg-emerald-600/90 text-white shadow-sm shadow-emerald-950/50'
-                    : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-100'
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                {sidebarExpanded && <span className="truncate">{item.label}</span>}
-              </button>
+              <div key={section.id} className="space-y-1">
+                {sidebarExpanded && (
+                  <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                    {section.title}
+                  </p>
+                )}
+                {sectionItems.map((item) => {
+                  const Icon = item.icon;
+                  const active = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      title={!sidebarExpanded ? item.label : undefined}
+                      onClick={() => {
+                        setActiveTab(item.id);
+                        if (!sidebarPinned) setSidebarHovered(false);
+                      }}
+                      className={`flex w-full items-center rounded-lg py-2 text-left text-sm font-medium transition-colors whitespace-nowrap ${
+                        sidebarExpanded ? 'justify-between gap-2 px-3' : 'justify-center px-2'
+                      } ${
+                        active
+                          ? 'bg-emerald-600/90 text-white shadow-sm shadow-emerald-950/50'
+                          : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-100'
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        {sidebarExpanded && <span className="truncate">{item.label}</span>}
+                      </span>
+                      {sidebarExpanded && item.badge && (
+                        <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>
@@ -761,25 +839,45 @@ export default function App() {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <nav aria-label="Mobile Navigation" className="flex-1 space-y-1 px-3 py-4">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const active = activeTab === item.id;
+            <nav
+              aria-label="Mobile Navigation"
+              className="flex-1 space-y-4 overflow-y-auto px-3 py-4"
+            >
+              {SIDEBAR_SECTIONS.map((section) => {
+                const sectionItems = NAV_ITEMS.filter((i) => i.section === section.id);
                 return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setMobileMenuOpen(false);
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium ${
-                      active ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    <span>{item.label}</span>
-                  </button>
+                  <div key={section.id} className="space-y-1">
+                    <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                      {section.title}
+                    </p>
+                    {sectionItems.map((item) => {
+                      const Icon = item.icon;
+                      const active = activeTab === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveTab(item.id);
+                            setMobileMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium ${
+                            active ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'
+                          }`}
+                        >
+                          <span className="flex items-center gap-3">
+                            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            <span>{item.label}</span>
+                          </span>
+                          {item.badge && (
+                            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                              {item.badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 );
               })}
             </nav>
@@ -868,39 +966,41 @@ export default function App() {
             </div>
           </div>
 
-          {/* Zone 2: Well-Maintained Top Workspace Tabs */}
-          <nav
-            aria-label="Dashboard Sections"
-            className="hidden items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/90 p-1 xl:flex"
-          >
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveTab(item.id)}
-                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    active
-                      ? 'bg-slate-800 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-100'
-                  }`}
-                >
-                  <Icon
-                    className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-emerald-400' : ''}`}
-                    aria-hidden="true"
-                  />
-                  <span>{item.shortLabel}</span>
-                  {item.id === 'orders' && highRtoCount > 0 && (
-                    <span className="font-mono text-[11px] text-amber-300 tabular-nums">
-                      ({orders.length})
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+          {/* Zone 2: Well-Maintained Top Workspace Tabs (hidden when left sidebar is pinned open) */}
+          {!sidebarPinned && (
+            <nav
+              aria-label="Dashboard Sections"
+              className="hidden items-center gap-0.5 rounded-lg border border-slate-800 bg-slate-900/90 p-1 xl:flex"
+            >
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                const active = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveTab(item.id)}
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                      active
+                        ? 'bg-slate-800 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-slate-100'
+                    }`}
+                  >
+                    <Icon
+                      className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-emerald-400' : ''}`}
+                      aria-hidden="true"
+                    />
+                    <span>{item.shortLabel}</span>
+                    {item.id === 'orders' && highRtoCount > 0 && (
+                      <span className="font-mono text-[10px] text-amber-300 tabular-nums">
+                        ({orders.length})
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          )}
 
           {/* Zone 3: Primary Action */}
           <button
@@ -1037,6 +1137,27 @@ export default function App() {
                   setActiveTab('settings');
                 }}
               />
+            ) : activeTab === 'pincode' ? (
+              <PincodeCatalogView
+                products={products}
+                storefrontConfig={storefrontConfig}
+                settings={settings}
+                onProductsUpdated={setProducts}
+                onStorefrontConfigUpdated={setStorefrontConfig}
+              />
+            ) : activeTab === 'seo' ? (
+              <SeoManagerView
+                products={products}
+                storefrontConfig={storefrontConfig}
+                settings={settings}
+                onProductsUpdated={setProducts}
+                onStorefrontConfigUpdated={setStorefrontConfig}
+              />
+            ) : activeTab === 'theme' ? (
+              <ThemeStudioView
+                onOpenPincodeCatalog={() => setActiveTab('pincode')}
+                onOpenSeoManager={() => setActiveTab('seo')}
+              />
             ) : activeTab === 'whatsapp' ? (
               <WhatsAppQrView
                 whatsapp={whatsapp}
@@ -1074,11 +1195,16 @@ export default function App() {
         className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800/90 bg-slate-950/95 backdrop-blur-xl pb-safe lg:hidden"
       >
         <div className="grid h-16 grid-cols-5 items-stretch">
-          {NAV_ITEMS.map((item) => {
+          {(
+            [
+              { id: 'orders', label: 'Orders', icon: LayoutList },
+              { id: 'reports', label: 'Reports', icon: BarChart3 },
+              { id: 'pincode', label: 'Pincode', icon: MapPin },
+              { id: 'seo', label: 'SEO', icon: SearchCheck },
+            ] as const
+          ).map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;
-            const mobileLabel =
-              item.id === 'setup' ? 'Guide' : item.shortLabel;
             return (
               <button
                 key={item.id}
@@ -1110,10 +1236,28 @@ export default function App() {
                     </span>
                   )}
                 </div>
-                <span className="max-w-full truncate whitespace-nowrap leading-none">{mobileLabel}</span>
+                <span className="max-w-full truncate whitespace-nowrap leading-none">
+                  {item.label}
+                </span>
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            aria-label="More pages"
+            className={`relative flex min-h-[48px] flex-col items-center justify-center gap-1 px-0.5 text-[10px] font-medium transition-colors active:scale-95 ${
+              activeTab === 'whatsapp' ||
+              activeTab === 'theme' ||
+              activeTab === 'settings' ||
+              activeTab === 'setup'
+                ? 'text-emerald-400'
+                : 'text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            <Menu className="h-4 w-4" aria-hidden="true" />
+            <span className="max-w-full truncate whitespace-nowrap leading-none">More</span>
+          </button>
         </div>
       </nav>
     </div>

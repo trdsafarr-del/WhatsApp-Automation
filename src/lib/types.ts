@@ -142,11 +142,64 @@ export interface OrderMetrics {
   avgResponseMinutes: number | null;
 }
 
+export type PincodeRuleMode = 'all_india' | 'allow_list' | 'block_list';
+
+export interface ProductCatalogItem {
+  id: string;
+  shopifyProductId: string;
+  title: string;
+  handle: string;
+  status: 'active' | 'draft' | 'archived';
+  productType: string;
+  vendor: string;
+  imageUrl: string;
+  imageAlt: string;
+  price: string;
+  currency: string;
+  seoTitle: string;
+  seoDescription: string;
+  tags: string;
+  pincodeMode: PincodeRuleMode;
+  allowedPincodes: string[];
+  blockedPincodes: string[];
+  allowCod: boolean;
+  estimatedDeliveryDays: number | null;
+  updatedAt: string;
+  shopifySyncedAt?: string | null;
+}
+
+export interface StorefrontConfig {
+  pincodeGateEnabled: boolean;
+  hideUnavailableProducts: boolean;
+  showDeliveryEstimateOnPdp: boolean;
+  defaultDeliveryDays: number;
+  pincodePromptTitle: string;
+  unavailableBadgeText: string;
+  seoTitleTemplate: string;
+  seoDescriptionTemplate: string;
+  enableJsonLdSchema: boolean;
+  storefrontAppUrl: string;
+}
+
+export interface DelhiveryServiceabilityResult {
+  pincode: string;
+  serviceable: boolean;
+  codAvailable: boolean;
+  prepaidAvailable: boolean;
+  pickupAvailable: boolean;
+  city: string;
+  state: string;
+  remarks: string;
+  source: 'delhivery_api' | 'rules_only';
+}
+
 export interface DashboardPayload {
   orders: OrderRecord[];
   whatsapp: WhatsAppState;
   settings: AppSettings;
   metrics: OrderMetrics;
+  products?: ProductCatalogItem[];
+  storefrontConfig?: StorefrontConfig;
   cloudSyncEnabled?: boolean;
   serverTime: string;
 }
