@@ -661,6 +661,26 @@ export function GeoSeoMatrixPanel({
           </div>
         </div>
 
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/75 px-3 py-2 text-[11px]">
+          <div className="min-w-0 text-slate-300">
+            <span className="font-semibold text-amber-300">Required Shopify Scope for App Proxy:</span>{' '}
+            <code className="font-mono text-emerald-300">write_app_proxy</code> must be included in{' '}
+            <span className="font-mono text-slate-200">API access &rarr; Scopes</span> before clicking Release.
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              void handleCopy(
+                'proxy-scopes',
+                'read_orders,write_orders,read_customers,read_locations,read_products,write_products,read_script_tags,write_script_tags,write_content,write_app_proxy'
+              )
+            }
+            className="shrink-0 rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-slate-700"
+          >
+            {copiedKey === 'proxy-scopes' ? 'Copied All Scopes' : 'Copy Full Scopes'}
+          </button>
+        </div>
+
         {proxyHealth && (
           <div
             className={`mt-3 rounded-lg border px-3.5 py-2.5 text-xs ${
@@ -672,19 +692,19 @@ export function GeoSeoMatrixPanel({
             <p className="font-semibold">
               {proxyHealth.storefrontOk
                 ? `LIVE (HTTP ${proxyHealth.storefrontStatus}): ${proxyHealth.storefrontTestUrl}`
-                : `Storefront returned HTTP ${proxyHealth.storefrontStatus || 'Error'} (${proxyHealth.storefrontContentLength} bytes) — Vercel Backend: ${proxyHealth.backendOk ? '200 OK Ready' : 'Check Vercel'}`}
+                : `Storefront returned HTTP ${proxyHealth.storefrontStatus || 'Error'} (${proxyHealth.storefrontContentLength} bytes) — Backend: ${proxyHealth.backendOk ? '200 OK Ready' : 'Check Backend'}`}
             </p>
             <p className="mt-1 text-[11.5px] opacity-90">{proxyHealth.diagnosticHint}</p>
             {!proxyHealth.storefrontOk && (
               <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 text-[11px] text-amber-200/90">
                 <li>
-                  Open <span className="font-mono">dev.shopify.com &rarr; orderpulse-whatsapp &rarr; Versions</span> and confirm the version with App Proxy has the green <strong className="text-white">Active / Released</strong> badge (not Draft).
+                  Ensure <code className="text-white">write_app_proxy</code> is in <span className="font-mono">dev.shopify.com &rarr; Scopes</span>, then click <strong className="text-white">Release</strong> so the version shows green <strong className="text-white">Active</strong>.
                 </li>
                 <li>
                   In <span className="font-mono">App proxy</span>, verify exact values: Prefix=<code className="text-white">{proxyRootPart}</code>, Subpath=<code className="text-white">{proxySubPart}</code>, URL=<code className="text-white">{proxyTargetEndpoint}</code>.
                 </li>
                 <li>
-                  Open <span className="font-mono">Shopify Admin &rarr; Settings &rarr; Apps and sales channels &rarr; orderpulse-whatsapp</span> and ensure the updated version is installed/active on Broomies Bakery.
+                  Open <span className="font-mono">Shopify Admin &rarr; Settings &rarr; Apps and sales channels &rarr; orderpulse-whatsapp</span> and approve the new <code className="text-white">write_app_proxy</code> permission on Broomies Bakery.
                 </li>
               </ol>
             )}
