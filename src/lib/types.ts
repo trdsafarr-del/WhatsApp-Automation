@@ -170,6 +170,7 @@ export interface ProductCatalogItem {
 
 export interface StorefrontConfig {
   pincodeGateEnabled: boolean;
+  autoDetectPincode: boolean;
   hideUnavailableProducts: boolean;
   showDeliveryEstimateOnPdp: boolean;
   defaultDeliveryDays: number;
@@ -179,6 +180,16 @@ export interface StorefrontConfig {
   seoDescriptionTemplate: string;
   enableJsonLdSchema: boolean;
   storefrontAppUrl: string;
+}
+
+export interface PincodeAutoDetectResult {
+  ok: boolean;
+  detected: boolean;
+  pincode: string;
+  city: string;
+  state: string;
+  source: 'vercel_edge' | 'ip_geo' | 'gps_nominatim' | 'india_post' | 'none';
+  reason?: string;
 }
 
 export interface DelhiveryServiceabilityResult {

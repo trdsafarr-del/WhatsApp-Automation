@@ -8,7 +8,11 @@ import {
   createSampleCatalogProducts,
   DEFAULT_STOREFRONT_CONFIG,
   evaluateProductForPincode,
+  extractClientIpFromHeaders,
+  extractPincodeFromIpGeo,
+  extractPincodeFromReverseGeocode,
   normalizeIndianPincode,
+  normalizeStorefrontOrigin,
   parsePincodeListInput,
   renderBulkSeoTemplate,
   slugifyProductHandle,
@@ -118,4 +122,70 @@ test('renderBulkSeoTemplate, slugifyProductHandle, and buildProductJsonLd produc
 
   const snippet = buildShopifyLiquidSnippet('https://orderpulse.vercel.app/');
   assert.ok(snippet.includes('https://orderpulse.vercel.app/api/storefront/widget.js'));
+});
+
+test('auto-pincode helpers extract public client IP, GPS reverse geocode, and IP geo payloads', () => {
+  assert.equal(DEFAULT_STOREFRONT_CONFIG.autoDetectPincode, true);
+
+  assert.equal(
+    extractClientIpFromHeaders({
+      'x-forwarded-for': '127.0.0.1, ::ffff:49.36.120.14, 10.0.0.2',
+    }),
+    '49.36.120.14'
+  );
+  assert.equal(extractClientIpFromHeaders({ 'x-forwarded-for': '192.168.1.5, ::1' }), '');
+
+  const gpsHit = extractPincodeFromReverseGeocode({
+    address: {
+      country_code: 'in',
+      city: 'Mumbai',
+      state: 'Maharashtra',
+      postcode: '400 001',
+    },
+  });
+  assert.deepEqual(gpsHit, { pincode: '400001', city: 'Mumbai', state: 'Maharashtra' });
+
+  const gpsDisplayFallback = extractPincodeFromReverseGeocode({
+    display_name: 'Connaught Place, New Delhi, Delhi, 110001, India',
+    address: { country_code: 'in', city: 'New Delhi', state: 'Delhi' },
+  });
+  assert.equal(gpsDisplayFallback.pincode, '110001');
+
+  const ipHit = extractPincodeFromIpGeo({
+    country_code: 'IN',
+    city: 'Bengaluru',
+    region: 'Karnataka',
+    postal: '560001',
+  });
+  assert.deepEqual(ipHit, {
+    isIndia: true,
+    pincode: '560001',
+    city: 'Bengaluru',
+    state: 'Karnataka',
+  });
+
+  const foreignIp = extractPincodeFromIpGeo({
+    country_code: 'US',
+    city: 'San Jose',
+    postal: '95113',
+  });
+  assert.equal(foreignIp.isIndia, false);
+  assert.equal(foreignIp.pincode, '');
+
+  assert.equal(
+    normalizeStorefrontOrigin('whatsa86.vercel.app/'),
+    'https://whatsa86.vercel.app'
+  );
+  assert.equal(
+    normalizeStorefrontOrigin('http://whatsa86.vercel.app'),
+    'https://whatsa86.vercel.app'
+  );
+  assert.equal(
+    normalizeStorefrontOrigin('', 'whatsa86.vercel.app', 'http,https', 'http'),
+    'https://whatsa86.vercel.app'
+  );
+  assert.equal(
+    normalizeStorefrontOrigin('', 'localhost:3000', undefined, 'http'),
+    'http://localhost:3000'
+  );
 });

@@ -4,12 +4,21 @@ import {
   computeSeoAudit,
   createSampleCatalogProducts,
   evaluateProductForPincode,
+  extractClientIpFromHeaders,
+  extractPincodeFromIpGeo,
+  extractPincodeFromReverseGeocode,
   normalizeIndianPincode,
+  normalizeStorefrontOrigin,
   parsePincodeListInput,
   renderBulkSeoTemplate,
   slugifyProductHandle,
 } from '../src/lib/storefrontRules.js';
-import type { PincodeRuleMode, ProductCatalogItem, StorefrontConfig } from '../src/lib/types.js';
+import type {
+  PincodeAutoDetectResult,
+  PincodeRuleMode,
+  ProductCatalogItem,
+  StorefrontConfig,
+} from '../src/lib/types.js';
 import { checkDelhiveryPincodeServiceability } from './delhivery.js';
 import {
   fetchShopifyProducts,
@@ -24,62 +33,334 @@ function setPublicCors(res: Response) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
+const ipGeoCache = new Map<string, { result: PincodeAutoDetectResult; expiresAtMs: number }>();
+const indiaPostPinCache = new Map<string, { city: string; state: string; expiresAtMs: number }>();
+const indiaPostCityCache = new Map<
+  string,
+  { pincode: string; city: string; state: string; expiresAtMs: number }
+>();
+
+async function lookupIndiaPostByPincode(
+  pincode: string
+): Promise<{ city: string; state: string } | null> {
+  const clean = normalizeIndianPincode(pincode);
+  if (!clean) return null;
+  const cached = indiaPostPinCache.get(clean);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return { city: cached.city, state: cached.state };
+  }
+  try {
+    const res = await fetch(`https://api.postalpincode.in/pincode/${clean}`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) return null;
+    const raw = (await res.json()) as Array<{
+      Status?: string;
+      PostOffice?: Array<{ District?: string; Division?: string; State?: string }>;
+    }>;
+    const po = raw?.[0]?.PostOffice?.[0];
+    if (!po) return null;
+    const city = String(po.District || po.Division || '').trim();
+    const state = String(po.State || '').trim();
+    if (city || state) {
+      indiaPostPinCache.set(clean, { city, state, expiresAtMs: Date.now() + 60 * 60_000 });
+      return { city, state };
+    }
+  } catch {
+    // Non-fatal fallback
+  }
+  return null;
+}
+
+async function lookupIndiaPostByCity(
+  cityName: string
+): Promise<{ pincode: string; city: string; state: string } | null> {
+  const cleanCity = (cityName || '').replace(/[^a-zA-Z\s-]/g, '').trim();
+  if (cleanCity.length < 3) return null;
+  const cacheKey = cleanCity.toLowerCase();
+  const cached = indiaPostCityCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return { pincode: cached.pincode, city: cached.city, state: cached.state };
+  }
+  try {
+    const res = await fetch(
+      `https://api.postalpincode.in/postoffice/${encodeURIComponent(cleanCity)}`,
+      { signal: AbortSignal.timeout(3000) }
+    );
+    if (!res.ok) return null;
+    const raw = (await res.json()) as Array<{
+      Status?: string;
+      PostOffice?: Array<{
+        Name?: string;
+        Pincode?: string;
+        District?: string;
+        State?: string;
+        DeliveryStatus?: string;
+      }>;
+    }>;
+    const offices = raw?.[0]?.PostOffice;
+    if (!Array.isArray(offices) || offices.length === 0) return null;
+    const preferred =
+      offices.find(
+        (o) =>
+          normalizeIndianPincode(o.Pincode || '') &&
+          String(o.DeliveryStatus || '').toLowerCase() === 'delivery'
+      ) || offices.find((o) => normalizeIndianPincode(o.Pincode || ''));
+    const pin = preferred ? normalizeIndianPincode(preferred.Pincode || '') : '';
+    if (!pin) return null;
+    const result = {
+      pincode: pin,
+      city: String(preferred?.District || cleanCity).trim(),
+      state: String(preferred?.State || '').trim(),
+    };
+    indiaPostCityCache.set(cacheKey, { ...result, expiresAtMs: Date.now() + 60 * 60_000 });
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+async function detectPincodeFromIp(clientIp: string): Promise<PincodeAutoDetectResult> {
+  const cacheKey = clientIp || '__self__';
+  const cached = ipGeoCache.get(cacheKey);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return cached.result;
+  }
+
+  const endpoints = clientIp
+    ? [
+        `https://ipwho.is/${encodeURIComponent(clientIp)}`,
+        `https://ipapi.co/${encodeURIComponent(clientIp)}/json/`,
+      ]
+    : ['https://ipwho.is/', 'https://ipapi.co/json/'];
+
+  let fallbackIndiaCity = '';
+  let fallbackIndiaState = '';
+
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        headers: { Accept: 'application/json', 'User-Agent': 'OrderPulse-Storefront/1.0' },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) continue;
+      const json = (await res.json()) as unknown;
+      const parsed = extractPincodeFromIpGeo(json);
+      if (parsed.isIndia && parsed.pincode) {
+        const hit: PincodeAutoDetectResult = {
+          ok: true,
+          detected: true,
+          pincode: parsed.pincode,
+          city: parsed.city,
+          state: parsed.state,
+          source: 'ip_geo',
+        };
+        ipGeoCache.set(cacheKey, { result: hit, expiresAtMs: Date.now() + 15 * 60_000 });
+        return hit;
+      }
+      if (parsed.isIndia && parsed.city && !fallbackIndiaCity) {
+        fallbackIndiaCity = parsed.city;
+        fallbackIndiaState = parsed.state;
+      }
+    } catch {
+      // Try next geo provider
+    }
+  }
+
+  if (fallbackIndiaCity) {
+    const cityPin = await lookupIndiaPostByCity(fallbackIndiaCity);
+    if (cityPin) {
+      const hit: PincodeAutoDetectResult = {
+        ok: true,
+        detected: true,
+        pincode: cityPin.pincode,
+        city: cityPin.city || fallbackIndiaCity,
+        state: cityPin.state || fallbackIndiaState,
+        source: 'india_post',
+      };
+      ipGeoCache.set(cacheKey, { result: hit, expiresAtMs: Date.now() + 15 * 60_000 });
+      return hit;
+    }
+  }
+
+  const miss: PincodeAutoDetectResult = {
+    ok: true,
+    detected: false,
+    pincode: '',
+    city: fallbackIndiaCity,
+    state: fallbackIndiaState,
+    source: 'none',
+    reason: 'Could not auto-detect an Indian pincode from network IP — use GPS or enter manually.',
+  };
+  ipGeoCache.set(cacheKey, { result: miss, expiresAtMs: Date.now() + 2 * 60_000 });
+  return miss;
+}
+
 function buildStorefrontWidgetScript(origin: string): string {
   const safeOrigin = JSON.stringify(origin);
   return `(function () {
   var APP_ORIGIN = ${safeOrigin};
   var STORAGE_KEY = 'orderpulse_customer_pincode';
+  var SOURCE_KEY = 'orderpulse_customer_pincode_source';
   var rootEl = document.getElementById('orderpulse-pincode-bar');
   if (rootEl && rootEl.getAttribute('data-app-origin')) {
     APP_ORIGIN = rootEl.getAttribute('data-app-origin').replace(/\\/+$/, '');
   }
 
+  var lastPayload = null;
+  var autoAttempted = false;
+  var isDetectingGps = false;
+  var inlineNote = '';
+  var observerAttached = false;
+  var observerTimer = null;
+
   function getSavedPin() {
     try { return localStorage.getItem(STORAGE_KEY) || ''; } catch (e) { return ''; }
   }
-  function savePin(pin) {
-    try { localStorage.setItem(STORAGE_KEY, pin); } catch (e) {}
+  function getSavedSource() {
+    try { return localStorage.getItem(SOURCE_KEY) || ''; } catch (e) { return ''; }
+  }
+  function savePin(pin, source) {
+    try {
+      localStorage.setItem(STORAGE_KEY, pin);
+      if (source) localStorage.setItem(SOURCE_KEY, source);
+    } catch (e) {}
   }
 
-  function injectBanner(config, savedPin, delhivery) {
+  function injectBanner(config, savedPin, delhivery, customMsg) {
     if (config && config.pincodeGateEnabled === false) return;
+    if (!document.body) return;
     var host = document.getElementById('orderpulse-pincode-bar');
     if (!host) {
       host = document.createElement('div');
       host.id = 'orderpulse-pincode-bar';
       document.body.insertBefore(host, document.body.firstChild);
     }
-    var statusText = '';
-    if (savedPin) {
-      var loc = delhivery && delhivery.city ? ' (' + delhivery.city + ')' : '';
-      statusText = delhivery && delhivery.serviceable === false
-        ? 'Not serviceable at ' + savedPin + loc
-        : 'Delivering to ' + savedPin + loc;
+    var statusText = customMsg || inlineNote || '';
+    var statusColor = '#6ee7b7';
+    if (!statusText && savedPin) {
+      var locParts = [];
+      if (delhivery && delhivery.city) locParts.push(delhivery.city);
+      if (delhivery && delhivery.state) locParts.push(delhivery.state);
+      var loc = locParts.length ? ' (' + locParts.join(', ') + ')' : '';
+      var src = getSavedSource();
+      var prefix = src === 'auto_gps' ? 'GPS detected: ' : src === 'auto_ip' ? 'Auto-detected: ' : 'Delivering to ';
+      if (delhivery && delhivery.serviceable === false) {
+        statusText = 'Not serviceable at ' + savedPin + loc;
+        statusColor = '#fca5a5';
+      } else {
+        statusText = prefix + savedPin + loc;
+      }
     }
+
     host.innerHTML =
-      '<div style="background:#0f172a;color:#f8fafc;padding:8px 14px;font-family:system-ui,-apple-system,sans-serif;font-size:13px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;border-bottom:1px solid #1e293b;">' +
-      '<span>' + ((config && config.pincodePromptTitle) || 'Check delivery availability') + '</span>' +
-      '<form id="op-pin-form" style="display:inline-flex;gap:6px;align-items:center;">' +
-      '<input id="op-pin-input" type="text" maxlength="6" inputmode="numeric" placeholder="Enter 6-digit pincode" value="' + (savedPin || '') + '" style="padding:5px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#fff;width:150px;font-size:13px;" />' +
+      '<div style="background:#0f172a;color:#f8fafc;padding:8px 14px;font-family:system-ui,-apple-system,sans-serif;font-size:13px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;border-bottom:1px solid #1e293b;">' +
+      '<span style="font-weight:500;">' + ((config && config.pincodePromptTitle) || 'Check delivery availability') + '</span>' +
+      '<form id="op-pin-form" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;">' +
+      '<input id="op-pin-input" type="text" maxlength="6" inputmode="numeric" placeholder="Enter 6-digit pincode" value="' + (savedPin || '') + '" style="padding:5px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#fff;width:140px;font-size:13px;" />' +
       '<button type="submit" style="padding:5px 12px;border-radius:6px;border:none;background:#10b981;color:#fff;font-weight:600;cursor:pointer;font-size:12px;">Check</button>' +
+      '<button type="button" id="op-pin-detect" style="padding:5px 10px;border-radius:6px;border:1px solid #38bdf8;background:#0c4a6e;color:#e0f2fe;font-weight:600;cursor:pointer;font-size:12px;">' +
+      (isDetectingGps ? 'Detecting...' : 'Auto-Fetch PIN') +
+      '</button>' +
       '</form>' +
-      (statusText ? '<span id="op-pin-status" style="color:#6ee7b7;font-weight:500;">' + statusText + '</span>' : '') +
+      (statusText ? '<span id="op-pin-status" style="color:' + statusColor + ';font-weight:500;">' + statusText + '</span>' : '') +
       '</div>';
 
     var form = document.getElementById('op-pin-form');
     if (form) {
       form.addEventListener('submit', function (ev) {
         ev.preventDefault();
+        inlineNote = '';
         var input = document.getElementById('op-pin-input');
         var val = (input && input.value ? input.value : '').replace(/\\D/g, '');
         if (!/^[1-9]\\d{5}$/.test(val)) {
-          alert('Please enter a valid 6-digit Indian pincode.');
+          inlineNote = 'Please enter a valid 6-digit Indian pincode.';
+          injectBanner(config, savedPin, delhivery, inlineNote);
           return;
         }
-        savePin(val);
+        savePin(val, 'manual');
         runCheck(val);
       });
     }
+
+    var detectBtn = document.getElementById('op-pin-detect');
+    if (detectBtn) {
+      detectBtn.addEventListener('click', function () {
+        detectPinViaGps(config);
+      });
+    }
+  }
+
+  function detectPinViaIp(config, silent) {
+    return fetch(APP_ORIGIN + '/api/storefront/auto-pincode')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.detected && data.pincode) {
+          inlineNote = '';
+          savePin(data.pincode, 'auto_ip');
+          runCheck(data.pincode);
+          return true;
+        }
+        if (!silent) {
+          inlineNote = 'Could not auto-fetch pincode — please enter your 6-digit PIN.';
+          injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, inlineNote);
+        }
+        return false;
+      })
+      .catch(function () {
+        return false;
+      });
+  }
+
+  function detectPinViaGps(config) {
+    if (isDetectingGps) return;
+    if (!navigator.geolocation) {
+      isDetectingGps = true;
+      injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, 'Auto-detecting location...');
+      detectPinViaIp(config, false).finally(function () {
+        isDetectingGps = false;
+      });
+      return;
+    }
+
+    isDetectingGps = true;
+    inlineNote = 'Fetching your exact pincode...';
+    injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, inlineNote);
+
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        var lat = pos.coords.latitude;
+        var lon = pos.coords.longitude;
+        fetch(
+          APP_ORIGIN +
+            '/api/storefront/reverse-pincode?lat=' +
+            encodeURIComponent(lat) +
+            '&lon=' +
+            encodeURIComponent(lon)
+        )
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            isDetectingGps = false;
+            if (data && data.detected && data.pincode) {
+              inlineNote = '';
+              savePin(data.pincode, 'auto_gps');
+              runCheck(data.pincode);
+            } else {
+              detectPinViaIp(config, false);
+            }
+          })
+          .catch(function () {
+            isDetectingGps = false;
+            detectPinViaIp(config, false);
+          });
+      },
+      function () {
+        detectPinViaIp(config, false).finally(function () {
+          isDetectingGps = false;
+        });
+      },
+      { enableHighAccuracy: false, timeout: 7000, maximumAge: 300000 }
+    );
   }
 
   function applyCatalogAvailability(payload) {
@@ -96,7 +377,7 @@ function buildStorefrontWidgetScript(origin: string): string {
       var handle = decodeURIComponent(match[1]);
       var info = byHandle[handle];
       if (!info) return;
-      var card = link.closest('.product-card, .card-wrapper, .grid__item, .product-item, li, article') || link.parentElement;
+      var card = link.closest('.grid__item, .product-grid-item, product-component, .product-card, .card-wrapper, .product-item, article, li') || link.parentElement;
       if (!card) return;
       if (!info.available) {
         if (config.hideUnavailableProducts) {
@@ -160,22 +441,47 @@ function buildStorefrontWidgetScript(origin: string): string {
     }
   }
 
+  function ensureDomObserver() {
+    if (observerAttached || typeof MutationObserver === 'undefined' || !document.body) return;
+    observerAttached = true;
+    var observer = new MutationObserver(function () {
+      if (!lastPayload || !lastPayload.pincode) return;
+      if (observerTimer) clearTimeout(observerTimer);
+      observerTimer = setTimeout(function () {
+        applyCatalogAvailability(lastPayload);
+      }, 250);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   function runCheck(pincode) {
     var url = APP_ORIGIN + '/api/storefront/pincode-check?pincode=' + encodeURIComponent(pincode || '');
     fetch(url)
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data || !data.ok) return;
-        injectBanner(data.storefrontConfig, pincode, data.delhivery);
+        lastPayload = data;
+        var cfg = data.storefrontConfig || {};
+        injectBanner(cfg, pincode, data.delhivery);
         if (pincode) {
           applyCatalogAvailability(data);
+          ensureDomObserver();
+        } else if (!autoAttempted && cfg.autoDetectPincode !== false) {
+          autoAttempted = true;
+          detectPinViaIp(cfg, true);
         }
       })
       .catch(function () {});
   }
 
   var initialPin = getSavedPin();
-  runCheck(initialPin);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () {
+      runCheck(initialPin);
+    });
+  } else {
+    runCheck(initialPin);
+  }
 })();`;
 }
 
@@ -183,6 +489,122 @@ export function registerStorefrontRoutes(app: Express) {
   app.options('/api/storefront/*', (_req: Request, res: Response) => {
     setPublicCors(res);
     res.sendStatus(204);
+  });
+
+  // Public Auto-Fetch Pincode via Vercel Edge Geo headers + Visitor IP + India Post fallback
+  app.get('/api/storefront/auto-pincode', async (req: Request, res: Response) => {
+    setPublicCors(res);
+
+    const vercelCountry = String(req.headers['x-vercel-ip-country'] || '').trim().toUpperCase();
+    const vercelPostal = normalizeIndianPincode(
+      String(req.headers['x-vercel-ip-postal-code'] || '')
+    );
+    const vercelCityRaw = String(req.headers['x-vercel-ip-city'] || '').trim();
+    const vercelCity = vercelCityRaw ? decodeURIComponent(vercelCityRaw) : '';
+    const vercelRegion = String(req.headers['x-vercel-ip-country-region'] || '').trim();
+
+    if (vercelCountry === 'IN' && vercelPostal) {
+      res.json({
+        ok: true,
+        detected: true,
+        pincode: vercelPostal,
+        city: vercelCity,
+        state: vercelRegion,
+        source: 'vercel_edge',
+      } satisfies PincodeAutoDetectResult);
+      return;
+    }
+
+    if (vercelCountry === 'IN' && vercelCity) {
+      const cityLookup = await lookupIndiaPostByCity(vercelCity);
+      if (cityLookup) {
+        res.json({
+          ok: true,
+          detected: true,
+          pincode: cityLookup.pincode,
+          city: cityLookup.city || vercelCity,
+          state: cityLookup.state || vercelRegion,
+          source: 'vercel_edge',
+        } satisfies PincodeAutoDetectResult);
+        return;
+      }
+    }
+
+    const overrideIp = String(req.query.ip || '').trim();
+    const clientIp = overrideIp || extractClientIpFromHeaders(req.headers);
+    const detected = await detectPincodeFromIp(clientIp);
+    res.json(detected);
+  });
+
+  // Public GPS Reverse-Geocode Pincode Lookup (Nominatim + India Post fallback)
+  app.get('/api/storefront/reverse-pincode', async (req: Request, res: Response) => {
+    setPublicCors(res);
+    const lat = Number.parseFloat(String(req.query.lat || ''));
+    const lon = Number.parseFloat(String(req.query.lon || ''));
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      res.status(400).json({
+        ok: false,
+        detected: false,
+        pincode: '',
+        city: '',
+        state: '',
+        source: 'none',
+        reason: 'Invalid latitude or longitude coordinates.',
+      } satisfies PincodeAutoDetectResult);
+      return;
+    }
+
+    try {
+      const nomUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&addressdetails=1&zoom=18`;
+      const nomRes = await fetch(nomUrl, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'OrderPulse-Storefront/1.0',
+        },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (nomRes.ok) {
+        const nomJson = (await nomRes.json()) as unknown;
+        const parsed = extractPincodeFromReverseGeocode(nomJson);
+        if (parsed.pincode) {
+          res.json({
+            ok: true,
+            detected: true,
+            pincode: parsed.pincode,
+            city: parsed.city,
+            state: parsed.state,
+            source: 'gps_nominatim',
+          } satisfies PincodeAutoDetectResult);
+          return;
+        }
+        if (parsed.city) {
+          const cityPin = await lookupIndiaPostByCity(parsed.city);
+          if (cityPin) {
+            res.json({
+              ok: true,
+              detected: true,
+              pincode: cityPin.pincode,
+              city: cityPin.city || parsed.city,
+              state: cityPin.state || parsed.state,
+              source: 'india_post',
+            } satisfies PincodeAutoDetectResult);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Fall back cleanly below
+    }
+
+    res.json({
+      ok: true,
+      detected: false,
+      pincode: '',
+      city: '',
+      state: '',
+      source: 'none',
+      reason: 'Could not resolve an Indian pincode from GPS coordinates.',
+    } satisfies PincodeAutoDetectResult);
   });
 
   // Public Storefront Pincode Check & Product Filter API (CORS-enabled for Shopify theme)
@@ -195,9 +617,21 @@ export function registerStorefrontRoutes(app: Express) {
     const storefrontConfig = store.getStorefrontConfig();
     const products = store.getProducts();
 
-    const delhivery = pincode
+    let delhivery = pincode
       ? await checkDelhiveryPincodeServiceability(settings.delhiveryApiToken, pincode)
       : null;
+
+    // Enrich missing city/state from India Post when Delhivery token isn't configured or city is empty
+    if (pincode && delhivery && !delhivery.city) {
+      const indiaPost = await lookupIndiaPostByPincode(pincode);
+      if (indiaPost) {
+        delhivery = {
+          ...delhivery,
+          city: indiaPost.city || delhivery.city,
+          state: indiaPost.state || delhivery.state,
+        };
+      }
+    }
 
     const evaluated = products.map((product) => {
       const check = pincode
@@ -234,10 +668,12 @@ export function registerStorefrontRoutes(app: Express) {
     setPublicCors(res);
     await store.ensureHydrated();
     const config = store.getStorefrontConfig();
-    const host = req.get('host') || 'localhost:3000';
-    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
-    const derivedOrigin = `${proto}://${host}`;
-    const origin = (config.storefrontAppUrl || derivedOrigin).replace(/\/+$/, '');
+    const origin = normalizeStorefrontOrigin(
+      config.storefrontAppUrl,
+      req.get('host'),
+      req.headers['x-forwarded-proto'],
+      req.protocol
+    );
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=60');
     res.send(buildStorefrontWidgetScript(origin));
@@ -599,6 +1035,10 @@ export function registerStorefrontRoutes(app: Express) {
         typeof body.pincodeGateEnabled === 'boolean'
           ? body.pincodeGateEnabled
           : cur.pincodeGateEnabled,
+      autoDetectPincode:
+        typeof body.autoDetectPincode === 'boolean'
+          ? body.autoDetectPincode
+          : cur.autoDetectPincode,
       hideUnavailableProducts:
         typeof body.hideUnavailableProducts === 'boolean'
           ? body.hideUnavailableProducts
@@ -633,7 +1073,9 @@ export function registerStorefrontRoutes(app: Express) {
           : cur.enableJsonLdSchema,
       storefrontAppUrl:
         typeof body.storefrontAppUrl === 'string'
-          ? body.storefrontAppUrl.trim().replace(/\/+$/, '')
+          ? body.storefrontAppUrl.trim()
+            ? normalizeStorefrontOrigin(body.storefrontAppUrl)
+            : ''
           : cur.storefrontAppUrl,
     });
     await store.flushRemote();
@@ -643,12 +1085,38 @@ export function registerStorefrontRoutes(app: Express) {
   // Attempt 1-click Shopify ScriptTag installation for the Storefront widget
   app.post('/api/storefront/install-shopify', async (req: Request, res: Response) => {
     await store.ensureHydrated();
-    const config = store.getStorefrontConfig();
-    const host = req.get('host') || 'localhost:3000';
-    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
-    const origin = (config.storefrontAppUrl || `${proto}://${host}`).replace(/\/+$/, '');
+    const body = (req.body || {}) as { storefrontAppUrl?: string };
+    let config = store.getStorefrontConfig();
+
+    const submittedUrl =
+      typeof body.storefrontAppUrl === 'string' ? body.storefrontAppUrl.trim() : '';
+    if (submittedUrl) {
+      const normalizedSubmitted = normalizeStorefrontOrigin(submittedUrl);
+      if (normalizedSubmitted !== config.storefrontAppUrl) {
+        config = store.updateStorefrontConfig({ storefrontAppUrl: normalizedSubmitted });
+        await store.flushRemote();
+      }
+    }
+
+    const origin = normalizeStorefrontOrigin(
+      config.storefrontAppUrl,
+      req.get('host'),
+      req.headers['x-forwarded-proto'],
+      req.protocol
+    );
+
+    if (!/^https:\/\//i.test(origin)) {
+      res.status(400).json({
+        ok: false,
+        error:
+          'Shopify ScriptTag requires a live HTTPS URL (http://localhost cannot be installed). Enter your live HTTPS URL (e.g. https://whatsa86.vercel.app) in "Public App URL" below and click Install again.',
+        storefrontConfig: config,
+      });
+      return;
+    }
+
     const widgetUrl = `${origin}/api/storefront/widget.js`;
     const result = await installShopifyScriptTag(store.getSettings(), widgetUrl);
-    res.status(result.ok ? 200 : 400).json({ ...result, widgetUrl });
+    res.status(result.ok ? 200 : 400).json({ ...result, widgetUrl, storefrontConfig: config });
   });
 }

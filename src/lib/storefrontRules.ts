@@ -6,6 +6,7 @@ import type {
 
 export const DEFAULT_STOREFRONT_CONFIG: StorefrontConfig = {
   pincodeGateEnabled: true,
+  autoDetectPincode: true,
   hideUnavailableProducts: true,
   showDeliveryEstimateOnPdp: true,
   defaultDeliveryDays: 4,
@@ -69,6 +70,162 @@ export function parsePincodeListInput(raw: string): string[] {
 export function normalizeIndianPincode(raw: string): string {
   const digits = (raw || '').replace(/\D/g, '');
   return /^[1-9]\d{5}$/.test(digits) ? digits : '';
+}
+
+/**
+ * Resolves a clean storefront bridge origin, always promoting non-localhost origins to HTTPS
+ * because Shopify ScriptTags reject non-HTTPS URLs (422 src must be secure).
+ */
+export function normalizeStorefrontOrigin(
+  rawUrl?: string | null,
+  reqHost?: string | null,
+  forwardedProto?: string | string[] | null,
+  reqProtocol?: string | null
+): string {
+  const cleanRaw = (rawUrl || '').trim().replace(/\/+$/, '');
+  if (cleanRaw) {
+    const withScheme = /^https?:\/\//i.test(cleanRaw)
+      ? cleanRaw
+      : /^localhost(?::|$)|^127\.0\.0\.1(?::|$)/i.test(cleanRaw)
+        ? `http://${cleanRaw}`
+        : `https://${cleanRaw}`;
+    return /^http:\/\/(?!localhost(?::|\/|$)|127\.0\.0\.1(?::|\/|$))/i.test(withScheme)
+      ? withScheme.replace(/^http:\/\//i, 'https://')
+      : withScheme;
+  }
+
+  const host = (reqHost || 'localhost:3000').split(',')[0].trim();
+  const isLocal = /^localhost(?::|$)|^127\.0\.0\.1(?::|$)/i.test(host);
+  const rawProto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+  const parsedProto = (rawProto || reqProtocol || '').split(',')[0].trim().toLowerCase();
+  const proto = isLocal ? parsedProto || 'http' : 'https';
+  return `${proto}://${host}`.replace(/\/+$/, '');
+}
+
+function isPrivateOrLoopbackIp(ip: string): boolean {
+  const clean = ip.trim().toLowerCase();
+  if (!clean) return true;
+  if (
+    clean === '127.0.0.1' ||
+    clean === '::1' ||
+    clean === 'localhost' ||
+    clean.startsWith('10.') ||
+    clean.startsWith('192.168.') ||
+    clean.startsWith('169.254.') ||
+    clean.startsWith('fc') ||
+    clean.startsWith('fd') ||
+    clean.startsWith('fe80:')
+  ) {
+    return true;
+  }
+  const m172 = clean.match(/^172\.(\d+)\./);
+  if (m172) {
+    const second = Number.parseInt(m172[1], 10);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+}
+
+/**
+ * Extracts the first public visitor IP from reverse-proxy / Vercel / Cloudflare headers.
+ */
+export function extractClientIpFromHeaders(
+  headers: Record<string, string | string[] | undefined>
+): string {
+  const candidates: string[] = [];
+  const pushVal = (v: string | string[] | undefined) => {
+    if (!v) return;
+    const raw = Array.isArray(v) ? v.join(',') : v;
+    for (const part of raw.split(',')) {
+      const cleaned = part.trim().replace(/^::ffff:/i, '');
+      if (cleaned) candidates.push(cleaned);
+    }
+  };
+
+  pushVal(headers['x-vercel-forwarded-for']);
+  pushVal(headers['cf-connecting-ip']);
+  pushVal(headers['x-real-ip']);
+  pushVal(headers['x-forwarded-for']);
+
+  for (const ip of candidates) {
+    if (!isPrivateOrLoopbackIp(ip)) {
+      return ip;
+    }
+  }
+  return '';
+}
+
+/**
+ * Extracts an Indian 6-digit pincode, city, and state from Nominatim / reverse-geocode JSON.
+ */
+export function extractPincodeFromReverseGeocode(payload: unknown): {
+  pincode: string;
+  city: string;
+  state: string;
+} {
+  if (!payload || typeof payload !== 'object') {
+    return { pincode: '', city: '', state: '' };
+  }
+  const obj = payload as {
+    display_name?: unknown;
+    address?: Record<string, unknown>;
+  };
+  const addr = obj.address && typeof obj.address === 'object' ? obj.address : {};
+  const countryCode = String(addr.country_code || '').trim().toLowerCase();
+  const city = String(
+    addr.city ||
+      addr.town ||
+      addr.village ||
+      addr.suburb ||
+      addr.state_district ||
+      addr.county ||
+      ''
+  ).trim();
+  const state = String(addr.state || '').trim();
+
+  if (countryCode && countryCode !== 'in') {
+    return { pincode: '', city, state };
+  }
+
+  let pincode = normalizeIndianPincode(String(addr.postcode || ''));
+  if (!pincode && typeof obj.display_name === 'string') {
+    const match = obj.display_name.match(/\b([1-9]\d{2}\s?\d{3})\b/);
+    if (match) {
+      pincode = normalizeIndianPincode(match[1]);
+    }
+  }
+  return { pincode, city, state };
+}
+
+/**
+ * Extracts an Indian 6-digit pincode, city, and state from IP geolocation payloads
+ * (Vercel geo headers, ipwho.is, ipapi.co, ipinfo.io).
+ */
+export function extractPincodeFromIpGeo(payload: unknown): {
+  isIndia: boolean;
+  pincode: string;
+  city: string;
+  state: string;
+} {
+  if (!payload || typeof payload !== 'object') {
+    return { isIndia: false, pincode: '', city: '', state: '' };
+  }
+  const obj = payload as Record<string, unknown>;
+  if (obj.success === false) {
+    return { isIndia: false, pincode: '', city: '', state: '' };
+  }
+  const rawCountry = String(
+    obj.country_code || obj.countryCode || obj.country || ''
+  )
+    .trim()
+    .toUpperCase();
+  const isIndia = rawCountry === 'IN' || rawCountry === 'INDIA';
+  const city = String(obj.city || '').trim();
+  const state = String(obj.region || obj.region_code || obj.state || '').trim();
+  const rawPostal = String(obj.postal || obj.zip || obj.pincode || '');
+  const pincode = isIndia ? normalizeIndianPincode(rawPostal) : '';
+
+  return { isIndia, pincode, city, state };
 }
 
 export interface ProductPincodeEvaluation {

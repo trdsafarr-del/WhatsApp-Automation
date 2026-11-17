@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Copy,
   Globe,
+  LocateFixed,
   MapPin,
   Package,
   Plus,
@@ -67,6 +68,7 @@ export function PincodeCatalogView({
   // Live pincode simulator state
   const [testPincode, setTestPincode] = useState('400001');
   const [checkingPin, setCheckingPin] = useState(false);
+  const [autoDetectingPin, setAutoDetectingPin] = useState(false);
   const [pinCheckResult, setPinCheckResult] = useState<PincodeCheckResponse | null>(null);
   const [pinCheckError, setPinCheckError] = useState<string | null>(null);
 
@@ -173,8 +175,10 @@ export function PincodeCatalogView({
 
   const appOrigin = useMemo(() => {
     if (bridgeForm.storefrontAppUrl.trim()) return bridgeForm.storefrontAppUrl.trim();
-    if (typeof window !== 'undefined') return window.location.origin;
-    return 'https://your-app.vercel.app';
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      return window.location.origin;
+    }
+    return 'https://YOUR-ORDERPULSE-URL.vercel.app';
   }, [bridgeForm.storefrontAppUrl]);
 
   const liquidSnippet = useMemo(() => buildShopifyLiquidSnippet(appOrigin), [appOrigin]);
@@ -252,6 +256,78 @@ export function PincodeCatalogView({
     } finally {
       setCheckingPin(false);
     }
+  };
+
+  const handleAutoFetchSimulatorPin = async () => {
+    setAutoDetectingPin(true);
+    setPinCheckError(null);
+
+    const tryIpDetect = async () => {
+      try {
+        const res = await fetch('/api/storefront/auto-pincode');
+        const data = (await res.json()) as {
+          detected?: boolean;
+          pincode?: string;
+          city?: string;
+          reason?: string;
+        };
+        if (res.ok && data.detected && data.pincode) {
+          setTestPincode(data.pincode);
+          await handleRunPincodeCheck(data.pincode);
+          setStatusBanner({
+            ok: true,
+            text: `Auto-fetched pincode ${data.pincode}${data.city ? ` (${data.city})` : ''} via IP/location!`,
+          });
+          return;
+        }
+        setPinCheckError(
+          data.reason || 'Could not auto-detect an Indian pincode from this network.'
+        );
+      } catch {
+        setPinCheckError('Network error auto-detecting pincode.');
+      } finally {
+        setAutoDetectingPin(false);
+      }
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          try {
+            const res = await fetch(
+              `/api/storefront/reverse-pincode?lat=${encodeURIComponent(
+                pos.coords.latitude
+              )}&lon=${encodeURIComponent(pos.coords.longitude)}`
+            );
+            const data = (await res.json()) as {
+              detected?: boolean;
+              pincode?: string;
+              city?: string;
+            };
+            if (res.ok && data.detected && data.pincode) {
+              setTestPincode(data.pincode);
+              await handleRunPincodeCheck(data.pincode);
+              setStatusBanner({
+                ok: true,
+                text: `GPS auto-fetched pincode ${data.pincode}${data.city ? ` (${data.city})` : ''}!`,
+              });
+              setAutoDetectingPin(false);
+              return;
+            }
+          } catch {
+            // Fall through to IP detect
+          }
+          await tryIpDetect();
+        },
+        () => {
+          void tryIpDetect();
+        },
+        { enableHighAccuracy: false, timeout: 6000, maximumAge: 300000 }
+      );
+      return;
+    }
+
+    await tryIpDetect();
   };
 
   const handleSaveRule = async (e: React.FormEvent) => {
@@ -368,18 +444,27 @@ export function PincodeCatalogView({
     setInstallingScript(true);
     setStatusBanner(null);
     try {
-      const res = await fetch('/api/storefront/install-shopify', { method: 'POST' });
+      const res = await fetch('/api/storefront/install-shopify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storefrontAppUrl: bridgeForm.storefrontAppUrl }),
+      });
       const data = (await res.json()) as {
         ok?: boolean;
         alreadyInstalled?: boolean;
+        widgetUrl?: string;
+        storefrontConfig?: StorefrontConfig;
         error?: string;
       };
+      if (data.storefrontConfig) {
+        onStorefrontConfigUpdated(data.storefrontConfig);
+      }
       if (res.ok && data.ok) {
         setStatusBanner({
           ok: true,
           text: data.alreadyInstalled
-            ? 'OrderPulse Pincode Widget ScriptTag is already active on your Shopify store!'
-            : 'Installed OrderPulse Pincode Widget ScriptTag onto your Shopify storefront!',
+            ? `OrderPulse Pincode Widget ScriptTag is already active (${data.widgetUrl || 'HTTPS'})!`
+            : `Installed OrderPulse Pincode Widget ScriptTag onto your Shopify storefront (${data.widgetUrl || 'HTTPS'})!`,
         });
       } else {
         setStatusBanner({
@@ -646,6 +731,18 @@ export function PincodeCatalogView({
               >
                 <Truck className="h-3.5 w-3.5" aria-hidden="true" />
                 {checkingPin ? 'Checking...' : 'Simulate Customer View'}
+              </button>
+              <button
+                type="button"
+                disabled={autoDetectingPin}
+                onClick={() => void handleAutoFetchSimulatorPin()}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-50 whitespace-nowrap"
+              >
+                <LocateFixed
+                  className={`h-3.5 w-3.5 ${autoDetectingPin ? 'animate-pulse' : ''}`}
+                  aria-hidden="true"
+                />
+                {autoDetectingPin ? 'Detecting...' : 'Auto-Fetch My PIN'}
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -1046,7 +1143,7 @@ export function PincodeCatalogView({
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 px-3.5 py-2.5 text-xs text-slate-200">
             <span>Enable Pincode Bar on Storefront</span>
             <input
@@ -1054,6 +1151,17 @@ export function PincodeCatalogView({
               checked={bridgeForm.pincodeGateEnabled}
               onChange={(e) =>
                 setBridgeForm((prev) => ({ ...prev, pincodeGateEnabled: e.target.checked }))
+              }
+              className="h-4 w-4 accent-emerald-500"
+            />
+          </label>
+          <label className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 px-3.5 py-2.5 text-xs text-slate-200">
+            <span>Auto-Fetch Visitor Pincode (IP + GPS)</span>
+            <input
+              type="checkbox"
+              checked={bridgeForm.autoDetectPincode !== false}
+              onChange={(e) =>
+                setBridgeForm((prev) => ({ ...prev, autoDetectPincode: e.target.checked }))
               }
               className="h-4 w-4 accent-emerald-500"
             />
@@ -1106,14 +1214,18 @@ export function PincodeCatalogView({
             />
           </label>
           <label className="block text-xs text-slate-300">
-            Public App URL (for live store script)
+            Public App URL (HTTPS required for live store)
             <input
               type="url"
               value={bridgeForm.storefrontAppUrl}
               onChange={(e) =>
                 setBridgeForm((prev) => ({ ...prev, storefrontAppUrl: e.target.value }))
               }
-              placeholder={typeof window !== 'undefined' ? window.location.origin : 'https://your-app.vercel.app'}
+              placeholder={
+                typeof window !== 'undefined' && window.location.protocol === 'https:'
+                  ? window.location.origin
+                  : 'https://whatsa86.vercel.app'
+              }
               className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-2 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none"
             />
           </label>

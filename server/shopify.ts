@@ -588,8 +588,12 @@ export async function fetchShopifyProducts(
   }
 
   const query = `
-    query OrderPulseProducts($first: Int!) {
-      products(first: $first, sortKey: UPDATED_AT, reverse: true) {
+    query OrderPulseProducts($first: Int!, $after: String) {
+      products(first: $first, after: $after, sortKey: UPDATED_AT, reverse: true) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         edges {
           node {
             legacyResourceId
@@ -620,70 +624,77 @@ export async function fetchShopifyProducts(
   `;
 
   try {
-    const res = await fetch(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-      method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': auth.token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query, variables: { first: 100 } }),
-    });
+    const allProducts: ShopifyFetchedProduct[] = [];
+    let afterCursor: string | null = null;
+    let hasNextPage = true;
+    let pageCount = 0;
 
-    if (!res.ok) {
-      const text = await res.text();
-      return {
-        ok: false,
-        products: [],
-        error: `Shopify GraphQL ${res.status}: ${text.slice(0, 180)}`,
-      };
-    }
+    while (hasNextPage && pageCount < 5) {
+      pageCount += 1;
+      const res = await fetch(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': auth.token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query, variables: { first: 100, after: afterCursor } }),
+      });
 
-    const json = (await res.json()) as {
-      data?: {
-        products?: {
-          edges?: Array<{
-            node?: {
-              legacyResourceId?: string;
-              title?: string;
-              handle?: string;
-              status?: string;
-              productType?: string;
-              vendor?: string;
-              tags?: string[];
-              seo?: { title?: string | null; description?: string | null } | null;
-              featuredImage?: { url?: string | null; altText?: string | null } | null;
-              priceRangeV2?: {
-                minVariantPrice?: { amount?: string; currencyCode?: string };
-              } | null;
-            };
-          }>;
-        };
-      };
-      errors?: Array<{ message?: string; extensions?: { code?: string } }>;
-    };
-
-    if (Array.isArray(json.errors) && json.errors.length > 0) {
-      const msg = json.errors.map((e) => e.message).filter(Boolean).join('; ');
-      if (msg.toLowerCase().includes('access denied') || msg.toLowerCase().includes('read_products')) {
+      if (!res.ok) {
+        const text = await res.text();
         return {
           ok: false,
           products: [],
-          error:
-            'Shopify app is missing "read_products" permission. Add read_products & write_products scopes in dev.shopify.com and re-approve the app.',
+          error: `Shopify GraphQL ${res.status}: ${text.slice(0, 180)}`,
         };
       }
-      return { ok: false, products: [], error: msg || 'Shopify GraphQL returned errors.' };
-    }
 
-    const edges = json.data?.products?.edges || [];
-    const products: ShopifyFetchedProduct[] = edges
-      .map((edge) => edge.node)
-      .filter((n): n is NonNullable<typeof n> => Boolean(n?.legacyResourceId))
-      .map((n) => {
+      const json = (await res.json()) as {
+        data?: {
+          products?: {
+            pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+            edges?: Array<{
+              node?: {
+                legacyResourceId?: string;
+                title?: string;
+                handle?: string;
+                status?: string;
+                productType?: string;
+                vendor?: string;
+                tags?: string[];
+                seo?: { title?: string | null; description?: string | null } | null;
+                featuredImage?: { url?: string | null; altText?: string | null } | null;
+                priceRangeV2?: {
+                  minVariantPrice?: { amount?: string; currencyCode?: string };
+                } | null;
+              };
+            }>;
+          };
+        };
+        errors?: Array<{ message?: string; extensions?: { code?: string } }>;
+      };
+
+      if (Array.isArray(json.errors) && json.errors.length > 0) {
+        const msg = json.errors.map((e) => e.message).filter(Boolean).join('; ');
+        if (msg.toLowerCase().includes('access denied') || msg.toLowerCase().includes('read_products')) {
+          return {
+            ok: false,
+            products: [],
+            error:
+              'Shopify app is missing "read_products" permission. Add read_products & write_products scopes in dev.shopify.com and re-approve the app.',
+          };
+        }
+        return { ok: false, products: [], error: msg || 'Shopify GraphQL returned errors.' };
+      }
+
+      const edges = json.data?.products?.edges || [];
+      for (const edge of edges) {
+        const n = edge.node;
+        if (!n?.legacyResourceId) continue;
         const rawStatus = (n.status || 'ACTIVE').toLowerCase();
         const status: ShopifyFetchedProduct['status'] =
           rawStatus === 'draft' ? 'draft' : rawStatus === 'archived' ? 'archived' : 'active';
-        return {
+        allProducts.push({
           shopifyProductId: String(n.legacyResourceId),
           title: n.title || 'Untitled Product',
           handle: n.handle || '',
@@ -697,10 +708,15 @@ export async function fetchShopifyProducts(
           seoTitle: n.seo?.title || '',
           seoDescription: n.seo?.description || '',
           tags: Array.isArray(n.tags) ? n.tags.join(', ') : '',
-        };
-      });
+        });
+      }
 
-    return { ok: true, products };
+      hasNextPage = Boolean(json.data?.products?.pageInfo?.hasNextPage);
+      afterCursor = json.data?.products?.pageInfo?.endCursor || null;
+      if (!afterCursor) break;
+    }
+
+    return { ok: true, products: allProducts };
   } catch (err) {
     return {
       ok: false,
@@ -901,9 +917,35 @@ export async function installShopifyScriptTag(
     const existing = (await listRes.json()) as {
       script_tags?: Array<{ id?: number; src?: string }>;
     };
-    const already = (existing.script_tags || []).some((st) => st.src === widgetSrc);
+    const tags = existing.script_tags || [];
+    const already = tags.some((st) => st.src === widgetSrc);
     if (already) {
       return { ok: true, alreadyInstalled: true };
+    }
+
+    const prevOrderPulseTag = tags.find(
+      (st) => st.id && typeof st.src === 'string' && st.src.includes('/api/storefront/widget.js')
+    );
+    if (prevOrderPulseTag?.id) {
+      const updateRes = await fetch(
+        `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/script_tags/${prevOrderPulseTag.id}.json`,
+        {
+          method: 'PUT',
+          headers: {
+            'X-Shopify-Access-Token': auth.token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            script_tag: {
+              id: prevOrderPulseTag.id,
+              src: widgetSrc,
+            },
+          }),
+        }
+      );
+      if (updateRes.ok) {
+        return { ok: true };
+      }
     }
 
     const createRes = await fetch(
