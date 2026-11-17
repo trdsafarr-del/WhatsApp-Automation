@@ -12,6 +12,8 @@ import {
   getGeoSeoRefAtIndex,
   getGeoSeoStats,
   queryGeoSeoPages,
+  renderGeoSeoDirectoryHtml,
+  renderGeoSeoLandingHtml,
   resolveGeoSeoPageBySlug,
 } from './geoSeo';
 import { createSampleCatalogProducts } from './storefrontRules';
@@ -135,3 +137,31 @@ test('queryGeoSeoPages & XML sitemaps slice accurately across shards', () => {
   assert.ok(shard1.includes('https://whatsa86.vercel.app/seo/faridabad'));
   assert.ok(shard1.includes('cakes-near-sector-31-faridabad'));
 });
+
+test('renderGeoSeoLandingHtml & Directory match Broomies Bakery sky-blue Dawn card layout', () => {
+  const ref = resolveGeoSeoPageBySlug(
+    DEFAULT_GEO_SEO_CONFIG,
+    'custom-cakes-in-sector-31-faridabad'
+  );
+  assert.ok(ref);
+  const products = createSampleCatalogProducts('Broomies Bakery');
+  const data = buildGeoSeoPageData(
+    DEFAULT_GEO_SEO_CONFIG,
+    ref,
+    products,
+    'https://whatsa86.vercel.app'
+  );
+  const html = renderGeoSeoLandingHtml(data, DEFAULT_GEO_SEO_CONFIG, '+919266424088');
+  assert.ok(html.includes('#77c5ee'));
+  assert.ok(html.includes('Choose options'));
+  assert.ok(html.includes('From Rs.'));
+  assert.ok(html.includes('Theme Cakes'));
+  assert.ok(html.includes('Chat on WhatsApp'));
+  assert.ok(html.includes('https://wa.me/919266424088'));
+
+  const dirHtml = renderGeoSeoDirectoryHtml(DEFAULT_GEO_SEO_CONFIG, 'https://whatsa86.vercel.app');
+  assert.ok(dirHtml.includes('#77c5ee'));
+  assert.ok(dirHtml.includes('Sector 31'));
+  assert.ok(dirHtml.includes('Chat on WhatsApp'));
+});
+

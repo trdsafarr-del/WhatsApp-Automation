@@ -72,9 +72,10 @@ export function registerGeoSeoRoutes(app: Express) {
     await store.ensureHydrated();
     const geoConfig = store.getGeoSeoConfig();
     const host = resolvePublicSeoHost(req);
+    const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=300');
-    res.send(renderGeoSeoDirectoryHtml(geoConfig, host));
+    res.send(renderGeoSeoDirectoryHtml(geoConfig, host, waPhone));
   });
 
   // 10,000+ Dynamic Programmatic Geo-SEO Landing Pages
@@ -94,10 +95,11 @@ export function registerGeoSeoRoutes(app: Express) {
       return;
     }
     const host = resolvePublicSeoHost(req);
+    const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
     const pageData = buildGeoSeoPageData(geoConfig, ref, store.getProducts(), host);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=300');
-    res.send(renderGeoSeoLandingHtml(pageData, geoConfig));
+    res.send(renderGeoSeoLandingHtml(pageData, geoConfig, waPhone));
   });
 
   // Dashboard API: Read Geo-SEO Config & Stats

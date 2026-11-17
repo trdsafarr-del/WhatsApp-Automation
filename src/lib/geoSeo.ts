@@ -1159,42 +1159,424 @@ export function buildGeoSitemapShardXml(
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
 }
 
+function formatInrShopPrice(rawPrice?: string): string {
+  const num = Number.parseFloat(String(rawPrice || '').replace(/[^0-9.]/g, ''));
+  const val = Number.isFinite(num) && num > 0 ? num : 800;
+  return `From Rs. ${val.toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function buildBroomiesSharedStyles(): string {
+  return `<style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; max-width: 100%; overflow-x: hidden; }
+    body.bb-body {
+      min-height: 100vh;
+      background: linear-gradient(180deg, #77c5ee 0%, #9cd8f6 34%, #bde6fa 70%, #d9f1fc 100%);
+      color: #121212;
+      font-family: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .bb-header {
+      background: linear-gradient(180deg, #98d4f5 0%, #8bcdf1 100%);
+      border-bottom: 1px solid rgba(18, 18, 18, 0.1);
+    }
+    .bb-header-inner {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .bb-brand {
+      font-size: 19px;
+      font-weight: 600;
+      color: #121212;
+      text-decoration: none;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    .bb-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 18px;
+      font-size: 13.5px;
+    }
+    .bb-nav a {
+      color: #121212;
+      text-decoration: none;
+      font-weight: 400;
+      padding: 3px 0;
+      border-bottom: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .bb-nav a:hover, .bb-nav a.bb-active {
+      border-bottom-color: #121212;
+    }
+    .bb-icons {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .bb-icon-link {
+      color: #121212;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      position: relative;
+      padding: 4px;
+    }
+    .bb-cart-dot {
+      position: absolute;
+      right: -2px;
+      bottom: 0;
+      min-width: 16px;
+      height: 16px;
+      border-radius: 9999px;
+      background: #e11d48;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+    }
+    .bb-ticker {
+      background: rgba(255, 255, 255, 0.25);
+      border-top: 1px solid rgba(18, 18, 18, 0.1);
+      border-bottom: 1px solid rgba(18, 18, 18, 0.14);
+      padding: 10px 20px;
+      text-align: center;
+      font-size: 12.5px;
+      color: #1f2937;
+    }
+    .bb-ticker a {
+      color: #121212;
+      text-decoration: none;
+      margin: 0 6px;
+      font-weight: 500;
+    }
+    .bb-ticker a:hover { text-decoration: underline; }
+    .bb-main {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 28px 24px 88px;
+    }
+    .bb-breadcrumb {
+      font-size: 12.5px;
+      color: #1f2937;
+      margin-bottom: 16px;
+    }
+    .bb-breadcrumb a {
+      color: #121212;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .bb-panel {
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid #2b2b2b;
+      border-radius: 26px;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+      padding: 26px 28px;
+      margin-bottom: 28px;
+    }
+    .bb-section-title {
+      margin: 0 0 18px;
+      font-size: clamp(26px, 3vw, 36px);
+      font-weight: 400;
+      color: #121212;
+      letter-spacing: -0.01em;
+    }
+    .bb-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 34px;
+    }
+    .bb-card {
+      border-radius: 26px;
+      border: 1px solid #2b2b2b;
+      background: #efefef;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.24);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .bb-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.28);
+    }
+    .bb-card-media {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: #e5dfd7;
+      overflow: hidden;
+      position: relative;
+    }
+    .bb-card-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .bb-card-fallback {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #f3e8e0, #e6d7cb);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      text-align: center;
+      color: #3f2a21;
+      font-size: 13.5px;
+      font-weight: 500;
+    }
+    .bb-card-body {
+      background: #efefef;
+      padding: 14px 14px 16px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .bb-card-title {
+      margin: 0 0 6px;
+      font-size: 13.5px;
+      line-height: 1.35;
+      color: #222222;
+      font-weight: 400;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .bb-card-price {
+      margin: 0;
+      font-size: 15px;
+      color: #121212;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .bb-btn-outline {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 10px 14px;
+      border-radius: 9999px;
+      border: 1.5px solid #222222;
+      background: #ffffff;
+      color: #121212;
+      font-size: 13px;
+      font-weight: 400;
+      text-decoration: none;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .bb-btn-outline:hover {
+      background: #121212;
+      color: #ffffff;
+    }
+    .bb-btn-solid {
+      display: inline-block;
+      padding: 11px 22px;
+      border-radius: 9999px;
+      border: 1.5px solid #121212;
+      background: #121212;
+      color: #ffffff;
+      font-size: 13.5px;
+      font-weight: 500;
+      text-decoration: none;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.16);
+    }
+    .bb-btn-pill-light {
+      display: inline-block;
+      padding: 11px 22px;
+      border-radius: 9999px;
+      border: 1.5px solid #222222;
+      background: #ffffff;
+      color: #121212;
+      font-size: 13.5px;
+      font-weight: 400;
+      text-decoration: none;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+    }
+    .bb-link-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 0;
+      color: #121212;
+      font-size: 13.5px;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(18, 18, 18, 0.1);
+    }
+    .bb-link-row:hover {
+      text-decoration: underline;
+    }
+    .bb-wa-float {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 60;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      background: #25d366;
+      color: #ffffff;
+      text-decoration: none;
+      font-size: 13.5px;
+      font-weight: 600;
+      padding: 11px 16px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+    }
+    .bb-wa-float:hover {
+      background: #1ebe5d;
+    }
+    .bb-footer {
+      background: rgba(255, 255, 255, 0.55);
+      border-top: 1px solid rgba(18, 18, 18, 0.12);
+      padding: 22px 20px 80px;
+      text-align: center;
+      font-size: 13px;
+      color: #1f2937;
+    }
+    @media (max-width: 720px) {
+      .bb-header-inner { padding: 12px 16px; gap: 10px; }
+      .bb-brand { order: 1; }
+      .bb-icons { order: 2; }
+      .bb-nav {
+        order: 3;
+        width: 100%;
+        gap: 14px;
+        font-size: 12.5px;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+      }
+      .bb-nav::-webkit-scrollbar { display: none; }
+      .bb-ticker { padding: 7px 12px; font-size: 11.5px; }
+      .bb-main { padding: 16px 14px 84px; }
+      .bb-panel { padding: 18px 16px; border-radius: 20px; margin-bottom: 20px; }
+      .bb-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+      .bb-card { border-radius: 20px; }
+      .bb-card-body { padding: 11px 10px 13px; }
+      .bb-wa-float { right: 12px; bottom: 12px; padding: 9px 13px; font-size: 12.5px; }
+    }
+  </style>`;
+}
+
+function buildBroomiesHeaderHtml(
+  siteUrl: string,
+  brandName: string,
+  activeHubs: GeoZoneHub[],
+  cityName: string
+): string {
+  const cleanSite = escapeHtmlText(siteUrl);
+  const collectionUrl = `${cleanSite}/collections/all`;
+  const hubTicker = activeHubs
+    .slice(0, 4)
+    .map(
+      (h) =>
+        `<a href="/seo/faridabad/${escapeHtmlText(buildTier1Slug(h, cityName))}">${escapeHtmlText(h.name)} (${escapeHtmlText(h.pincode)})</a>`
+    )
+    .join(' · ');
+
+  return `<header class="bb-header">
+    <div class="bb-header-inner">
+      <a href="${cleanSite}" class="bb-brand">${escapeHtmlText(brandName)}</a>
+      <nav class="bb-nav" aria-label="Main Storefront Navigation">
+        <a href="${cleanSite}">Home</a>
+        <a href="${collectionUrl}" class="bb-active">Best Seller</a>
+        <a href="${collectionUrl}">Theme Cakes</a>
+        <a href="${collectionUrl}">Gift Hampers</a>
+        <a href="${collectionUrl}">Corporate Snacks Boxes</a>
+        <a href="${collectionUrl}">Cookies</a>
+        <a href="${collectionUrl}">Cookie Tin</a>
+        <a href="${collectionUrl}">Dessert Tubs</a>
+        <a href="/seo/faridabad">Faridabad Zones</a>
+        <a href="${cleanSite}/pages/contact">Contact</a>
+      </nav>
+      <div class="bb-icons">
+        <a href="${cleanSite}/search" class="bb-icon-link" aria-label="Search cakes on store">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        </a>
+        <a href="${cleanSite}/account" class="bb-icon-link" aria-label="Customer account">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+        </a>
+        <a href="${cleanSite}/cart" class="bb-icon-link" aria-label="Shopping bag">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 7h12l1 13H5L6 7Z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg>
+          <span class="bb-cart-dot">1</span>
+        </a>
+      </div>
+    </div>
+    <div class="bb-ticker">
+      <span>‹</span>
+      <span> 5 km Unified Express Delivery: ${hubTicker} </span>
+      <span>›</span>
+    </div>
+  </header>`;
+}
+
 export function renderGeoSeoLandingHtml(
   data: GeoSeoPageData,
-  config: GeoSeoConfig
+  _config: GeoSeoConfig,
+  whatsappPhone?: string
 ): string {
   const activeHubs = data.allActiveHubs;
+  const waDigits = String(whatsappPhone || '919266424088').replace(/\D/g, '') || '919266424088';
+  const waMsg = encodeURIComponent(
+    `Hi ${data.brandName}, I want to order ${data.category?.name || 'Custom & Ready to Eat Cakes'} in ${data.areaLabel} (${data.pincode}).`
+  );
+
   const productsHtml =
     data.matchedProducts.length > 0
       ? data.matchedProducts
           .map((p) => {
             const productUrl = `${data.primaryWebsiteUrl}/products/${encodeURIComponent(p.handle || '')}`;
             const imgBlock = p.imageUrl
-              ? `<img src="${escapeHtmlText(p.imageUrl)}" alt="${escapeHtmlText(p.imageAlt || p.title)}" loading="lazy" style="width:100%;height:190px;object-fit:cover;border-radius:10px;display:block;background:#f3ede4;" />`
-              : `<div style="width:100%;height:190px;border-radius:10px;background:linear-gradient(135deg,#f3e8dd,#ead5c3);display:flex;align-items:center;justify-content:center;color:#7c2d12;font-weight:700;font-size:14px;padding:12px;text-align:center;">${escapeHtmlText(p.title)}</div>`;
-            return `<article style="border:1px solid #e7dfd4;border-radius:14px;background:#ffffff;padding:14px;display:flex;flex-direction:column;justify-content:space-between;gap:12px;">
-              <div>
+              ? `<img src="${escapeHtmlText(p.imageUrl)}" alt="${escapeHtmlText(p.imageAlt || p.title)}" loading="eager" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><div class="bb-card-fallback" style="display:none;">${escapeHtmlText(p.title)}</div>`
+              : `<div class="bb-card-fallback">${escapeHtmlText(p.title)}</div>`;
+            return `<article class="bb-card">
+              <div class="bb-card-media">
                 ${imgBlock}
-                <h3 style="margin:12px 0 4px;font-size:16px;line-height:1.35;color:#1f1612;font-weight:700;">${escapeHtmlText(p.title)}</h3>
-                <p style="margin:0;font-size:12.5px;color:#6b5b52;">${escapeHtmlText(p.productType || 'Fresh Bakery Cake')} · PIN ${escapeHtmlText(data.pincode)} Express</p>
               </div>
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:8px;border-top:1px solid #f1ece4;">
-                <span style="font-size:16px;font-weight:700;color:#7c2d12;">${escapeHtmlText(p.currency || 'INR')} ${escapeHtmlText(p.price || '599')}</span>
-                <a href="${escapeHtmlText(productUrl)}" style="display:inline-block;padding:8px 14px;border-radius:8px;background:#7c2d12;color:#ffffff;font-size:12.5px;font-weight:600;text-decoration:none;white-space:nowrap;">Order Cake</a>
+              <div class="bb-card-body">
+                <div>
+                  <h3 class="bb-card-title">${escapeHtmlText(p.title)}</h3>
+                  <p class="bb-card-price">${escapeHtmlText(formatInrShopPrice(p.price))}</p>
+                </div>
+                <a href="${escapeHtmlText(productUrl)}" class="bb-btn-outline">Choose options</a>
               </div>
             </article>`;
           })
           .join('')
-      : `<div style="grid-column:1/-1;border:1px dashed #d6c8b8;border-radius:14px;padding:24px;text-align:center;background:#fff;">
-          <p style="margin:0 0 10px;font-size:15px;font-weight:600;color:#1f1612;">Explore Custom & Ready to Eat Cakes at ${escapeHtmlText(data.brandName)}</p>
-          <a href="${escapeHtmlText(data.primaryWebsiteUrl)}/collections/all" style="display:inline-block;padding:10px 18px;border-radius:8px;background:#7c2d12;color:#fff;font-weight:600;text-decoration:none;">Browse Full Menu on broomiesbakery.in</a>
+      : `<div class="bb-panel" style="grid-column:1/-1;text-align:center;">
+          <p style="margin:0 0 14px;font-size:16px;font-weight:500;">Explore Custom &amp; Ready to Eat Cakes at ${escapeHtmlText(data.brandName)}</p>
+          <a href="${escapeHtmlText(data.primaryWebsiteUrl)}/collections/all" class="bb-btn-outline" style="max-width:280px;margin:0 auto;">Browse Full Menu on broomiesbakery.in</a>
         </div>`;
 
   const faqsHtml = data.faqs
     .map(
-      (f) => `<div style="border-bottom:1px solid #e7dfd4;padding:14px 0;">
-        <h3 style="margin:0 0 6px;font-size:15px;font-weight:700;color:#1f1612;">${escapeHtmlText(f.question)}</h3>
-        <p style="margin:0;font-size:14px;line-height:1.6;color:#4f433d;">${escapeHtmlText(f.answer)}</p>
+      (f) => `<div style="border-bottom:1px solid rgba(18,18,18,0.1);padding:14px 0;">
+        <h3 style="margin:0 0 6px;font-size:15.5px;font-weight:600;color:#121212;">${escapeHtmlText(f.question)}</h3>
+        <p style="margin:0;font-size:14px;line-height:1.6;color:#374151;">${escapeHtmlText(f.answer)}</p>
       </div>`
     )
     .join('');
@@ -1202,14 +1584,14 @@ export function renderGeoSeoLandingHtml(
   const catLinksHtml = data.siblingCategoryLinks
     .map(
       (l) =>
-        `<a href="${escapeHtmlText(l.href)}" style="display:block;padding:8px 0;color:#7c2d12;font-size:13.5px;text-decoration:none;border-bottom:1px solid #f1ece4;">${escapeHtmlText(l.label)} →</a>`
+        `<a href="${escapeHtmlText(l.href)}" class="bb-link-row"><span>${escapeHtmlText(l.label)}</span><span>→</span></a>`
     )
     .join('');
 
   const locLinksHtml = data.nearbyLocalityLinks
     .map(
       (l) =>
-        `<a href="${escapeHtmlText(l.href)}" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;color:#7c2d12;font-size:13.5px;text-decoration:none;border-bottom:1px solid #f1ece4;"><span>${escapeHtmlText(l.label)}</span><span style="color:#6b5b52;font-size:12px;">${l.distanceKm.toFixed(1)} km</span></a>`
+        `<a href="${escapeHtmlText(l.href)}" class="bb-link-row"><span>${escapeHtmlText(l.label)}</span><span style="color:#4b5563;font-size:12px;">${l.distanceKm.toFixed(1)} km</span></a>`
     )
     .join('');
 
@@ -1236,102 +1618,93 @@ export function renderGeoSeoLandingHtml(
   <meta name="twitter:title" content="${escapeHtmlText(data.seoTitle)}" />
   <meta name="twitter:description" content="${escapeHtmlText(data.metaDescription)}" />
   <script type="application/ld+json">${JSON.stringify(data.jsonLdGraph)}</script>
+  ${buildBroomiesSharedStyles()}
 </head>
-<body style="margin:0;background:#fbf8f3;color:#1f1612;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <header style="background:#ffffff;border-bottom:1px solid #e7dfd4;padding:14px 20px;">
-    <div style="max-width:1120px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;">
-      <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" style="font-size:20px;font-weight:800;color:#7c2d12;text-decoration:none;letter-spacing:-0.02em;">${escapeHtmlText(data.brandName)}</a>
-      <nav style="display:flex;flex-wrap:wrap;gap:18px;font-size:13.5px;font-weight:600;">
-        <a href="${escapeHtmlText(data.primaryWebsiteUrl)}/collections/all" style="color:#4f433d;text-decoration:none;">All Cakes</a>
-        <a href="/seo/faridabad" style="color:#4f433d;text-decoration:none;">Faridabad Zones</a>
-        ${activeHubs
-          .slice(0, 4)
-          .map(
-            (h) =>
-              `<a href="/seo/faridabad/${escapeHtmlText(buildTier1Slug(h, data.cityName))}" style="color:#4f433d;text-decoration:none;">${escapeHtmlText(h.name)}</a>`
-          )
-          .join('')}
-      </nav>
-      <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" style="padding:9px 16px;border-radius:8px;background:#7c2d12;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;">Order on Store</a>
-    </div>
-  </header>
+<body class="bb-body">
+  ${buildBroomiesHeaderHtml(data.primaryWebsiteUrl, data.brandName, activeHubs, data.cityName)}
 
-  <main style="max-width:1120px;margin:0 auto;padding:28px 20px 56px;">
-    <nav aria-label="Breadcrumb" style="font-size:12.5px;color:#6b5b52;margin-bottom:14px;">
-      <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" style="color:#7c2d12;text-decoration:none;">${escapeHtmlText(data.brandName)}</a>
+  <main class="bb-main">
+    <nav aria-label="Breadcrumb" class="bb-breadcrumb">
+      <a href="${escapeHtmlText(data.primaryWebsiteUrl)}">${escapeHtmlText(data.brandName)}</a>
       <span> / </span>
-      <a href="/seo/faridabad" style="color:#7c2d12;text-decoration:none;">${escapeHtmlText(data.cityName)} Zones</a>
+      <a href="/seo/faridabad">${escapeHtmlText(data.cityName)} Zones</a>
       <span> / </span>
       <span>${escapeHtmlText(data.areaLabel)}</span>
     </nav>
 
-    <section style="background:#ffffff;border:1px solid #e7dfd4;border-radius:16px;padding:26px 24px;margin-bottom:28px;">
-      <p style="margin:0 0 8px;font-size:12.5px;font-weight:600;color:#166534;">
+    <section class="bb-panel">
+      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">
         ${escapeHtmlText(data.nearestHub.name)} Hub · ${data.distanceKm.toFixed(1)} km Express Radius · PIN ${escapeHtmlText(data.pincode)}
       </p>
-      <h1 style="margin:0 0 12px;font-size:clamp(24px,3.6vw,36px);line-height:1.18;font-weight:800;color:#1f1612;">
+      <h1 style="margin:0 0 12px;font-size:clamp(24px,3.2vw,36px);line-height:1.18;font-weight:500;color:#121212;letter-spacing:-0.015em;">
         ${escapeHtmlText(data.h1)}
       </h1>
-      <p style="margin:0 0 18px;font-size:15.5px;line-height:1.6;color:#4f433d;max-width:74ch;">
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#333333;max-width:74ch;">
         ${escapeHtmlText(data.heroSummary)}
       </p>
       <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
-        <a href="${escapeHtmlText(data.primaryWebsiteUrl)}/collections/all" style="padding:11px 20px;border-radius:9px;background:#7c2d12;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;">Order Fresh Cakes Now</a>
-        <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" style="padding:11px 18px;border-radius:9px;border:1px solid #d6c8b8;background:#fbf8f3;color:#1f1612;font-size:14px;font-weight:600;text-decoration:none;">Visit ${escapeHtmlText(data.primaryWebsiteUrl.replace(/^https?:\/\//, ''))}</a>
+        <a href="${escapeHtmlText(data.primaryWebsiteUrl)}/collections/all" class="bb-btn-solid">Order Fresh Cakes Now</a>
+        <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" class="bb-btn-pill-light">Visit ${escapeHtmlText(data.primaryWebsiteUrl.replace(/^https?:\/\//, ''))}</a>
       </div>
     </section>
 
-    <section style="margin-bottom:32px;">
-      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:14px;">
-        <h2 style="margin:0;font-size:21px;font-weight:800;color:#1f1612;">Fresh Cakes Deliverable to ${escapeHtmlText(data.areaLabel)}</h2>
-        <span style="font-size:12.5px;color:#6b5b52;">Custom Design · Ready to Eat · 100% Eggless Options</span>
+    <section>
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:16px;">
+        <h2 class="bb-section-title" style="margin-bottom:0;">Best Seller – ${escapeHtmlText(data.areaLabel)}</h2>
+        <span style="font-size:13px;color:#1f2937;">Custom Design · Ready to Eat · 100% Eggless Options</span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:16px;">
+      <div class="bb-grid">
         ${productsHtml}
       </div>
     </section>
 
-    <section style="background:#ffffff;border:1px solid #e7dfd4;border-radius:16px;padding:22px;margin-bottom:28px;">
-      <h2 style="margin:0 0 10px;font-size:19px;font-weight:800;color:#1f1612;">Unified 5 km Faridabad Cake Delivery Zone Coverage</h2>
-      <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#4f433d;">
+    <section class="bb-panel">
+      <h2 style="margin:0 0 10px;font-size:20px;font-weight:500;color:#121212;">Unified 5 km Faridabad Cake Delivery Zone Coverage</h2>
+      <p style="margin:0 0 12px;font-size:14.5px;line-height:1.6;color:#333333;">
         Our unified cake kitchen network merges 5 km rapid delivery circles across
         <strong>${escapeHtmlText(activeHubs.map((h) => `${h.name} (${h.pincode})`).join(', '))}</strong>
         so customers searching for <strong>custom cakes</strong> or <strong>ready to eat cakes</strong> receive oven-fresh cakes with local rider care.
       </p>
-      <p style="margin:0;font-size:12.5px;color:#6b5b52;">
+      <p style="margin:0;font-size:12.5px;color:#4b5563;">
         Popular Searches: ${escapeHtmlText(data.targetKeywords.join(' · '))}
       </p>
     </section>
 
-    <section style="background:#ffffff;border:1px solid #e7dfd4;border-radius:16px;padding:22px;margin-bottom:28px;">
-      <h2 style="margin:0 0 6px;font-size:19px;font-weight:800;color:#1f1612;">Frequently Asked Questions – ${escapeHtmlText(data.areaLabel)}</h2>
+    <section class="bb-panel">
+      <h2 style="margin:0 0 6px;font-size:20px;font-weight:500;color:#121212;">Frequently Asked Questions – ${escapeHtmlText(data.areaLabel)}</h2>
       ${faqsHtml}
     </section>
 
     <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;">
-      <div style="background:#ffffff;border:1px solid #e7dfd4;border-radius:14px;padding:18px;">
-        <h3 style="margin:0 0 10px;font-size:16px;font-weight:700;color:#1f1612;">More Cake Categories Nearby</h3>
+      <div class="bb-panel" style="margin-bottom:0;">
+        <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">More Cake Categories Nearby</h3>
         ${catLinksHtml}
       </div>
-      <div style="background:#ffffff;border:1px solid #e7dfd4;border-radius:14px;padding:18px;">
-        <h3 style="margin:0 0 10px;font-size:16px;font-weight:700;color:#1f1612;">Nearby Faridabad Sectors (Within 5 km)</h3>
+      <div class="bb-panel" style="margin-bottom:0;">
+        <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Nearby Faridabad Sectors (Within 5 km)</h3>
         ${locLinksHtml}
       </div>
     </section>
   </main>
 
-  <footer style="border-top:1px solid #e7dfd4;background:#ffffff;padding:20px;text-align:center;font-size:12.5px;color:#6b5b52;">
-    ${escapeHtmlText(data.brandName)} · Serving ${escapeHtmlText(config.cityName || 'Faridabad')} ·
-    <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" style="color:#7c2d12;text-decoration:none;font-weight:600;">${escapeHtmlText(data.primaryWebsiteUrl)}</a>
-    · <a href="/sitemap.xml" style="color:#6b5b52;text-decoration:none;">XML Sitemap</a>
+  <footer class="bb-footer">
+    ${escapeHtmlText(data.brandName)} · Serving ${escapeHtmlText(data.cityName)} ·
+    <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" style="color:#121212;text-decoration:none;font-weight:600;">${escapeHtmlText(data.primaryWebsiteUrl)}</a>
+    · <a href="/sitemap.xml" style="color:#1f2937;text-decoration:none;">XML Sitemap</a>
   </footer>
+
+  <a href="https://wa.me/${waDigits}?text=${waMsg}" target="_blank" rel="noopener noreferrer" class="bb-wa-float">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.03 2a9.94 9.94 0 0 0-8.49 15.13L2.2 21.8l4.8-1.26A9.95 9.95 0 1 0 12.03 2Zm5.8 14.12c-.25.7-1.42 1.34-1.97 1.41-.51.07-1.15.1-1.85-.12-.43-.14-.98-.32-1.69-.63-2.98-1.29-4.92-4.31-5.07-4.51-.15-.2-1.21-1.61-1.21-3.07 0-1.46.76-2.18 1.03-2.48.27-.3.6-.37.8-.37h.58c.18 0 .44-.07.68.52.25.61.85 2.08.92 2.23.08.15.13.33.03.53-.1.2-.15.33-.3.5-.15.18-.32.4-.45.53-.15.15-.3.31-.13.61.18.3.78 1.29 1.68 2.09 1.15 1.03 2.13 1.35 2.43 1.5.3.15.48.13.66-.08.18-.2.75-.87.95-1.17.2-.3.4-.25.68-.15.28.1 1.75.83 2.05.98.3.15.5.22.58.35.07.12.07.72-.18 1.42Z"/></svg>
+    <span>Chat on WhatsApp</span>
+  </a>
 </body>
 </html>`;
 }
 
 export function renderGeoSeoDirectoryHtml(
   config: GeoSeoConfig,
-  hostOrigin: string
+  hostOrigin: string,
+  whatsappPhone?: string
 ): string {
   const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
   const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
@@ -1339,12 +1712,16 @@ export function renderGeoSeoDirectoryHtml(
   const activeHubs = (config.hubs || []).filter((h) => h.enabled);
   const covered = getCoveredLocalities(config);
   const cats = (config.categories || []).filter((c) => c.enabled);
+  const waDigits = String(whatsappPhone || '919266424088').replace(/\D/g, '') || '919266424088';
 
   const hubCards = activeHubs
     .map(
-      (h) => `<a href="/seo/faridabad/${escapeHtmlText(buildTier1Slug(h, config.cityName))}" style="display:block;border:1px solid #e7dfd4;border-radius:12px;background:#fff;padding:16px;text-decoration:none;color:#1f1612;">
-        <div style="font-weight:800;font-size:17px;color:#7c2d12;">${escapeHtmlText(h.name)} (${h.radiusKm} km Zone)</div>
-        <div style="font-size:12.5px;color:#6b5b52;margin-top:4px;">PIN ${escapeHtmlText(h.pincode)} · ${covered.filter((c) => c.matchingHubIds.includes(h.id)).length} Sectors Covered</div>
+      (h) => `<a href="/seo/faridabad/${escapeHtmlText(buildTier1Slug(h, config.cityName))}" class="bb-card" style="text-decoration:none;color:#121212;padding:18px;background:#ffffff;">
+        <div>
+          <div style="font-weight:500;font-size:18px;color:#121212;">${escapeHtmlText(h.name)} (${h.radiusKm} km Zone)</div>
+          <div style="font-size:13px;color:#4b5563;margin:6px 0 14px;">PIN ${escapeHtmlText(h.pincode)} · ${covered.filter((c) => c.matchingHubIds.includes(h.id)).length} Sectors Covered</div>
+        </div>
+        <span class="bb-btn-outline">Explore ${escapeHtmlText(h.name)} Cakes</span>
       </a>`
     )
     .join('');
@@ -1353,9 +1730,9 @@ export function renderGeoSeoDirectoryHtml(
     .map((cov) => {
       const customCat = cats[0];
       const href = customCat ? `/seo/faridabad/${buildTier2Slug(customCat, cov.locality, config.cityName)}` : '/seo/faridabad';
-      return `<a href="${escapeHtmlText(href)}" style="display:flex;justify-content:space-between;align-items:center;border:1px solid #e7dfd4;border-radius:10px;background:#fff;padding:10px 12px;text-decoration:none;color:#1f1612;font-size:13px;">
-        <span style="font-weight:600;">${escapeHtmlText(cov.locality.name)}</span>
-        <span style="color:#6b5b52;font-size:11.5px;">${cov.distanceKm.toFixed(1)} km · ${escapeHtmlText(cov.locality.pincode)}</span>
+      return `<a href="${escapeHtmlText(href)}" style="display:flex;justify-content:space-between;align-items:center;border:1px solid #2b2b2b;border-radius:16px;background:#ffffff;padding:12px 15px;text-decoration:none;color:#121212;font-size:13.5px;box-shadow:0 3px 8px rgba(0,0,0,0.12);">
+        <span style="font-weight:500;">${escapeHtmlText(cov.locality.name)}</span>
+        <span style="color:#4b5563;font-size:12px;">${cov.distanceKm.toFixed(1)} km · ${escapeHtmlText(cov.locality.pincode)}</span>
       </a>`;
     })
     .join('');
@@ -1369,20 +1746,41 @@ export function renderGeoSeoDirectoryHtml(
   <meta name="description" content="Explore ${stats.totalPages.toLocaleString()} cake delivery pages for ${escapeHtmlText(config.brandName)} across Sector 31, 88, 35 & 42 (5 km unified zone) in Faridabad." />
   <link rel="canonical" href="${escapeHtmlText(`${cleanHost}/seo/faridabad`)}" />
   <script type="application/ld+json">${JSON.stringify(buildBakeryStorefrontSchema(config, cleanHost))}</script>
+  ${buildBroomiesSharedStyles()}
 </head>
-<body style="margin:0;background:#fbf8f3;color:#1f1612;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <main style="max-width:1120px;margin:0 auto;padding:28px 20px 56px;">
-    <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#166534;">${stats.totalPages.toLocaleString()} Live Geo-SEO Cake Pages · ${stats.coveredLocalitiesCount} Faridabad Localities</p>
-    <h1 style="margin:0 0 12px;font-size:32px;font-weight:800;">${escapeHtmlText(config.brandName)} – Faridabad Unified Cake Zones</h1>
-    <p style="margin:0 0 22px;font-size:15px;color:#4f433d;">Direct Storefront: <a href="${escapeHtmlText(siteUrl)}" style="color:#7c2d12;font-weight:700;">${escapeHtmlText(siteUrl)}</a></p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:28px;">
+<body class="bb-body">
+  ${buildBroomiesHeaderHtml(siteUrl, config.brandName, activeHubs, config.cityName)}
+
+  <main class="bb-main">
+    <section class="bb-panel">
+      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">${stats.totalPages.toLocaleString()} Live Geo-SEO Cake Pages · ${stats.coveredLocalitiesCount} Faridabad Localities</p>
+      <h1 class="bb-section-title" style="margin-bottom:10px;">${escapeHtmlText(config.brandName)} – Faridabad Unified Cake Zones</h1>
+      <p style="margin:0 0 18px;font-size:15px;color:#333333;">Direct Storefront: <a href="${escapeHtmlText(siteUrl)}" style="color:#121212;font-weight:600;">${escapeHtmlText(siteUrl)}</a></p>
+      <a href="${escapeHtmlText(siteUrl)}/collections/all" class="bb-btn-solid">Order Cakes on Broomies Bakery</a>
+    </section>
+
+    <h2 class="bb-section-title">Unified 5 km Zone Hubs</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-bottom:32px;">
       ${hubCards}
     </div>
-    <h2 style="font-size:20px;font-weight:800;margin:0 0 12px;">All Covered Faridabad Sectors & Colonies (≤ 5 km Radius)</h2>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;">
+
+    <h2 class="bb-section-title">All Covered Faridabad Sectors &amp; Colonies (≤ 5 km Radius)</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
       ${localityGrid}
     </div>
   </main>
+
+  <footer class="bb-footer">
+    ${escapeHtmlText(config.brandName)} · Serving ${escapeHtmlText(config.cityName)} ·
+    <a href="${escapeHtmlText(siteUrl)}" style="color:#121212;text-decoration:none;font-weight:600;">${escapeHtmlText(siteUrl)}</a>
+    · <a href="/sitemap.xml" style="color:#1f2937;text-decoration:none;">XML Sitemap</a>
+  </footer>
+
+  <a href="https://wa.me/${waDigits}?text=${encodeURIComponent(`Hi ${config.brandName}, I want to order a cake in Faridabad!`)}" target="_blank" rel="noopener noreferrer" class="bb-wa-float">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.03 2a9.94 9.94 0 0 0-8.49 15.13L2.2 21.8l4.8-1.26A9.95 9.95 0 1 0 12.03 2Zm5.8 14.12c-.25.7-1.42 1.34-1.97 1.41-.51.07-1.15.1-1.85-.12-.43-.14-.98-.32-1.69-.63-2.98-1.29-4.92-4.31-5.07-4.51-.15-.2-1.21-1.61-1.21-3.07 0-1.46.76-2.18 1.03-2.48.27-.3.6-.37.8-.37h.58c.18 0 .44-.07.68.52.25.61.85 2.08.92 2.23.08.15.13.33.03.53-.1.2-.15.33-.3.5-.15.18-.32.4-.45.53-.15.15-.3.31-.13.61.18.3.78 1.29 1.68 2.09 1.15 1.03 2.13 1.35 2.43 1.5.3.15.48.13.66-.08.18-.2.75-.87.95-1.17.2-.3.4-.25.68-.15.28.1 1.75.83 2.05.98.3.15.5.22.58.35.07.12.07.72-.18 1.42Z"/></svg>
+    <span>Chat on WhatsApp</span>
+  </a>
 </body>
 </html>`;
 }
+
