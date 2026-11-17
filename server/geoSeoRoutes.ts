@@ -32,6 +32,37 @@ interface PublicStorefrontCatalogCache {
 let publicCatalogCache: PublicStorefrontCatalogCache | null = null;
 const PUBLIC_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 
+interface RenderedPageCacheEntry {
+  body: string;
+  expiresAt: number;
+}
+
+const renderedPageCache = new Map<string, RenderedPageCacheEntry>();
+const RENDERED_PAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+const RENDERED_PAGE_CACHE_MAX_ENTRIES = 250;
+const PUBLIC_EDGE_CACHE_HEADER = 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400';
+
+function getCachedRenderedPage(key: string): string | null {
+  const entry = renderedPageCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    renderedPageCache.delete(key);
+    return null;
+  }
+  return entry.body;
+}
+
+function setCachedRenderedPage(key: string, body: string): void {
+  if (renderedPageCache.size >= RENDERED_PAGE_CACHE_MAX_ENTRIES) {
+    const oldestKey = renderedPageCache.keys().next().value;
+    if (oldestKey) renderedPageCache.delete(oldestKey);
+  }
+  renderedPageCache.set(key, {
+    body,
+    expiresAt: Date.now() + RENDERED_PAGE_CACHE_TTL_MS,
+  });
+}
+
 async function fetchPublicStorefrontProducts(siteUrl: string): Promise<ProductCatalogItem[]> {
   const cleanSite = normalizeWebsiteBaseUrl(siteUrl);
   const now = Date.now();
@@ -175,25 +206,46 @@ export function registerGeoSeoRoutes(app: Express) {
     }
     const host = resolvePublicSeoHost(req);
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=600');
+    res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
     res.send(buildGeoSitemapShardXml(host, geoConfig, shardNum));
   });
 
   // Master Faridabad Unified Cake Zones Directory Page (internal link hub for Googlebot)
   app.get('/seo/faridabad', async (req: Request, res: Response) => {
+    const host = resolvePublicSeoHost(req);
+    const cacheKey = `html-dir:${host}`;
+    const cached = getCachedRenderedPage(cacheKey);
+    if (cached) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+      res.send(cached);
+      return;
+    }
+
     await store.ensureHydrated();
     const geoConfig = store.getGeoSeoConfig();
-    const host = resolvePublicSeoHost(req);
     const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
+    const html = renderGeoSeoDirectoryHtml(geoConfig, host, waPhone);
+    setCachedRenderedPage(cacheKey, html);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.send(renderGeoSeoDirectoryHtml(geoConfig, host, waPhone));
+    res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+    res.send(html);
   });
 
   // 10,000+ Dynamic Programmatic Geo-SEO Landing Pages
   app.get('/seo/faridabad/:slug', async (req: Request, res: Response) => {
-    await store.ensureHydrated();
     const slug = String(req.params.slug || '').trim();
+    const host = resolvePublicSeoHost(req);
+    const cacheKey = `html:${host}:${slug}`;
+    const cached = getCachedRenderedPage(cacheKey);
+    if (cached) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+      res.send(cached);
+      return;
+    }
+
+    await store.ensureHydrated();
     const geoConfig = store.getGeoSeoConfig();
     if (!geoConfig.enabled) {
       res.status(404).send('Geo-SEO pages are currently paused in OrderPulse SEO Manager.');
@@ -206,13 +258,14 @@ export function registerGeoSeoRoutes(app: Express) {
       );
       return;
     }
-    const host = resolvePublicSeoHost(req);
     const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
     const products = await getEnrichedGeoProducts(geoConfig);
     const pageData = buildGeoSeoPageData(geoConfig, ref, products, host);
+    const html = renderGeoSeoLandingHtml(pageData, geoConfig, waPhone);
+    setCachedRenderedPage(cacheKey, html);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.send(renderGeoSeoLandingHtml(pageData, geoConfig, waPhone));
+    res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+    res.send(html);
   });
 
   // =========================================================================
@@ -277,30 +330,55 @@ export function registerGeoSeoRoutes(app: Express) {
 
   // Root Storefront Zone Directory on broomiesbakery.in/apps/cakes
   app.get('/api/shopify-proxy', async (req: Request, res: Response) => {
+    const pathPrefixQuery = typeof req.query.path_prefix === 'string' ? req.query.path_prefix : '';
+    const cacheKey = `proxy-dir:${pathPrefixQuery || 'default'}`;
+    const cached = getCachedRenderedPage(cacheKey);
+    if (cached) {
+      res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
+      res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+      res.send(cached);
+      return;
+    }
+
     await store.ensureHydrated();
     const sigStatus = inspectShopifyProxySignature(req);
     const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
     const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
+    const liquid = renderGeoSeoDirectoryLiquidFragment(geoConfig, waPhone);
+    setCachedRenderedPage(cacheKey, liquid);
     res.setHeader('X-OrderPulse-Proxy-Sig', sigStatus);
     res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.send(renderGeoSeoDirectoryLiquidFragment(geoConfig, waPhone));
+    res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+    res.send(liquid);
   });
 
   // All 16,436+ Cake Landing Pages rendered inside broomiesbakery.in/apps/cakes/:slug
   app.get('/api/shopify-proxy/:slug', async (req: Request, res: Response) => {
+    const slug = String(req.params.slug || '').replace(/^\/+|\/+$/g, '').trim();
+    const pathPrefixQuery = typeof req.query.path_prefix === 'string' ? req.query.path_prefix : '';
+    if (slug) {
+      const cacheKey = `proxy:${pathPrefixQuery || 'default'}:${slug}`;
+      const cached = getCachedRenderedPage(cacheKey);
+      if (cached) {
+        res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
+        res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+        res.send(cached);
+        return;
+      }
+    }
+
     await store.ensureHydrated();
     const sigStatus = inspectShopifyProxySignature(req);
-    const slug = String(req.params.slug || '').replace(/^\/+|\/+$/g, '').trim();
     const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
     const proxyPrefix = normalizeShopifyProxyPrefix(geoConfig.shopifyProxyPrefix);
     const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
     res.setHeader('X-OrderPulse-Proxy-Sig', sigStatus);
 
     if (!slug) {
+      const liquidDir = renderGeoSeoDirectoryLiquidFragment(geoConfig, waPhone);
       res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
-      res.setHeader('Cache-Control', 'public, max-age=300');
-      res.send(renderGeoSeoDirectoryLiquidFragment(geoConfig, waPhone));
+      res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+      res.send(liquidDir);
       return;
     }
 
@@ -324,9 +402,11 @@ export function registerGeoSeoRoutes(app: Express) {
     const pageData = buildGeoSeoPageData(geoConfig, ref, products, host, {
       useProxyCanonical: true,
     });
+    const liquid = renderGeoSeoShopifyLiquidFragment(pageData, geoConfig, waPhone);
+    setCachedRenderedPage(`proxy:${pathPrefixQuery || 'default'}:${slug}`, liquid);
     res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.send(renderGeoSeoShopifyLiquidFragment(pageData, geoConfig, waPhone));
+    res.setHeader('Cache-Control', PUBLIC_EDGE_CACHE_HEADER);
+    res.send(liquid);
   });
 
   // Diagnostic API: Live probe of both Vercel App Proxy endpoint & custom Shopify domain route
@@ -472,6 +552,7 @@ export function registerGeoSeoRoutes(app: Express) {
           : cur.modifiers,
     });
 
+    renderedPageCache.clear();
     await store.flushRemote();
     res.json({
       ok: true,

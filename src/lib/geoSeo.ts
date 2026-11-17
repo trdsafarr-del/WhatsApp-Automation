@@ -1265,6 +1265,19 @@ function formatInrShopPrice(rawPrice?: string): string {
   })}`;
 }
 
+export function optimizeShopifyImageUrl(rawUrl: string, width = 480): string {
+  const url = (rawUrl || '').trim();
+  if (!url) return '';
+  if (!/cdn\.shopify\.com|\/cdn\/shop\//i.test(url)) return url;
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('width', String(width));
+    return parsed.toString();
+  } catch {
+    return url.includes('?') ? `${url}&width=${width}` : `${url}?width=${width}`;
+  }
+}
+
 function buildBroomiesSharedStyles(): string {
   return `<style>
     * { box-sizing: border-box; }
@@ -1378,10 +1391,10 @@ function buildBroomiesSharedStyles(): string {
       font-weight: 500;
     }
     .bb-panel {
-      background: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.94);
       border: 1px solid #2b2b2b;
-      border-radius: 26px;
-      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+      border-radius: 24px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
       padding: 26px 28px;
       margin-bottom: 28px;
     }
@@ -1399,19 +1412,20 @@ function buildBroomiesSharedStyles(): string {
       margin-bottom: 34px;
     }
     .bb-card {
-      border-radius: 26px;
+      border-radius: 22px;
       border: 1px solid #2b2b2b;
       background: #efefef;
-      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.24);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
       overflow: hidden;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      transition: transform 0.18s ease, box-shadow 0.18s ease;
+      contain: layout style paint;
+      content-visibility: auto;
+      contain-intrinsic-size: 210px 320px;
     }
     .bb-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.28);
+      border-color: #121212;
     }
     .bb-card-media {
       width: 100%;
@@ -1645,10 +1659,17 @@ export function renderGeoSeoLandingHtml(
   const productsHtml =
     data.matchedProducts.length > 0
       ? data.matchedProducts
-          .map((p) => {
+          .map((p, idx) => {
             const productUrl = `${data.primaryWebsiteUrl}/products/${encodeURIComponent(p.handle || '')}`;
-            const imgBlock = p.imageUrl
-              ? `<img src="${escapeHtmlText(p.imageUrl)}" alt="${escapeHtmlText(p.imageAlt || p.title)}" loading="eager" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><div class="bb-card-fallback" style="display:none;">${escapeHtmlText(p.title)}</div>`
+            const imgSrc = optimizeShopifyImageUrl(p.imageUrl, 480);
+            const imgSrc360 = optimizeShopifyImageUrl(p.imageUrl, 360);
+            const imgSrc540 = optimizeShopifyImageUrl(p.imageUrl, 540);
+            const loadAttr =
+              idx < 5
+                ? 'loading="eager" fetchpriority="high" decoding="async"'
+                : 'loading="lazy" decoding="async"';
+            const imgBlock = imgSrc
+              ? `<img src="${escapeHtmlText(imgSrc)}" srcset="${escapeHtmlText(imgSrc360)} 360w, ${escapeHtmlText(imgSrc540)} 540w" sizes="(max-width: 720px) 46vw, 240px" width="480" height="480" alt="${escapeHtmlText(p.imageAlt || p.title)}" ${loadAttr} onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><div class="bb-card-fallback" style="display:none;">${escapeHtmlText(p.title)}</div>`
               : `<div class="bb-card-fallback">${escapeHtmlText(p.title)}</div>`;
             return `<article class="bb-card">
               <div class="bb-card-media">
@@ -1898,10 +1919,10 @@ function buildShopifyProxyScopedStyles(): string {
       text-decoration: underline;
     }
     .bb-proxy-panel {
-      background: rgba(255, 255, 255, 0.92);
+      background: rgba(255, 255, 255, 0.94);
       border: 1px solid #2b2b2b;
-      border-radius: 26px;
-      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+      border-radius: 24px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
       padding: 24px 26px;
       margin-bottom: 26px;
     }
@@ -1925,14 +1946,17 @@ function buildShopifyProxyScopedStyles(): string {
       margin-bottom: 30px;
     }
     .bb-proxy-card {
-      border-radius: 26px;
+      border-radius: 22px;
       border: 1px solid #2b2b2b;
       background: #efefef;
-      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.22);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.11);
       overflow: hidden;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
+      contain: layout style paint;
+      content-visibility: auto;
+      contain-intrinsic-size: 210px 320px;
     }
     .bb-proxy-media {
       width: 100%;
@@ -2063,10 +2087,17 @@ export function renderGeoSeoShopifyLiquidFragment(
   const productsHtml =
     data.matchedProducts.length > 0
       ? data.matchedProducts
-          .map((p) => {
+          .map((p, idx) => {
             const productPath = `/products/${encodeURIComponent(p.handle || '')}`;
-            const imgBlock = p.imageUrl
-              ? `<img src="${escapeHtmlText(p.imageUrl)}" alt="${escapeHtmlText(p.imageAlt || p.title)}" loading="eager" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><div class="bb-proxy-card-fallback" style="display:none;">${escapeHtmlText(p.title)}</div>`
+            const imgSrc = optimizeShopifyImageUrl(p.imageUrl, 480);
+            const imgSrc360 = optimizeShopifyImageUrl(p.imageUrl, 360);
+            const imgSrc540 = optimizeShopifyImageUrl(p.imageUrl, 540);
+            const loadAttr =
+              idx < 5
+                ? 'loading="eager" fetchpriority="high" decoding="async"'
+                : 'loading="lazy" decoding="async"';
+            const imgBlock = imgSrc
+              ? `<img src="${escapeHtmlText(imgSrc)}" srcset="${escapeHtmlText(imgSrc360)} 360w, ${escapeHtmlText(imgSrc540)} 540w" sizes="(max-width: 720px) 46vw, 240px" width="480" height="480" alt="${escapeHtmlText(p.imageAlt || p.title)}" ${loadAttr} onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><div class="bb-proxy-card-fallback" style="display:none;">${escapeHtmlText(p.title)}</div>`
               : `<div class="bb-proxy-card-fallback">${escapeHtmlText(p.title)}</div>`;
             return `<article class="bb-proxy-card">
               <div class="bb-proxy-media">${imgBlock}</div>

@@ -17,6 +17,7 @@ import {
   getGeoSeoRefAtIndex,
   getGeoSeoStats,
   normalizeShopifyProxyPrefix,
+  optimizeShopifyImageUrl,
   queryGeoSeoPages,
   renderGeoSeoDirectoryHtml,
   renderGeoSeoDirectoryLiquidFragment,
@@ -227,6 +228,7 @@ test('Shopify App Proxy prefix, Liquid fragments, proxy XML sitemaps, and HMAC s
     id: `exp-${i}`,
     handle: `custom-cake-${i}`,
     title: `Broomies Custom Cake #${i + 1}`,
+    imageUrl: `https://cdn.shopify.com/s/files/1/cake-${i}.png?v=1`,
     pincodeMode: 'all_india' as const,
   }));
   const richData = buildGeoSeoPageData(
@@ -237,6 +239,19 @@ test('Shopify App Proxy prefix, Liquid fragments, proxy XML sitemaps, and HMAC s
     { useProxyCanonical: true }
   );
   assert.equal(richData.matchedProducts.length, 30);
+
+  assert.equal(
+    optimizeShopifyImageUrl('https://cdn.shopify.com/s/files/1/cake.png?v=123', 480),
+    'https://cdn.shopify.com/s/files/1/cake.png?v=123&width=480'
+  );
+  const richLiquid = renderGeoSeoShopifyLiquidFragment(
+    richData,
+    DEFAULT_GEO_SEO_CONFIG,
+    '+919266424088'
+  );
+  assert.ok(richLiquid.includes('content-visibility: auto'));
+  assert.ok(richLiquid.includes('loading="lazy"'));
+  assert.ok(richLiquid.includes('width=480'));
 
   const dirLiquid = renderGeoSeoDirectoryLiquidFragment(DEFAULT_GEO_SEO_CONFIG, '+919266424088');
   assert.ok(!dirLiquid.includes('<!DOCTYPE html'));
