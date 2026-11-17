@@ -208,11 +208,14 @@ function buildStorefrontWidgetScript(origin: string): string {
   }
 
   var lastPayload = null;
-  var autoAttempted = false;
   var isDetectingGps = false;
   var inlineNote = '';
+  var activeEditScope = '';
   var observerAttached = false;
   var observerTimer = null;
+
+  var PIN_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>';
+  var PENCIL_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
 
   function getSavedPin() {
     try { return localStorage.getItem(STORAGE_KEY) || ''; } catch (e) { return ''; }
@@ -227,43 +230,68 @@ function buildStorefrontWidgetScript(origin: string): string {
     } catch (e) {}
   }
 
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatLocationLabel(delhivery) {
+    if (!delhivery) return '';
+    var parts = [];
+    if (delhivery.city) parts.push(delhivery.city);
+    if (delhivery.state) parts.push(delhivery.state);
+    return parts.length ? ' (' + parts.join(', ') + ')' : '';
+  }
+
+  function hideTopBanner() {
+    var host = document.getElementById('orderpulse-pincode-bar');
+    if (host) {
+      host.style.display = 'none';
+      host.innerHTML = '';
+    }
+  }
+
   function injectBanner(config, savedPin, delhivery, customMsg) {
-    if (config && config.pincodeGateEnabled === false) return;
+    if (config && config.pincodeGateEnabled === false) {
+      hideTopBanner();
+      return;
+    }
     if (!document.body) return;
+
+    // Auto-hide the header bar once a valid pincode is fetched/saved so the storefront header stays clean
+    if (savedPin && !customMsg) {
+      hideTopBanner();
+      return;
+    }
+
     var host = document.getElementById('orderpulse-pincode-bar');
     if (!host) {
       host = document.createElement('div');
       host.id = 'orderpulse-pincode-bar';
       document.body.insertBefore(host, document.body.firstChild);
     }
+    host.style.display = '';
+
     var statusText = customMsg || inlineNote || '';
     var statusColor = '#6ee7b7';
-    if (!statusText && savedPin) {
-      var locParts = [];
-      if (delhivery && delhivery.city) locParts.push(delhivery.city);
-      if (delhivery && delhivery.state) locParts.push(delhivery.state);
-      var loc = locParts.length ? ' (' + locParts.join(', ') + ')' : '';
-      var src = getSavedSource();
-      var prefix = src === 'auto_gps' ? 'GPS detected: ' : src === 'auto_ip' ? 'Auto-detected: ' : 'Delivering to ';
-      if (delhivery && delhivery.serviceable === false) {
-        statusText = 'Not serviceable at ' + savedPin + loc;
-        statusColor = '#fca5a5';
-      } else {
-        statusText = prefix + savedPin + loc;
-      }
+    if (savedPin && delhivery && delhivery.serviceable === false) {
+      statusColor = '#fca5a5';
     }
 
     host.innerHTML =
       '<div style="background:#0f172a;color:#f8fafc;padding:8px 14px;font-family:system-ui,-apple-system,sans-serif;font-size:13px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;border-bottom:1px solid #1e293b;">' +
-      '<span style="font-weight:500;">' + ((config && config.pincodePromptTitle) || 'Check delivery availability') + '</span>' +
+      '<span style="font-weight:500;">' + escapeHtml((config && config.pincodePromptTitle) || 'Check delivery availability') + '</span>' +
       '<form id="op-pin-form" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;">' +
-      '<input id="op-pin-input" type="text" maxlength="6" inputmode="numeric" placeholder="Enter 6-digit pincode" value="' + (savedPin || '') + '" style="padding:5px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#fff;width:140px;font-size:13px;" />' +
+      '<input id="op-pin-input" type="text" maxlength="6" inputmode="numeric" placeholder="Enter 6-digit pincode" value="' + escapeHtml(savedPin || '') + '" style="padding:5px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#fff;width:140px;font-size:13px;" />' +
       '<button type="submit" style="padding:5px 12px;border-radius:6px;border:none;background:#10b981;color:#fff;font-weight:600;cursor:pointer;font-size:12px;">Check</button>' +
       '<button type="button" id="op-pin-detect" style="padding:5px 10px;border-radius:6px;border:1px solid #38bdf8;background:#0c4a6e;color:#e0f2fe;font-weight:600;cursor:pointer;font-size:12px;">' +
       (isDetectingGps ? 'Detecting...' : 'Auto-Fetch PIN') +
       '</button>' +
       '</form>' +
-      (statusText ? '<span id="op-pin-status" style="color:' + statusColor + ';font-weight:500;">' + statusText + '</span>' : '') +
+      (statusText ? '<span id="op-pin-status" style="color:' + statusColor + ';font-weight:500;">' + escapeHtml(statusText) + '</span>' : '') +
       '</div>';
 
     var form = document.getElementById('op-pin-form');
@@ -286,24 +314,29 @@ function buildStorefrontWidgetScript(origin: string): string {
     var detectBtn = document.getElementById('op-pin-detect');
     if (detectBtn) {
       detectBtn.addEventListener('click', function () {
-        detectPinViaGps(config);
+        detectPinViaGps(config, '');
       });
     }
   }
 
-  function detectPinViaIp(config, silent) {
+  function detectPinViaIp(config, silent, scope) {
     return fetch(APP_ORIGIN + '/api/storefront/auto-pincode')
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data && data.detected && data.pincode) {
           inlineNote = '';
+          activeEditScope = '';
           savePin(data.pincode, 'auto_ip');
           runCheck(data.pincode);
           return true;
         }
         if (!silent) {
           inlineNote = 'Could not auto-fetch pincode — please enter your 6-digit PIN.';
-          injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, inlineNote);
+          if (scope && lastPayload) {
+            renderAllActionBoxes(lastPayload);
+          } else {
+            injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, inlineNote);
+          }
         }
         return false;
       })
@@ -312,20 +345,26 @@ function buildStorefrontWidgetScript(origin: string): string {
       });
   }
 
-  function detectPinViaGps(config) {
+  function detectPinViaGps(config, scope, skipIpFallback) {
     if (isDetectingGps) return;
     if (!navigator.geolocation) {
+      if (skipIpFallback) return;
       isDetectingGps = true;
-      injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, 'Auto-detecting location...');
-      detectPinViaIp(config, false).finally(function () {
+      inlineNote = 'Auto-detecting location...';
+      if (scope && lastPayload) renderAllActionBoxes(lastPayload);
+      else injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, inlineNote);
+      detectPinViaIp(config, false, scope).finally(function () {
         isDetectingGps = false;
       });
       return;
     }
 
     isDetectingGps = true;
-    inlineNote = 'Fetching your exact pincode...';
-    injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, inlineNote);
+    if (!skipIpFallback) {
+      inlineNote = 'Fetching your exact pincode...';
+      if (scope && lastPayload) renderAllActionBoxes(lastPayload);
+      else injectBanner(config, getSavedPin(), lastPayload ? lastPayload.delhivery : null, inlineNote);
+    }
 
     navigator.geolocation.getCurrentPosition(
       function (pos) {
@@ -343,24 +382,308 @@ function buildStorefrontWidgetScript(origin: string): string {
             isDetectingGps = false;
             if (data && data.detected && data.pincode) {
               inlineNote = '';
+              activeEditScope = '';
               savePin(data.pincode, 'auto_gps');
               runCheck(data.pincode);
-            } else {
-              detectPinViaIp(config, false);
+            } else if (!skipIpFallback) {
+              detectPinViaIp(config, false, scope);
             }
           })
           .catch(function () {
             isDetectingGps = false;
-            detectPinViaIp(config, false);
+            if (!skipIpFallback) detectPinViaIp(config, false, scope);
           });
       },
       function () {
-        detectPinViaIp(config, false).finally(function () {
+        if (skipIpFallback) {
+          isDetectingGps = false;
+          return;
+        }
+        detectPinViaIp(config, false, scope).finally(function () {
           isDetectingGps = false;
         });
       },
       { enableHighAccuracy: false, timeout: 7000, maximumAge: 300000 }
     );
+  }
+
+  function renderPincodeActionBox(box, scope, opts) {
+    var payload = lastPayload || {};
+    var config = payload.storefrontConfig || {};
+    var savedPin = payload.pincode || getSavedPin();
+    var delhivery = payload.delhivery || null;
+    var loc = formatLocationLabel(delhivery);
+    var isEditing = activeEditScope === scope || !savedPin;
+    var isAvailable = opts.available !== false && (!delhivery || delhivery.serviceable !== false);
+
+    var bg = !savedPin
+      ? '#f8fafc'
+      : isAvailable
+        ? '#f0fdf4'
+        : '#fef2f2';
+    var border = !savedPin
+      ? '#cbd5e1'
+      : isAvailable
+        ? '#bbf7d0'
+        : '#fecaca';
+    var textCol = !savedPin
+      ? '#0f172a'
+      : isAvailable
+        ? '#14532d'
+        : '#991b1b';
+    var subCol = !savedPin
+      ? '#475569'
+      : isAvailable
+        ? '#166534'
+        : '#b91c1c';
+
+    box.style.cssText =
+      'margin:0 0 12px 0;padding:10px 12px;border-radius:10px;border:1px solid ' +
+      border +
+      ';background:' +
+      bg +
+      ';color:' +
+      textCol +
+      ';font-family:system-ui,-apple-system,sans-serif;font-size:13px;line-height:1.35;box-sizing:border-box;width:100%;';
+
+    if (isEditing) {
+      box.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;">' +
+        '<span style="font-weight:600;font-size:12px;display:inline-flex;align-items:center;gap:5px;">' +
+        PIN_SVG +
+        '<span>' + (savedPin ? 'Change delivery pincode' : 'Enter delivery pincode') + '</span>' +
+        '</span>' +
+        (savedPin
+          ? '<button type="button" class="op-box-cancel" aria-label="Cancel pincode edit" style="border:none;background:transparent;color:' + subCol + ';cursor:pointer;font-size:14px;padding:2px 6px;">✕</button>'
+          : '') +
+        '</div>' +
+        '<form class="op-box-form" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">' +
+        '<input class="op-box-input" type="text" maxlength="6" inputmode="numeric" placeholder="6-digit PIN" value="' +
+        escapeHtml(savedPin || '') +
+        '" style="flex:1 1 110px;min-width:100px;padding:7px 10px;border-radius:7px;border:1px solid #94a3b8;background:#ffffff;color:#0f172a;font-size:13px;font-weight:600;" />' +
+        '<button type="submit" style="padding:7px 12px;border-radius:7px;border:none;background:#0f172a;color:#ffffff;font-weight:600;cursor:pointer;font-size:12px;">Save</button>' +
+        '<button type="button" class="op-box-gps" style="padding:7px 10px;border-radius:7px;border:1px solid #0284c7;background:#e0f2fe;color:#075985;font-weight:600;cursor:pointer;font-size:12px;">' +
+        (isDetectingGps ? 'Detecting...' : 'Auto-Fetch') +
+        '</button>' +
+        '</form>' +
+        (inlineNote
+          ? '<div style="margin-top:5px;font-size:11px;color:#b91c1c;font-weight:500;">' + escapeHtml(inlineNote) + '</div>'
+          : '');
+
+      var form = box.querySelector('.op-box-form');
+      var input = box.querySelector('.op-box-input');
+      var gpsBtn = box.querySelector('.op-box-gps');
+      var cancelBtn = box.querySelector('.op-box-cancel');
+
+      if (form) {
+        form.addEventListener('submit', function (ev) {
+          ev.preventDefault();
+          inlineNote = '';
+          var val = (input && input.value ? input.value : '').replace(/\\D/g, '');
+          if (!/^[1-9]\\d{5}$/.test(val)) {
+            inlineNote = 'Enter a valid 6-digit Indian pincode.';
+            renderPincodeActionBox(box, scope, opts);
+            return;
+          }
+          activeEditScope = '';
+          savePin(val, 'manual');
+          runCheck(val);
+        });
+      }
+      if (gpsBtn) {
+        gpsBtn.addEventListener('click', function () {
+          detectPinViaGps(config, scope);
+        });
+      }
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', function () {
+          inlineNote = '';
+          activeEditScope = '';
+          renderAllActionBoxes(lastPayload);
+        });
+      }
+      return;
+    }
+
+    var headline = 'Delivering to ' + escapeHtml(savedPin) + escapeHtml(loc);
+    if (!isAvailable) {
+      headline = 'Unavailable at ' + escapeHtml(savedPin) + escapeHtml(loc);
+    }
+
+    var subline = opts.subline || '';
+    if (!subline && config.showDeliveryEstimateOnPdp !== false) {
+      subline = isAvailable
+        ? 'Est. delivery in ~' + (config.defaultDeliveryDays || 4) + ' days'
+        : 'Delivery not available for this pincode';
+    }
+
+    box.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">' +
+      '<div style="min-width:0;">' +
+      '<div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px;">' +
+      PIN_SVG +
+      '<span class="op-pin-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+      headline +
+      '</span>' +
+      '</div>' +
+      (subline
+        ? '<div style="margin-top:2px;margin-left:21px;font-size:11.5px;color:' + subCol + ';font-weight:500;">' +
+          escapeHtml(subline) +
+          '</div>'
+        : '') +
+      '</div>' +
+      '<button type="button" class="op-pin-pencil" aria-label="Change delivery pincode" title="Change pincode" style="flex-shrink:0;display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border-radius:7px;border:1px solid ' +
+      border +
+      ';background:#ffffff;color:#0f172a;cursor:pointer;font-size:11px;font-weight:600;">' +
+      PENCIL_SVG +
+      '</button>' +
+      '</div>';
+
+    var pencilBtn = box.querySelector('.op-pin-pencil');
+    if (pencilBtn) {
+      pencilBtn.addEventListener('click', function () {
+        inlineNote = '';
+        activeEditScope = scope;
+        renderAllActionBoxes(lastPayload);
+        var nextInput = box.querySelector('.op-box-input');
+        if (nextInput) nextInput.focus();
+      });
+    }
+  }
+
+  function renderPdpAndCheckoutWidgets(payload) {
+    if (!payload) return;
+    var config = payload.storefrontConfig || {};
+    if (config.pincodeGateEnabled === false) return;
+
+    var byHandle = {};
+    (payload.products || []).forEach(function (p) {
+      if (p.handle) byHandle[p.handle] = p;
+    });
+
+    // 1) Product Page (PDP): place Pincode + Pencil box directly ABOVE Add-to-Cart / Buy Now buttons
+    var pdpMatch = window.location.pathname.match(/\\/products\\/([^/?#]+)/);
+    if (pdpMatch) {
+      var pdpHandle = decodeURIComponent(pdpMatch[1]);
+      var pdpInfo = byHandle[pdpHandle] || null;
+      var atcForm = document.querySelector(
+        'form[action*="/cart/add"][data-type="add-to-cart-form"], form[action*="/cart/add"]:not([id*="installment"])'
+      );
+      var atcBtn = atcForm
+        ? atcForm.querySelector('button[name="add"], button[type="submit"].product-form__submit, button[type="submit"]')
+        : document.querySelector('form[action*="/cart/add"]:not([id*="installment"]) button[type="submit"], button[name="add"]');
+
+      if (atcBtn) {
+        var btnGroup = atcBtn.closest('.product-form__buttons') || atcBtn.parentElement;
+        var pdpBox = document.getElementById('op-pdp-delivery-note');
+        if (!pdpBox && btnGroup && btnGroup.parentElement) {
+          pdpBox = document.createElement('div');
+          pdpBox.id = 'op-pdp-delivery-note';
+          if (btnGroup.classList && btnGroup.classList.contains('product-form__buttons')) {
+            btnGroup.parentElement.insertBefore(pdpBox, btnGroup);
+          } else {
+            atcBtn.parentElement.insertBefore(pdpBox, atcBtn);
+          }
+        }
+
+        var pdpAvailable = !pdpInfo || pdpInfo.available !== false;
+        var buyNowWrap = atcForm ? atcForm.querySelector('.shopify-payment-button, [data-shopify="payment-button"]') : null;
+        if (!pdpAvailable) {
+          atcBtn.disabled = true;
+          atcBtn.style.opacity = '0.5';
+          if (buyNowWrap) {
+            buyNowWrap.style.pointerEvents = 'none';
+            buyNowWrap.style.opacity = '0.45';
+          }
+        } else {
+          atcBtn.disabled = false;
+          atcBtn.style.opacity = '';
+          if (buyNowWrap) {
+            buyNowWrap.style.pointerEvents = '';
+            buyNowWrap.style.opacity = '';
+          }
+        }
+
+        if (pdpBox) {
+          renderPincodeActionBox(pdpBox, 'pdp', {
+            available: pdpAvailable,
+            subline: pdpInfo ? pdpInfo.reason : '',
+          });
+        }
+      }
+
+      if (pdpInfo && pdpInfo.jsonLd && config.enableJsonLdSchema !== false && !document.getElementById('op-jsonld-schema')) {
+        var ld = document.createElement('script');
+        ld.id = 'op-jsonld-schema';
+        ld.type = 'application/ld+json';
+        ld.textContent = JSON.stringify(pdpInfo.jsonLd);
+        document.head.appendChild(ld);
+      }
+    }
+
+    // 2) Cart Page & Cart Drawer: place Pincode + Pencil box directly ABOVE Checkout button
+    var checkoutBtns = document.querySelectorAll(
+      'button[name="checkout"], input[name="checkout"], .cart__checkout-button, #CartDrawer-Checkout'
+    );
+    checkoutBtns.forEach(function (chkBtn, idx) {
+      if (chkBtn.closest('#orderpulse-pincode-bar')) return;
+      var container = chkBtn.closest('.cart__ctas, .cart__checkout-wrapper') || chkBtn.parentElement;
+      if (!container || !container.parentElement) return;
+
+      var scopeKey = 'checkout-' + idx;
+      var box = container.previousElementSibling;
+      if (!box || !box.classList || !box.classList.contains('op-checkout-pincode-box')) {
+        box = container.parentElement.querySelector('.op-checkout-pincode-box');
+      }
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'op-checkout-pincode-box';
+        if (container.classList && (container.classList.contains('cart__ctas') || container.classList.contains('cart__checkout-wrapper'))) {
+          container.parentElement.insertBefore(box, container);
+        } else {
+          chkBtn.parentElement.insertBefore(box, chkBtn);
+        }
+      }
+
+      // Check if any product inside the same cart drawer/form is unavailable for this pincode
+      var cartRoot = chkBtn.closest('cart-drawer, cart-items, form[action*="/cart"], .cart-drawer, .drawer, main') || document;
+      var cartLinks = cartRoot.querySelectorAll('a[href*="/products/"]');
+      var blockedTitle = '';
+      cartLinks.forEach(function (cl) {
+        if (blockedTitle) return;
+        var m = (cl.getAttribute('href') || '').match(/\\/products\\/([^/?#]+)/);
+        if (!m) return;
+        var item = byHandle[decodeURIComponent(m[1])];
+        if (item && item.available === false) {
+          blockedTitle = item.title || 'An item in your cart';
+        }
+      });
+
+      var delhiveryOk = !payload.delhivery || payload.delhivery.serviceable !== false;
+      var cartOk = delhiveryOk && !blockedTitle;
+      if (!cartOk && payload.pincode) {
+        chkBtn.disabled = true;
+        chkBtn.style.opacity = '0.5';
+      } else {
+        chkBtn.disabled = false;
+        chkBtn.style.opacity = '';
+      }
+
+      renderPincodeActionBox(box, scopeKey, {
+        available: cartOk,
+        subline: blockedTitle
+          ? blockedTitle + ' is not deliverable to this pincode'
+          : !delhiveryOk
+            ? (payload.delhivery && payload.delhivery.remarks) || 'Area currently unserviceable'
+            : config.showDeliveryEstimateOnPdp !== false
+              ? 'Est. delivery in ~' + (config.defaultDeliveryDays || 4) + ' days'
+              : '',
+      });
+    });
+  }
+
+  function renderAllActionBoxes(payload) {
+    renderPdpAndCheckoutWidgets(payload);
   }
 
   function applyCatalogAvailability(payload) {
@@ -372,6 +695,7 @@ function buildStorefrontWidgetScript(origin: string): string {
 
     var links = document.querySelectorAll('a[href*="/products/"]');
     links.forEach(function (link) {
+      if (link.closest('cart-drawer, .cart-drawer, .cart-items, #CartDrawer')) return;
       var match = (link.getAttribute('href') || '').match(/\\/products\\/([^/?#]+)/);
       if (!match) return;
       var handle = decodeURIComponent(match[1]);
@@ -400,61 +724,40 @@ function buildStorefrontWidgetScript(origin: string): string {
       }
     });
 
-    var pdpMatch = window.location.pathname.match(/\\/products\\/([^/?#]+)/);
-    if (pdpMatch) {
-      var pdpHandle = decodeURIComponent(pdpMatch[1]);
-      var pdpInfo = byHandle[pdpHandle];
-      if (pdpInfo) {
-        var atcBtn = document.querySelector('form[action*="/cart/add"] button[type="submit"], button[name="add"]');
-        if (atcBtn) {
-          var noteEl = document.getElementById('op-pdp-delivery-note');
-          if (!noteEl) {
-            noteEl = document.createElement('div');
-            noteEl.id = 'op-pdp-delivery-note';
-            noteEl.style.cssText = 'margin:10px 0;padding:10px 12px;border-radius:8px;font-size:13px;font-family:system-ui,sans-serif;';
-            atcBtn.parentElement.insertBefore(noteEl, atcBtn);
-          }
-          if (!pdpInfo.available) {
-            atcBtn.disabled = true;
-            atcBtn.style.opacity = '0.5';
-            noteEl.style.background = '#450a0a';
-            noteEl.style.color = '#fecaca';
-            noteEl.style.border = '1px solid #991b1b';
-            noteEl.textContent = pdpInfo.reason || 'Not deliverable to this pincode';
-          } else {
-            atcBtn.disabled = false;
-            atcBtn.style.opacity = '';
-            noteEl.style.background = '#052e16';
-            noteEl.style.color = '#a7f3d0';
-            noteEl.style.border = '1px solid #065f46';
-            noteEl.textContent = pdpInfo.reason || 'Available for delivery';
-          }
-        }
-        if (pdpInfo.jsonLd && config.enableJsonLdSchema !== false && !document.getElementById('op-jsonld-schema')) {
-          var ld = document.createElement('script');
-          ld.id = 'op-jsonld-schema';
-          ld.type = 'application/ld+json';
-          ld.textContent = JSON.stringify(pdpInfo.jsonLd);
-          document.head.appendChild(ld);
-        }
-      }
-    }
+    renderPdpAndCheckoutWidgets(payload);
   }
 
   function ensureDomObserver() {
     if (observerAttached || typeof MutationObserver === 'undefined' || !document.body) return;
     observerAttached = true;
     var observer = new MutationObserver(function () {
-      if (!lastPayload || !lastPayload.pincode) return;
+      if (!lastPayload) return;
       if (observerTimer) clearTimeout(observerTimer);
       observerTimer = setTimeout(function () {
-        applyCatalogAvailability(lastPayload);
+        if (lastPayload.pincode) {
+          applyCatalogAvailability(lastPayload);
+        } else {
+          renderPdpAndCheckoutWidgets(lastPayload);
+        }
       }, 250);
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
-  function runCheck(pincode) {
+  function trySilentGrantedGpsUpgrade(config) {
+    if (!navigator.geolocation || !navigator.permissions || !navigator.permissions.query) return;
+    try {
+      navigator.permissions.query({ name: 'geolocation' }).then(function (perm) {
+        if (perm && perm.state === 'granted') {
+          detectPinViaGps(config, '', true);
+        }
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  var autoAttempted = false;
+
+  function runCheck(pincode, isInitialBoot) {
     var url = APP_ORIGIN + '/api/storefront/pincode-check?pincode=' + encodeURIComponent(pincode || '');
     fetch(url)
       .then(function (r) { return r.json(); })
@@ -462,25 +765,48 @@ function buildStorefrontWidgetScript(origin: string): string {
         if (!data || !data.ok) return;
         lastPayload = data;
         var cfg = data.storefrontConfig || {};
+
+        if (!pincode && isInitialBoot && !autoAttempted && cfg.autoDetectPincode !== false) {
+          autoAttempted = true;
+          hideTopBanner();
+          renderPdpAndCheckoutWidgets(data);
+          ensureDomObserver();
+          detectPinViaIp(cfg, true).then(function (found) {
+            if (!found) {
+              injectBanner(cfg, '', data.delhivery);
+            }
+          });
+          return;
+        }
+
         injectBanner(cfg, pincode, data.delhivery);
         if (pincode) {
           applyCatalogAvailability(data);
-          ensureDomObserver();
-        } else if (!autoAttempted && cfg.autoDetectPincode !== false) {
-          autoAttempted = true;
-          detectPinViaIp(cfg, true);
+        } else {
+          renderPdpAndCheckoutWidgets(data);
         }
+        ensureDomObserver();
       })
       .catch(function () {});
   }
 
-  var initialPin = getSavedPin();
+  function bootstrapStorefront() {
+    var savedPin = getSavedPin();
+    if (savedPin) {
+      runCheck(savedPin, false);
+      if (getSavedSource() === 'auto_ip') {
+        trySilentGrantedGpsUpgrade({});
+      }
+      return;
+    }
+
+    runCheck('', true);
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () {
-      runCheck(initialPin);
-    });
+    document.addEventListener('DOMContentLoaded', bootstrapStorefront);
   } else {
-    runCheck(initialPin);
+    bootstrapStorefront();
   }
 })();`;
 }
