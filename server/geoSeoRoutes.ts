@@ -19,9 +19,115 @@ import {
   resolveGeoSeoPageBySlug,
 } from '../src/lib/geoSeo.js';
 import { normalizeStorefrontOrigin } from '../src/lib/storefrontRules.js';
-import type { GeoSeoConfig } from '../src/lib/types.js';
+import type { GeoSeoConfig, ProductCatalogItem } from '../src/lib/types.js';
 import { upsertShopifyStorePage, verifyShopifyProxySignature } from './shopify.js';
 import { store } from './store.js';
+
+interface PublicStorefrontCatalogCache {
+  siteUrl: string;
+  fetchedAt: number;
+  items: ProductCatalogItem[];
+}
+
+let publicCatalogCache: PublicStorefrontCatalogCache | null = null;
+const PUBLIC_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
+
+async function fetchPublicStorefrontProducts(siteUrl: string): Promise<ProductCatalogItem[]> {
+  const cleanSite = normalizeWebsiteBaseUrl(siteUrl);
+  const now = Date.now();
+  if (
+    publicCatalogCache &&
+    publicCatalogCache.siteUrl === cleanSite &&
+    now - publicCatalogCache.fetchedAt < PUBLIC_CATALOG_CACHE_TTL_MS
+  ) {
+    return publicCatalogCache.items;
+  }
+
+  try {
+    const res = await fetch(`${cleanSite}/products.json?limit=250`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(4500),
+    });
+    if (!res.ok) {
+      return publicCatalogCache?.items || [];
+    }
+    const payload = (await res.json()) as {
+      products?: Array<{
+        id?: number | string;
+        title?: string;
+        handle?: string;
+        product_type?: string;
+        vendor?: string;
+        tags?: string[] | string;
+        images?: Array<{ src?: string; alt?: string | null }>;
+        variants?: Array<{ price?: string }>;
+      }>;
+    };
+    const rawList = Array.isArray(payload.products) ? payload.products : [];
+    const mapped: ProductCatalogItem[] = rawList
+      .filter((p) => p && p.handle && p.title)
+      .map((p) => {
+        const firstImage = Array.isArray(p.images) ? p.images[0] : undefined;
+        const firstVariant = Array.isArray(p.variants) ? p.variants[0] : undefined;
+        const tagsStr = Array.isArray(p.tags) ? p.tags.join(', ') : String(p.tags || '');
+        return {
+          id: `sf-${String(p.id || p.handle)}`,
+          shopifyProductId: String(p.id || p.handle),
+          handle: String(p.handle),
+          title: String(p.title),
+          productType: String(p.product_type || 'Cake'),
+          vendor: String(p.vendor || 'Broomies Bakery'),
+          price: String(firstVariant?.price || '800.00'),
+          currency: 'INR',
+          imageUrl: firstImage?.src || '',
+          imageAlt: firstImage?.alt || String(p.title),
+          status: 'active',
+          pincodeMode: 'all_india',
+          allowedPincodes: [],
+          blockedPincodes: [],
+          allowCod: true,
+          estimatedDeliveryDays: 1,
+          tags: tagsStr,
+          seoTitle: '',
+          seoDescription: '',
+          updatedAt: new Date(now).toISOString(),
+        };
+      });
+
+    publicCatalogCache = {
+      siteUrl: cleanSite,
+      fetchedAt: now,
+      items: mapped,
+    };
+    return mapped;
+  } catch {
+    return publicCatalogCache?.items || [];
+  }
+}
+
+async function getEnrichedGeoProducts(geoConfig: GeoSeoConfig): Promise<ProductCatalogItem[]> {
+  const local = store.getProducts();
+  if (local.length >= 60) {
+    return local;
+  }
+
+  const livePublic = await fetchPublicStorefrontProducts(geoConfig.primaryWebsiteUrl);
+  if (livePublic.length === 0) {
+    return local;
+  }
+
+  const seenHandles = new Set(local.map((p) => (p.handle || '').toLowerCase()).filter(Boolean));
+  const merged = [...local];
+  for (const item of livePublic) {
+    const h = (item.handle || '').toLowerCase();
+    if (h && !seenHandles.has(h)) {
+      seenHandles.add(h);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
 
 function resolvePublicSeoHost(req: Request): string {
   const sfConfig = store.getStorefrontConfig();
@@ -102,7 +208,8 @@ export function registerGeoSeoRoutes(app: Express) {
     }
     const host = resolvePublicSeoHost(req);
     const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
-    const pageData = buildGeoSeoPageData(geoConfig, ref, store.getProducts(), host);
+    const products = await getEnrichedGeoProducts(geoConfig);
+    const pageData = buildGeoSeoPageData(geoConfig, ref, products, host);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.send(renderGeoSeoLandingHtml(pageData, geoConfig, waPhone));
@@ -213,7 +320,8 @@ export function registerGeoSeoRoutes(app: Express) {
     }
 
     const host = resolvePublicSeoHost(req);
-    const pageData = buildGeoSeoPageData(geoConfig, ref, store.getProducts(), host, {
+    const products = await getEnrichedGeoProducts(geoConfig);
+    const pageData = buildGeoSeoPageData(geoConfig, ref, products, host, {
       useProxyCanonical: true,
     });
     res.setHeader('Content-Type', 'application/liquid; charset=utf-8');

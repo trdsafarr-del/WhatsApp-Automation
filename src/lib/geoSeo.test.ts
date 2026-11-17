@@ -218,6 +218,25 @@ test('Shopify App Proxy prefix, Liquid fragments, proxy XML sitemaps, and HMAC s
   assert.ok(liquid.includes('Choose options'));
   assert.ok(liquid.includes('/products/'));
   assert.ok(liquid.includes('application/ld+json'));
+  assert.ok(!liquid.includes('Popular Searches:'), 'Spammy Popular Searches line must stay removed');
+  assert.ok(!liquid.includes('Express Radius'), 'Technical Express Radius text must stay removed');
+
+  // Verify 30 products render cleanly when 40 products exist in catalog
+  const expandedCatalog = Array.from({ length: 40 }, (_, i) => ({
+    ...products[i % products.length],
+    id: `exp-${i}`,
+    handle: `custom-cake-${i}`,
+    title: `Broomies Custom Cake #${i + 1}`,
+    pincodeMode: 'all_india' as const,
+  }));
+  const richData = buildGeoSeoPageData(
+    DEFAULT_GEO_SEO_CONFIG,
+    ref,
+    expandedCatalog,
+    'https://faridabad.broomiesbakery.in',
+    { useProxyCanonical: true }
+  );
+  assert.equal(richData.matchedProducts.length, 30);
 
   const dirLiquid = renderGeoSeoDirectoryLiquidFragment(DEFAULT_GEO_SEO_CONFIG, '+919266424088');
   assert.ok(!dirLiquid.includes('<!DOCTYPE html'));

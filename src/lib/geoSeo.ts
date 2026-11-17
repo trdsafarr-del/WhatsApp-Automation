@@ -649,7 +649,8 @@ export function buildStorefrontZoneStripData(config: GeoSeoConfig) {
 export function matchCatalogProductsForCategory(
   products: ProductCatalogItem[],
   category: GeoCakeCategory | null,
-  pincode?: string
+  pincode?: string,
+  maxItems = 30
 ): ProductCatalogItem[] {
   const active = (products || []).filter((p) => p.status !== 'archived');
   if (active.length === 0) return [];
@@ -662,24 +663,41 @@ export function matchCatalogProductsForCategory(
   });
 
   const pool = pinAllowed.length > 0 ? pinAllowed : active;
-  if (!category || !category.matchTerms || category.matchTerms.length === 0) {
-    return pool.slice(0, 8);
-  }
+  const terms = (category?.matchTerms || [])
+    .map((t) => t.toLowerCase().trim())
+    .filter(Boolean);
+  const isCakeCategory =
+    !category ||
+    `${category.slug} ${category.name} ${(category.keywords || []).join(' ')}`
+      .toLowerCase()
+      .includes('cake');
 
-  const terms = category.matchTerms.map((t) => t.toLowerCase().trim()).filter(Boolean);
-  const scored = pool.map((p) => {
+  const scored = pool.map((p, idx) => {
     const hay = `${p.title} ${p.productType} ${p.tags} ${p.seoTitle}`.toLowerCase();
-    let hits = 0;
+    let score = 0;
+
     for (const term of terms) {
-      if (hay.includes(term)) hits += 1;
+      if (hay.includes(term)) score += 6;
     }
-    return { product: p, hits };
+
+    if (p.imageUrl && p.imageUrl.trim()) {
+      score += 4;
+    }
+
+    if (isCakeCategory) {
+      if (/\bcake\b|\btruffle\b|\bcheesecake\b|\bbento\b|\bpastry\b/.test(hay)) {
+        score += 5;
+      }
+      if (/meal box|vada pav|burger|samosa|snacks box|combo/.test(hay)) {
+        score -= 6;
+      }
+    }
+
+    return { product: p, score, idx };
   });
 
-  scored.sort((a, b) => b.hits - a.hits);
-  const matched = scored.filter((s) => s.hits > 0).map((s) => s.product);
-  if (matched.length >= 4) return matched.slice(0, 8);
-  return scored.slice(0, 8).map((s) => s.product);
+  scored.sort((a, b) => (b.score !== a.score ? b.score - a.score : a.idx - b.idx));
+  return scored.slice(0, Math.max(1, maxItems)).map((s) => s.product);
 }
 
 export interface GeoSeoPageData {
@@ -795,7 +813,7 @@ export function buildGeoSeoPageData(
 
   const h1 =
     ref.tier === 1
-      ? `${brand} ${ref.hub.name} ${city} (${ref.hub.radiusKm} km Radius) – Custom & Ready to Eat Cakes`
+      ? `${brand} ${ref.hub.name}, ${city} – Custom & Ready to Eat Cakes`
       : ref.tier === 2
         ? `${catName} in ${areaName}, ${city} (${pincode})`
         : `${catName} in ${areaName}, ${city} – ${modLabel}`;
@@ -810,13 +828,13 @@ export function buildGeoSeoPageData(
 
   const rawDesc =
     ref.tier === 1
-      ? `Order fresh custom cakes & ready to eat cakes in ${ref.hub.name} ${city} within ${ref.hub.radiusKm} km radius (${pincode}). Same-day & midnight delivery from ${siteUrl.replace(/^https?:\/\//, '')}.`
-      : `Buy freshly baked ${catName.toLowerCase()} in ${areaName}, ${city} (${pincode}) — ${distanceKm.toFixed(1)} km from ${ref.hub.name} Hub. ${modLabel} at ${brand}.`;
+      ? `Order fresh 100% eggless custom cakes & ready to eat cakes in ${ref.hub.name}, ${city} (${pincode}). Same-day & midnight delivery from ${siteUrl.replace(/^https?:\/\//, '')}.`
+      : `Buy freshly baked ${catName.toLowerCase()} in ${areaName}, ${city} (${pincode}). ${modLabel} & 100% eggless cakes by ${brand}.`;
   const metaDescription = clampSeoString(rawDesc, 160);
 
   const directPageUrl = `${cleanHost}/seo/faridabad/${ref.slug}`;
   const pageUrl = useProxy ? proxyPageUrl : directPageUrl;
-  const matchedProducts = matchCatalogProductsForCategory(products, ref.category, pincode);
+  const matchedProducts = matchCatalogProductsForCategory(products, ref.category, pincode, 30);
 
   const targetKeywords = [
     `${catName.toLowerCase()} in ${areaName.toLowerCase()} ${city.toLowerCase()}`,
@@ -827,18 +845,23 @@ export function buildGeoSeoPageData(
     ...(ref.category?.keywords || []).map((k) => `${k} ${areaName.toLowerCase()}`),
   ].slice(0, 10);
 
+  const deliveryProximityNote =
+    distanceKm <= 0.4
+      ? `${areaName} (${pincode}) is right next to our ${ref.hub.name} bakery kitchen.`
+      : `${areaName} (${pincode}) is closely served by our nearby ${ref.hub.name} bakery kitchen (${distanceKm.toFixed(1)} km away).`;
+
   const faqs = [
     {
       question: `How fast does ${brand} deliver ${catName.toLowerCase()} to ${areaName}, ${city} (${pincode})?`,
-      answer: `${areaName} is just ${distanceKm.toFixed(1)} km from our ${ref.hub.name} Kitchen Hub (${ref.hub.radiusKm} km express radius). Ready to eat cakes dispatch same-day, and custom photo/theme cakes can be scheduled for fixed afternoon or midnight slots.`,
+      answer: `${deliveryProximityNote} Ready-to-eat cakes dispatch the same day, and custom photo or theme cakes can be scheduled for afternoon or midnight delivery slots.`,
     },
     {
       question: `Are custom cakes & ready to eat cakes available eggless in ${areaName}?`,
-      answer: `Yes! All custom cakes, truffle cakes, butterscotch cakes, bento cakes, and ready to eat desserts crafted at ${brand} are available in 100% pure eggless options for delivery in ${areaName} (${pincode}) and nearby ${activeHubs.map((h) => h.name).join(', ')} sectors.`,
+      answer: `Yes! All custom cakes, truffle cakes, butterscotch cakes, bento cakes, and ready-to-eat desserts crafted at ${brand} are 100% pure eggless and baked fresh for delivery in ${areaName} (${pincode}) and nearby ${city} sectors.`,
     },
     {
       question: `Where can I order ${catName.toLowerCase()} online for ${areaName} delivery?`,
-      answer: `You can browse live prices and order directly on ${siteUrl} with instant pincode availability check for ${pincode}.`,
+      answer: `You can browse live flavours, weights, and prices directly on ${siteUrl} with instant pincode availability check for ${pincode}.`,
     },
   ];
 
@@ -965,7 +988,7 @@ export function buildGeoSeoPageData(
     seoTitle,
     metaDescription,
     h1,
-    heroSummary: `Serving freshly handcrafted ${catName.toLowerCase()} across ${areaName} (${pincode}) — ${distanceKm.toFixed(1)} km from our ${ref.hub.name} hub as part of ${brand}'s unified ${activeHubs.map((h) => h.name).join(' · ')} 5 km delivery zone.`,
+    heroSummary: `Freshly baked 100% eggless ${catName.toLowerCase()} delivered across ${areaName}, ${city} (${pincode}). Order ready-to-eat cakes for same-day delivery or customize theme cakes with ${brand}.`,
     areaLabel,
     pincode,
     lat,
@@ -1665,7 +1688,7 @@ export function renderGeoSeoLandingHtml(
   const locLinksHtml = data.nearbyLocalityLinks
     .map(
       (l) =>
-        `<a href="${escapeHtmlText(l.href)}" class="bb-link-row"><span>${escapeHtmlText(l.label)}</span><span style="color:#4b5563;font-size:12px;">${l.distanceKm.toFixed(1)} km</span></a>`
+        `<a href="${escapeHtmlText(l.href)}" class="bb-link-row"><span>${escapeHtmlText(l.label)}</span><span>→</span></a>`
     )
     .join('');
 
@@ -1701,14 +1724,14 @@ export function renderGeoSeoLandingHtml(
     <nav aria-label="Breadcrumb" class="bb-breadcrumb">
       <a href="${escapeHtmlText(data.primaryWebsiteUrl)}">${escapeHtmlText(data.brandName)}</a>
       <span> / </span>
-      <a href="/seo/faridabad">${escapeHtmlText(data.cityName)} Zones</a>
+      <a href="/seo/faridabad">${escapeHtmlText(data.cityName)}</a>
       <span> / </span>
       <span>${escapeHtmlText(data.areaLabel)}</span>
     </nav>
 
     <section class="bb-panel">
       <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">
-        ${escapeHtmlText(data.nearestHub.name)} Hub · ${data.distanceKm.toFixed(1)} km Express Radius · PIN ${escapeHtmlText(data.pincode)}
+        Same-Day &amp; Scheduled Delivery · ${escapeHtmlText(data.areaLabel)} (${escapeHtmlText(data.pincode)})
       </p>
       <h1 style="margin:0 0 12px;font-size:clamp(24px,3.2vw,36px);line-height:1.18;font-weight:500;color:#121212;letter-spacing:-0.015em;">
         ${escapeHtmlText(data.h1)}
@@ -1718,30 +1741,21 @@ export function renderGeoSeoLandingHtml(
       </p>
       <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
         <a href="${escapeHtmlText(data.primaryWebsiteUrl)}/collections/all" class="bb-btn-solid">Order Fresh Cakes Now</a>
-        <a href="${escapeHtmlText(data.primaryWebsiteUrl)}" class="bb-btn-pill-light">Visit ${escapeHtmlText(data.primaryWebsiteUrl.replace(/^https?:\/\//, ''))}</a>
+        <a href="https://wa.me/${waDigits}?text=${waMsg}" target="_blank" rel="noopener noreferrer" class="bb-btn-pill-light">Custom Cake on WhatsApp</a>
       </div>
     </section>
 
     <section>
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:16px;">
-        <h2 class="bb-section-title" style="margin-bottom:0;">Best Seller – ${escapeHtmlText(data.areaLabel)}</h2>
-        <span style="font-size:13px;color:#1f2937;">Custom Design · Ready to Eat · 100% Eggless Options</span>
+        <h2 class="bb-section-title" style="margin-bottom:0;">Best Sellers &amp; Fresh Cakes – ${escapeHtmlText(data.areaLabel)}</h2>
+        <span style="font-size:13px;color:#1f2937;">100% Eggless · Freshly Baked Daily</span>
       </div>
       <div class="bb-grid">
         ${productsHtml}
       </div>
-    </section>
-
-    <section class="bb-panel">
-      <h2 style="margin:0 0 10px;font-size:20px;font-weight:500;color:#121212;">Unified 5 km Faridabad Cake Delivery Zone Coverage</h2>
-      <p style="margin:0 0 12px;font-size:14.5px;line-height:1.6;color:#333333;">
-        Our unified cake kitchen network merges 5 km rapid delivery circles across
-        <strong>${escapeHtmlText(activeHubs.map((h) => `${h.name} (${h.pincode})`).join(', '))}</strong>
-        so customers searching for <strong>custom cakes</strong> or <strong>ready to eat cakes</strong> receive oven-fresh cakes with local rider care.
-      </p>
-      <p style="margin:0;font-size:12.5px;color:#4b5563;">
-        Popular Searches: ${escapeHtmlText(data.targetKeywords.join(' · '))}
-      </p>
+      <div style="text-align:center;margin:0 0 32px;">
+        <a href="${escapeHtmlText(data.primaryWebsiteUrl)}/collections/all" class="bb-btn-pill-light">Browse All Cakes &amp; Desserts →</a>
+      </div>
     </section>
 
     <section class="bb-panel">
@@ -1751,11 +1765,11 @@ export function renderGeoSeoLandingHtml(
 
     <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;">
       <div class="bb-panel" style="margin-bottom:0;">
-        <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">More Cake Categories Nearby</h3>
+        <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Explore More Cake Categories</h3>
         ${catLinksHtml}
       </div>
       <div class="bb-panel" style="margin-bottom:0;">
-        <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Nearby Faridabad Sectors (Within 5 km)</h3>
+        <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Nearby Faridabad Areas</h3>
         ${locLinksHtml}
       </div>
     </section>
@@ -1827,18 +1841,18 @@ export function renderGeoSeoDirectoryHtml(
 
   <main class="bb-main">
     <section class="bb-panel">
-      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">${stats.totalPages.toLocaleString()} Live Geo-SEO Cake Pages · ${stats.coveredLocalitiesCount} Faridabad Localities</p>
-      <h1 class="bb-section-title" style="margin-bottom:10px;">${escapeHtmlText(config.brandName)} – Faridabad Unified Cake Zones</h1>
-      <p style="margin:0 0 18px;font-size:15px;color:#333333;">Direct Storefront: <a href="${escapeHtmlText(siteUrl)}" style="color:#121212;font-weight:600;">${escapeHtmlText(siteUrl)}</a></p>
+      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">Faridabad Express Delivery · ${stats.coveredLocalitiesCount} Neighbourhoods Served</p>
+      <h1 class="bb-section-title" style="margin-bottom:10px;">${escapeHtmlText(config.brandName)} – Faridabad Cake Delivery Areas</h1>
+      <p style="margin:0 0 18px;font-size:15px;color:#333333;">Fresh 100% eggless custom &amp; ready-to-eat cakes ordered online at <a href="${escapeHtmlText(siteUrl)}" style="color:#121212;font-weight:600;">${escapeHtmlText(siteUrl.replace(/^https?:\/\//, ''))}</a></p>
       <a href="${escapeHtmlText(siteUrl)}/collections/all" class="bb-btn-solid">Order Cakes on Broomies Bakery</a>
     </section>
 
-    <h2 class="bb-section-title">Unified 5 km Zone Hubs</h2>
+    <h2 class="bb-section-title">Faridabad Kitchen Areas</h2>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-bottom:32px;">
       ${hubCards}
     </div>
 
-    <h2 class="bb-section-title">All Covered Faridabad Sectors &amp; Colonies (≤ 5 km Radius)</h2>
+    <h2 class="bb-section-title">Sectors &amp; Colonies We Deliver To</h2>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
       ${localityGrid}
     </div>
@@ -1959,6 +1973,10 @@ function buildShopifyProxyScopedStyles(): string {
       line-height: 1.35;
       color: #121212;
       font-weight: 400;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
     .bb-proxy-card-price {
       margin: 0;
@@ -2086,7 +2104,7 @@ export function renderGeoSeoShopifyLiquidFragment(
   const locLinksHtml = data.nearbyLocalityLinks
     .map(
       (l) =>
-        `<a href="${escapeHtmlText(l.href)}" class="bb-proxy-link-row"><span>${escapeHtmlText(l.label)}</span><span style="color:#4b5563;font-size:12px;">${l.distanceKm.toFixed(1)} km</span></a>`
+        `<a href="${escapeHtmlText(l.href)}" class="bb-proxy-link-row"><span>${escapeHtmlText(l.label)}</span><span>→</span></a>`
     )
     .join('');
 
@@ -2105,14 +2123,14 @@ export function renderGeoSeoShopifyLiquidFragment(
   <nav aria-label="Breadcrumb" class="bb-proxy-breadcrumb">
     <a href="/">${escapeHtmlText(data.brandName)}</a>
     <span> / </span>
-    <a href="${escapeHtmlText(proxyPrefix)}">${escapeHtmlText(data.cityName)} Cake Zones</a>
+    <a href="${escapeHtmlText(proxyPrefix)}">${escapeHtmlText(data.cityName)}</a>
     <span> / </span>
     <span>${escapeHtmlText(data.areaLabel)}</span>
   </nav>
 
   <section class="bb-proxy-panel">
     <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">
-      ${escapeHtmlText(data.nearestHub.name)} Hub · ${data.distanceKm.toFixed(1)} km Express Radius · PIN ${escapeHtmlText(data.pincode)}
+      Same-Day &amp; Scheduled Delivery · ${escapeHtmlText(data.areaLabel)} (${escapeHtmlText(data.pincode)})
     </p>
     <h1 class="bb-proxy-h1">${escapeHtmlText(data.h1)}</h1>
     <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#333333;max-width:74ch;">
@@ -2126,22 +2144,13 @@ export function renderGeoSeoShopifyLiquidFragment(
 
   <section>
     <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:14px;">
-      <h2 class="bb-proxy-section-title" style="margin-bottom:0;">Best Seller – ${escapeHtmlText(data.areaLabel)}</h2>
-      <span style="font-size:13px;color:#1f2937;">Custom Design · Ready to Eat · 100% Eggless Options</span>
+      <h2 class="bb-proxy-section-title" style="margin-bottom:0;">Best Sellers &amp; Fresh Cakes – ${escapeHtmlText(data.areaLabel)}</h2>
+      <span style="font-size:13px;color:#1f2937;">100% Eggless · Freshly Baked Daily</span>
     </div>
     <div class="bb-proxy-grid">${productsHtml}</div>
-  </section>
-
-  <section class="bb-proxy-panel">
-    <h2 style="margin:0 0 10px;font-size:20px;font-weight:500;color:#121212;">Unified 5 km Faridabad Cake Delivery Coverage</h2>
-    <p style="margin:0 0 12px;font-size:14.5px;line-height:1.6;color:#333333;">
-      Our unified cake kitchen network merges 5 km rapid delivery circles across
-      <strong>${escapeHtmlText(data.allActiveHubs.map((h) => `${h.name} (${h.pincode})`).join(', '))}</strong>
-      so customers searching for <strong>custom cakes</strong> or <strong>ready to eat cakes</strong> receive oven-fresh cakes with local rider care.
-    </p>
-    <p style="margin:0;font-size:12.5px;color:#4b5563;">
-      Popular Searches: ${escapeHtmlText(data.targetKeywords.join(' · '))}
-    </p>
+    <div style="text-align:center;margin:0 0 30px;">
+      <a href="/collections/all" class="bb-proxy-btn-light">Browse All Cakes &amp; Desserts →</a>
+    </div>
   </section>
 
   <section class="bb-proxy-panel">
@@ -2151,11 +2160,11 @@ export function renderGeoSeoShopifyLiquidFragment(
 
   <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;">
     <div class="bb-proxy-panel" style="margin-bottom:0;">
-      <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">More Cake Categories Nearby</h3>
+      <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Explore More Cake Categories</h3>
       ${catLinksHtml}
     </div>
     <div class="bb-proxy-panel" style="margin-bottom:0;">
-      <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Nearby Faridabad Sectors (Within 5 km)</h3>
+      <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Nearby Faridabad Areas</h3>
       ${locLinksHtml}
     </div>
   </section>
@@ -2197,13 +2206,13 @@ export function renderGeoSeoDirectoryLiquidFragment(
         : proxyPrefix;
       return `<a href="${escapeHtmlText(href)}" style="display:flex;justify-content:space-between;align-items:center;border:1px solid #2b2b2b;border-radius:16px;background:#ffffff;padding:12px 15px;text-decoration:none;color:#121212;font-size:13.5px;box-shadow:0 3px 8px rgba(0,0,0,0.12);">
         <span style="font-weight:500;">${escapeHtmlText(cov.locality.name)}</span>
-        <span style="color:#4b5563;font-size:12px;">${cov.distanceKm.toFixed(1)} km · ${escapeHtmlText(cov.locality.pincode)}</span>
+        <span style="color:#4b5563;font-size:12px;">PIN ${escapeHtmlText(cov.locality.pincode)}</span>
       </a>`;
     })
     .join('');
 
   const seoTitle = `${config.brandName} – Faridabad Cake Delivery Zones (Sec 31, 88, 35, 42)`;
-  const seoDesc = `Explore ${stats.totalPages.toLocaleString()} cake delivery pages for ${config.brandName} across Sector 31, 88, 35 & 42 (5 km unified zone) in Faridabad.`;
+  const seoDesc = `Order fresh 100% eggless custom cakes & ready to eat cakes from ${config.brandName} across Sector 31, 88, 35 & 42 in Faridabad.`;
 
   return `${buildShopifyProxyScopedStyles()}
 <script type="application/ld+json">${JSON.stringify(buildBakeryStorefrontSchema(config, siteUrl))}</script>
@@ -2218,21 +2227,21 @@ export function renderGeoSeoDirectoryLiquidFragment(
 </script>
 <div class="bb-proxy-wrap">
   <section class="bb-proxy-panel">
-    <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">${stats.totalPages.toLocaleString()} Live Domain-Hosted Cake Pages · ${stats.coveredLocalitiesCount} Faridabad Localities</p>
-    <h1 class="bb-proxy-h1">${escapeHtmlText(config.brandName)} – Faridabad Unified 5 km Cake Delivery Zones</h1>
-    <p style="margin:0 0 18px;font-size:15px;color:#333333;">Serving Custom Cakes &amp; Ready to Eat Cakes directly on ${escapeHtmlText(siteUrl.replace(/^https?:\/\//, ''))}</p>
+    <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">Faridabad Express Delivery · ${stats.coveredLocalitiesCount} Neighbourhoods Served</p>
+    <h1 class="bb-proxy-h1">${escapeHtmlText(config.brandName)} – Faridabad Cake Delivery Areas</h1>
+    <p style="margin:0 0 18px;font-size:15px;color:#333333;">Fresh 100% eggless custom cakes &amp; ready-to-eat cakes from ${escapeHtmlText(siteUrl.replace(/^https?:\/\//, ''))}</p>
     <div style="display:flex;flex-wrap:wrap;gap:12px;">
       <a href="/collections/all" class="bb-proxy-btn-solid">Order Cakes Now</a>
       <a href="https://wa.me/${waDigits}?text=${encodeURIComponent(`Hi ${config.brandName}, I want to order a custom cake in Faridabad!`)}" target="_blank" rel="noopener noreferrer" class="bb-proxy-btn-light">Custom Order on WhatsApp</a>
     </div>
   </section>
 
-  <h2 class="bb-proxy-section-title">Unified 5 km Zone Hubs</h2>
+  <h2 class="bb-proxy-section-title">Faridabad Kitchen Areas</h2>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-bottom:32px;">
     ${hubCards}
   </div>
 
-  <h2 class="bb-proxy-section-title">All Covered Faridabad Sectors &amp; Colonies (≤ 5 km Radius)</h2>
+  <h2 class="bb-proxy-section-title">Sectors &amp; Colonies We Deliver To</h2>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
     ${localityGrid}
   </div>
