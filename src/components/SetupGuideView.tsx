@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, Cloud, Copy, Eye, EyeOff, GitBranch, ShoppingBag } from 'lucide-react';
+import { Check, Cloud, Copy, Eye, EyeOff, GitBranch, Server, ShoppingBag } from 'lucide-react';
 import { buildDeployEnvSnippet, hasConfiguredShopify } from '../lib/orderRules';
 import type { AppSettings, WhatsAppState } from '../lib/types';
 
@@ -9,7 +9,7 @@ interface SetupGuideViewProps {
   whatsapp: WhatsAppState;
 }
 
-type GuideTab = 'sync' | 'shopify' | 'railway';
+type GuideTab = 'sync' | 'shopify' | 'railway' | 'oracle';
 
 function CopyField({
   label,
@@ -109,6 +109,28 @@ export function SetupGuideView({
     shopifyAccessToken: settings.shopifyAccessToken ? '••••••••••••••••••••••••' : '',
   });
 
+  const rawOracleEnvSnippet = [
+    'NODE_ENV=production',
+    'PORT=3000',
+    rawEnvSnippet,
+    'UPSTASH_REDIS_REST_URL=paste_your_upstash_url_here',
+    'UPSTASH_REDIS_REST_TOKEN=paste_your_upstash_token_here',
+    'DASHBOARD_PASSCODE=your_admin_passcode',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const maskedOracleEnvSnippet = [
+    'NODE_ENV=production',
+    'PORT=3000',
+    maskedEnvSnippet,
+    'UPSTASH_REDIS_REST_URL=paste_your_upstash_url_here',
+    'UPSTASH_REDIS_REST_TOKEN=••••••••••••••••••••••••',
+    'DASHBOARD_PASSCODE=••••',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
   return (
     <div className="space-y-4 sm:space-y-5">
       {/* Guide Tab Strip */}
@@ -159,6 +181,20 @@ export function SetupGuideView({
           >
             <GitBranch className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
             03. Railway 24/7 Hosting
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'oracle'}
+            onClick={() => setActiveTab('oracle')}
+            className={`inline-flex min-h-[40px] items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:min-h-0 ${
+              activeTab === 'oracle'
+                ? 'bg-slate-800 text-white shadow-xs'
+                : 'text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            <Server className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+            04. Oracle 24/7 Free VM
           </button>
         </div>
       </div>
@@ -323,6 +359,103 @@ export function SetupGuideView({
                 </li>
               </ul>
             </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'oracle' && (
+        <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
+          <div className="flex items-center gap-2.5 border-b border-slate-800 pb-4">
+            <Server className="h-5 w-5 text-emerald-400" aria-hidden="true" />
+            <div>
+              <h2 className="text-base font-semibold text-white">
+                Oracle Cloud (OCI Mumbai) Always-Free 24/7 Hosting
+              </h2>
+              <p className="text-xs text-slate-400">
+                Run WhatsApp Baileys, 30s Shopify auto-sync, and Geo-SEO pages 24/7 on a free Ubuntu VM with PM2 + Nginx HTTPS.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-4 text-sm text-slate-300">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-300">
+              <p className="font-semibold text-white">
+                Step 1: Create Always-Free VM &amp; Open OCI Firewall (Ports 80, 443, 3000)
+              </p>
+              <ol className="mt-2 list-decimal space-y-1.5 pl-4">
+                <li>
+                  In Oracle Cloud Home → <span className="font-medium text-white">Compute → Create a VM instance</span> → choose <span className="font-mono text-emerald-300">Ubuntu 22.04 Minimal</span> (or <span className="font-mono text-emerald-300">24.04</span>) and shape <span className="font-mono text-emerald-300">VM.Standard.A1.Flex</span> (2 OCPU, 12 GB RAM — Always Free; or <span className="font-mono text-slate-200">VM.Standard.E2.1.Micro</span> if A1 capacity is full).
+                </li>
+                <li>
+                  Click <span className="font-medium text-white">Save Private Key</span> (<span className="font-mono text-slate-200">.key</span>) before clicking Create, then copy the instance <span className="font-medium text-white">Public IPv4 Address</span>.
+                </li>
+                <li>
+                  Open Instance → <span className="font-medium text-white">Subnet → Default Security List → Add Ingress Rules</span>: Source CIDR <span className="font-mono text-emerald-300">0.0.0.0/0</span>, Destination Ports <span className="font-mono text-emerald-300">80,443,3000</span> (TCP).
+                </li>
+              </ol>
+            </div>
+
+            <CopyField
+              label="Step 2: SSH Into Ubuntu & Install Node 22 + PM2 + Nginx + Open Ubuntu Firewall"
+              value={`sudo apt update && sudo apt install -y git curl nginx certbot python3-certbot-nginx
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g pm2
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT
+sudo netfilter-persistent save || sudo iptables-save | sudo tee /etc/iptables/rules.v4 >/dev/null`}
+            />
+
+            <CopyField
+              label="Step 3: Clone Repo & Create .env on Oracle VM"
+              value={rawOracleEnvSnippet}
+              secretMask={maskedOracleEnvSnippet}
+            />
+
+            <CopyField
+              label="Step 4: Build & Start 24/7 Auto-Boot Process with PM2"
+              value={`git clone <YOUR_GITHUB_REPO_URL> orderpulse && cd orderpulse
+npm install
+npm run build
+cat << 'EOF' > ecosystem.config.cjs
+module.exports = {
+  apps: [{
+    name: 'orderpulse',
+    script: './node_modules/.bin/tsx',
+    args: 'server.ts',
+    env: { NODE_ENV: 'production', PORT: 3000 }
+  }]
+};
+EOF
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup`}
+            />
+
+            <CopyField
+              label="Step 5: Point faridabad.broomiesbakery.in DNS A-Record to Oracle IP & Enable Free SSL"
+              value={`sudo tee /etc/nginx/sites-available/orderpulse >/dev/null << 'EOF'
+server {
+    listen 80;
+    server_name faridabad.broomiesbakery.in;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+EOF
+sudo ln -sf /etc/nginx/sites-available/orderpulse /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d faridabad.broomiesbakery.in`}
+            />
           </div>
         </section>
       )}
