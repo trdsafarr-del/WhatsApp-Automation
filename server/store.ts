@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -7,6 +8,8 @@ import {
   mergeProgressedOrderRecords,
   readCleanEnvVar,
   selectPriorityAuthFiles,
+  shouldBackupWhatsAppAuth,
+  shouldFetchFullRemoteDb,
 } from '../src/lib/orderRules.js';
 import { DEFAULT_GEO_SEO_CONFIG } from '../src/lib/geoSeo.js';
 import {
@@ -34,9 +37,15 @@ const POLL_BACKUP_PATH = path.join(DATA_DIR, 'poll-messages.backup.json');
 
 const LEGACY_SEED_ORDER_IDS = new Set(['ord-1049', 'ord-1050', 'ord-1051', 'ord-1052']);
 const REDIS_DB_KEY = 'orderpulse:v1:db';
+const REDIS_DB_REV_KEY = 'orderpulse:v1:db_rev';
 const REDIS_POLL_KEY = 'orderpulse:v1:polls';
 const REDIS_WA_AUTH_KEY = 'orderpulse:v1:wa_auth';
 const REDIS_WA_CREDS_KEY = 'orderpulse:v1:wa_creds';
+const REDIS_HEARTBEAT_KEY = 'orderpulse:v1:wa_heartbeat';
+
+function nextDbRevision(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
 export interface DatabaseState {
   settings: AppSettings;
@@ -135,6 +144,24 @@ async function upstashGet(key: string): Promise<string | null> {
   }
 }
 
+async function upstashMGet(keys: string[]): Promise<Array<string | null>> {
+  const cfg = getUpstashConfig();
+  if (!cfg || keys.length === 0) return keys.map(() => null);
+  try {
+    const encoded = keys.map((k) => encodeURIComponent(k)).join('/');
+    const res = await fetch(`${cfg.url}/mget/${encoded}`, {
+      headers: { Authorization: `Bearer ${cfg.token}` },
+    });
+    if (!res.ok) return keys.map(() => null);
+    const data = (await res.json()) as { result?: Array<string | null> };
+    return Array.isArray(data.result)
+      ? keys.map((_, idx) => (typeof data.result?.[idx] === 'string' ? data.result[idx] : null))
+      : keys.map(() => null);
+  } catch {
+    return keys.map(() => null);
+  }
+}
+
 async function upstashSet(key: string, value: string): Promise<void> {
   const cfg = getUpstashConfig();
   if (!cfg) return;
@@ -149,6 +176,26 @@ async function upstashSet(key: string, value: string): Promise<void> {
     });
   } catch {
     // Keep local disk persistence intact even if remote sync fails momentarily
+  }
+}
+
+async function upstashPipelineSet(pairs: Array<[string, string]>): Promise<void> {
+  const cfg = getUpstashConfig();
+  if (!cfg || pairs.length === 0) return;
+  try {
+    await fetch(`${cfg.url}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(pairs.map(([key, value]) => ['SET', key, value])),
+    });
+  } catch {
+    // Fallback to individual SETs if pipeline endpoint is unavailable
+    for (const [key, value] of pairs) {
+      await upstashSet(key, value);
+    }
   }
 }
 
@@ -173,8 +220,14 @@ class PersistentStore {
   private state: DatabaseState;
   private pollMessages: Record<string, unknown> = {};
   private lastHydratedAtMs = 0;
+  private lastSyncedRev: string | null = null;
+  private pollsHydrated = false;
   private hydratePromise: Promise<void> | null = null;
   private remoteSyncQueue: Promise<void> = Promise.resolve();
+  private pendingDbFlushTimer: NodeJS.Timeout | null = null;
+  private pendingPollFlushTimer: NodeJS.Timeout | null = null;
+  private lastAuthBackupAtMs = 0;
+  private lastAuthBackupDigest: string | null = null;
 
   constructor() {
     ensureDataDir();
@@ -186,20 +239,60 @@ class PersistentStore {
     return getUpstashConfig() !== null;
   }
 
+  private flushPendingDbNow() {
+    if (this.pendingDbFlushTimer) {
+      clearTimeout(this.pendingDbFlushTimer);
+      this.pendingDbFlushTimer = null;
+    }
+    if (!this.isCloudSyncEnabled()) return;
+    const rev = nextDbRevision();
+    this.lastSyncedRev = rev;
+    const payload = JSON.stringify(this.state);
+    this.remoteSyncQueue = this.remoteSyncQueue
+      .then(() =>
+        upstashPipelineSet([
+          [REDIS_DB_KEY, payload],
+          [REDIS_DB_REV_KEY, rev],
+        ])
+      )
+      .catch(() => {
+        // Keep queue healthy even if a transient network error occurs
+      });
+  }
+
+  private flushPendingPollsNow() {
+    if (this.pendingPollFlushTimer) {
+      clearTimeout(this.pendingPollFlushTimer);
+      this.pendingPollFlushTimer = null;
+    }
+    if (!this.isCloudSyncEnabled()) return;
+    const payload = JSON.stringify(this.pollMessages);
+    this.remoteSyncQueue = this.remoteSyncQueue
+      .then(() => upstashSet(REDIS_POLL_KEY, payload))
+      .catch(() => {
+        // Keep queue healthy
+      });
+  }
+
   async flushRemote(): Promise<void> {
+    if (this.pendingDbFlushTimer) {
+      this.flushPendingDbNow();
+    }
+    if (this.pendingPollFlushTimer) {
+      this.flushPendingPollsNow();
+    }
     await this.remoteSyncQueue;
   }
 
   /**
-   * Hydrates state from Upstash Redis (when configured) so all devices and
-   * serverless containers always read and write the exact same orders, settings,
-   * poll mappings, and WhatsApp session metadata.
+   * Hydrates state from Upstash Redis (when configured) using a lightweight ~100-byte
+   * revision + heartbeat check first so unchanged polls/storefront hits avoid downloading ~400 KB.
    */
   async ensureHydrated(force = false): Promise<void> {
     if (!this.isCloudSyncEnabled()) return;
     const now = Date.now();
-    // On Vercel serverless, re-sync frequently across containers; locally hydrate on boot
-    const ttlMs = process.env.VERCEL ? 2_000 : 60_000;
+    // Re-check remote revision every 15s on Vercel serverless, 5m on persistent servers
+    const ttlMs = process.env.VERCEL ? 15_000 : 300_000;
     if (!force && this.lastHydratedAtMs > 0 && now - this.lastHydratedAtMs < ttlMs) {
       return;
     }
@@ -210,98 +303,179 @@ class PersistentStore {
     this.hydratePromise = (async () => {
       try {
         await this.flushRemote();
-        const [remoteDbRaw, remotePollsRaw] = await Promise.all([
-          upstashGet(REDIS_DB_KEY),
-          upstashGet(REDIS_POLL_KEY),
+        const [remoteRev, remoteHeartbeatRaw] = await upstashMGet([
+          REDIS_DB_REV_KEY,
+          REDIS_HEARTBEAT_KEY,
         ]);
 
-        if (remoteDbRaw) {
-          const parsed = JSON.parse(remoteDbRaw) as Partial<DatabaseState>;
-          const mergedSettings = hydrateEnvDefaults({
-            ...DEFAULT_SETTINGS,
-            ...(parsed.settings || {}),
-            whatsappMode: 'baileys_qr',
-          });
-          const remoteOrders = Array.isArray(parsed.orders)
-            ? parsed.orders.filter(
-                (o) =>
-                  !LEGACY_SEED_ORDER_IDS.has(o.id) &&
-                  isOrderOnOrAfterStartDate(o.createdAt, mergedSettings.syncStartDate)
-              )
-            : [];
-          const mergedByKey = new Map<string, OrderRecord>();
-          for (const remote of remoteOrders) {
-            mergedByKey.set(remote.shopifyOrderId || remote.id, remote);
-          }
-          for (const local of this.state.orders) {
-            if (
-              LEGACY_SEED_ORDER_IDS.has(local.id) ||
-              !isOrderOnOrAfterStartDate(local.createdAt, mergedSettings.syncStartDate)
-            ) {
-              continue;
+        let heartbeatMeta: { lastHeartbeatAt?: string | null; activeHostKind?: string | null } | null =
+          null;
+        if (remoteHeartbeatRaw) {
+          try {
+            heartbeatMeta = JSON.parse(remoteHeartbeatRaw) as {
+              lastHeartbeatAt?: string | null;
+              activeHostKind?: string | null;
+            };
+            if (heartbeatMeta && typeof heartbeatMeta === 'object') {
+              const curHbMs = this.state.whatsappMeta.lastHeartbeatAt
+                ? Date.parse(this.state.whatsappMeta.lastHeartbeatAt)
+                : 0;
+              const remHbMs = heartbeatMeta.lastHeartbeatAt
+                ? Date.parse(heartbeatMeta.lastHeartbeatAt)
+                : 0;
+              if (Number.isFinite(remHbMs) && remHbMs > (Number.isFinite(curHbMs) ? curHbMs : 0)) {
+                this.state.whatsappMeta = {
+                  ...this.state.whatsappMeta,
+                  lastHeartbeatAt: heartbeatMeta.lastHeartbeatAt || null,
+                  activeHostKind:
+                    heartbeatMeta.activeHostKind || this.state.whatsappMeta.activeHostKind || null,
+                };
+              }
             }
-            const key = local.shopifyOrderId || local.id;
-            const prev = mergedByKey.get(key);
-            mergedByKey.set(key, prev ? mergeProgressedOrderRecords(local, prev) : local);
+          } catch {
+            heartbeatMeta = null;
           }
-          const combinedOrders = Array.from(mergedByKey.values()).sort(
-            (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
-          );
-          const { cleaned: cleanedOrders } = dedupeOrderEvents(combinedOrders);
-          const remoteProducts = Array.isArray(parsed.products) ? parsed.products : [];
-          const mergedProductsMap = new Map<string, ProductCatalogItem>();
-          for (const rp of remoteProducts) {
-            mergedProductsMap.set(rp.shopifyProductId || rp.id, rp);
-          }
-          for (const lp of this.state.products) {
-            const key = lp.shopifyProductId || lp.id;
-            const prev = mergedProductsMap.get(key);
-            if (!prev || Date.parse(lp.updatedAt || '0') > Date.parse(prev.updatedAt || '0')) {
-              mergedProductsMap.set(key, lp);
-            }
-          }
-          const mergedStorefrontConfig: StorefrontConfig = {
-            ...DEFAULT_STOREFRONT_CONFIG,
-            ...(parsed.storefrontConfig || {}),
-          };
-          const mergedGeoSeoConfig: GeoSeoConfig = {
-            ...DEFAULT_GEO_SEO_CONFIG,
-            ...(parsed.geoSeoConfig || {}),
-          };
-          this.state = {
-            settings: mergedSettings,
-            orders: cleanedOrders,
-            products: Array.from(mergedProductsMap.values()),
-            storefrontConfig: mergedStorefrontConfig,
-            geoSeoConfig: mergedGeoSeoConfig,
-            whatsappMeta: {
-              mode: 'baileys_qr',
-              connectedAt: parsed.whatsappMeta?.connectedAt || null,
-              lastHeartbeatAt: parsed.whatsappMeta?.lastHeartbeatAt || null,
-              activeHostKind: parsed.whatsappMeta?.activeHostKind || null,
-              phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
-              pushName: parsed.whatsappMeta?.pushName || null,
-            },
-          };
-          this.writeLocalState(this.state);
-        } else if (
-          hasConfiguredShopify(this.state.settings) ||
-          this.state.orders.length > 0 ||
-          this.state.products.length > 0 ||
-          this.state.whatsappMeta.phoneNumber
-        ) {
-          // First time Redis is connected on an already-configured host: seed Redis immediately
-          await upstashSet(REDIS_DB_KEY, JSON.stringify(this.state));
         }
 
-        if (remotePollsRaw) {
-          const parsedPolls = JSON.parse(remotePollsRaw) as Record<string, unknown>;
-          if (parsedPolls && typeof parsedPolls === 'object') {
-            this.pollMessages = parsedPolls;
-            this.writeLocalPollCache();
+        const needDbFetch = shouldFetchFullRemoteDb({
+          localRev: this.lastSyncedRev,
+          remoteRev,
+          force,
+        });
+        const needPollsFetch = !process.env.VERCEL && (force || !this.pollsHydrated);
+
+        if (!needDbFetch && !needPollsFetch) {
+          this.lastHydratedAtMs = Date.now();
+          return;
+        }
+
+        const [remoteDbRaw, remotePollsRaw] = await Promise.all([
+          needDbFetch ? upstashGet(REDIS_DB_KEY) : Promise.resolve(null),
+          needPollsFetch ? upstashGet(REDIS_POLL_KEY) : Promise.resolve(null),
+        ]);
+
+        if (needDbFetch) {
+          if (remoteDbRaw) {
+            const parsed = JSON.parse(remoteDbRaw) as Partial<DatabaseState>;
+            const mergedSettings = hydrateEnvDefaults({
+              ...DEFAULT_SETTINGS,
+              ...(parsed.settings || {}),
+              whatsappMode: 'baileys_qr',
+            });
+            const remoteOrders = Array.isArray(parsed.orders)
+              ? parsed.orders.filter(
+                  (o) =>
+                    !LEGACY_SEED_ORDER_IDS.has(o.id) &&
+                    isOrderOnOrAfterStartDate(o.createdAt, mergedSettings.syncStartDate)
+                )
+              : [];
+            const mergedByKey = new Map<string, OrderRecord>();
+            for (const remote of remoteOrders) {
+              mergedByKey.set(remote.shopifyOrderId || remote.id, remote);
+            }
+            for (const local of this.state.orders) {
+              if (
+                LEGACY_SEED_ORDER_IDS.has(local.id) ||
+                !isOrderOnOrAfterStartDate(local.createdAt, mergedSettings.syncStartDate)
+              ) {
+                continue;
+              }
+              const key = local.shopifyOrderId || local.id;
+              const prev = mergedByKey.get(key);
+              mergedByKey.set(key, prev ? mergeProgressedOrderRecords(local, prev) : local);
+            }
+            const combinedOrders = Array.from(mergedByKey.values()).sort(
+              (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+            );
+            const { cleaned: cleanedOrders } = dedupeOrderEvents(combinedOrders);
+            const remoteProducts = Array.isArray(parsed.products) ? parsed.products : [];
+            const mergedProductsMap = new Map<string, ProductCatalogItem>();
+            for (const rp of remoteProducts) {
+              mergedProductsMap.set(rp.shopifyProductId || rp.id, rp);
+            }
+            for (const lp of this.state.products) {
+              const key = lp.shopifyProductId || lp.id;
+              const prev = mergedProductsMap.get(key);
+              if (!prev || Date.parse(lp.updatedAt || '0') > Date.parse(prev.updatedAt || '0')) {
+                mergedProductsMap.set(key, lp);
+              }
+            }
+            const mergedStorefrontConfig: StorefrontConfig = {
+              ...DEFAULT_STOREFRONT_CONFIG,
+              ...(parsed.storefrontConfig || {}),
+            };
+            const mergedGeoSeoConfig: GeoSeoConfig = {
+              ...DEFAULT_GEO_SEO_CONFIG,
+              ...(parsed.geoSeoConfig || {}),
+            };
+            const parsedHbMs = parsed.whatsappMeta?.lastHeartbeatAt
+              ? Date.parse(parsed.whatsappMeta.lastHeartbeatAt)
+              : 0;
+            const hbKeyMs = heartbeatMeta?.lastHeartbeatAt
+              ? Date.parse(heartbeatMeta.lastHeartbeatAt)
+              : 0;
+            const bestHeartbeatAt =
+              Number.isFinite(hbKeyMs) && hbKeyMs > (Number.isFinite(parsedHbMs) ? parsedHbMs : 0)
+                ? heartbeatMeta?.lastHeartbeatAt || null
+                : parsed.whatsappMeta?.lastHeartbeatAt || null;
+            const bestHostKind =
+              (Number.isFinite(hbKeyMs) && hbKeyMs > (Number.isFinite(parsedHbMs) ? parsedHbMs : 0)
+                ? heartbeatMeta?.activeHostKind
+                : parsed.whatsappMeta?.activeHostKind) ||
+              heartbeatMeta?.activeHostKind ||
+              null;
+
+            this.state = {
+              settings: mergedSettings,
+              orders: cleanedOrders,
+              products: Array.from(mergedProductsMap.values()),
+              storefrontConfig: mergedStorefrontConfig,
+              geoSeoConfig: mergedGeoSeoConfig,
+              whatsappMeta: {
+                mode: 'baileys_qr',
+                connectedAt: parsed.whatsappMeta?.connectedAt || null,
+                lastHeartbeatAt: bestHeartbeatAt,
+                activeHostKind: bestHostKind,
+                phoneNumber: parsed.whatsappMeta?.phoneNumber || null,
+                pushName: parsed.whatsappMeta?.pushName || null,
+              },
+            };
+            this.writeLocalState(this.state);
+
+            if (!remoteRev) {
+              const seedRev = nextDbRevision();
+              await upstashSet(REDIS_DB_REV_KEY, seedRev);
+              this.lastSyncedRev = seedRev;
+            } else {
+              this.lastSyncedRev = remoteRev;
+            }
+          } else if (
+            hasConfiguredShopify(this.state.settings) ||
+            this.state.orders.length > 0 ||
+            this.state.products.length > 0 ||
+            this.state.whatsappMeta.phoneNumber
+          ) {
+            // First time Redis is connected on an already-configured host: seed Redis immediately
+            const seedRev = nextDbRevision();
+            await upstashPipelineSet([
+              [REDIS_DB_KEY, JSON.stringify(this.state)],
+              [REDIS_DB_REV_KEY, seedRev],
+            ]);
+            this.lastSyncedRev = seedRev;
           }
-        } else if (Object.keys(this.pollMessages).length > 0) {
-          await upstashSet(REDIS_POLL_KEY, JSON.stringify(this.pollMessages));
+        }
+
+        if (needPollsFetch) {
+          this.pollsHydrated = true;
+          if (remotePollsRaw) {
+            const parsedPolls = JSON.parse(remotePollsRaw) as Record<string, unknown>;
+            if (parsedPolls && typeof parsedPolls === 'object') {
+              this.pollMessages = parsedPolls;
+              this.writeLocalPollCache();
+            }
+          } else if (Object.keys(this.pollMessages).length > 0) {
+            await upstashSet(REDIS_POLL_KEY, JSON.stringify(this.pollMessages));
+          }
         }
         this.lastHydratedAtMs = Date.now();
       } catch {
@@ -414,14 +588,15 @@ class PersistentStore {
 
   private persistState(nextState: DatabaseState) {
     this.writeLocalState(nextState);
-    if (this.isCloudSyncEnabled()) {
-      const payload = JSON.stringify(nextState);
-      this.remoteSyncQueue = this.remoteSyncQueue
-        .then(() => upstashSet(REDIS_DB_KEY, payload))
-        .catch(() => {
-          // Keep queue healthy even if a transient network error occurs
-        });
+    if (!this.isCloudSyncEnabled()) return;
+    if (process.env.VERCEL) {
+      this.flushPendingDbNow();
+      return;
     }
+    if (this.pendingDbFlushTimer) clearTimeout(this.pendingDbFlushTimer);
+    this.pendingDbFlushTimer = setTimeout(() => {
+      this.flushPendingDbNow();
+    }, 450);
   }
 
   private loadPollCache(): Record<string, unknown> {
@@ -453,28 +628,58 @@ class PersistentStore {
 
   private persistPollCache() {
     this.writeLocalPollCache();
+    if (!this.isCloudSyncEnabled()) return;
+    if (process.env.VERCEL) {
+      this.flushPendingPollsNow();
+      return;
+    }
+    if (this.pendingPollFlushTimer) clearTimeout(this.pendingPollFlushTimer);
+    this.pendingPollFlushTimer = setTimeout(() => {
+      this.flushPendingPollsNow();
+    }, 1000);
+  }
+
+  /**
+   * Records host WhatsApp heartbeat into a tiny (~80-byte) Redis key without re-uploading
+   * the entire db.json payload on every tick.
+   */
+  recordWhatsAppHeartbeat(meta: {
+    lastHeartbeatAt: string | null;
+    activeHostKind: string | null;
+  }) {
+    this.state.whatsappMeta = {
+      ...this.state.whatsappMeta,
+      lastHeartbeatAt: meta.lastHeartbeatAt,
+      activeHostKind: meta.activeHostKind,
+    };
     if (this.isCloudSyncEnabled()) {
-      const payload = JSON.stringify(this.pollMessages);
+      const payload = JSON.stringify(meta);
       this.remoteSyncQueue = this.remoteSyncQueue
-        .then(() => upstashSet(REDIS_POLL_KEY, payload))
+        .then(() => upstashSet(REDIS_HEARTBEAT_KEY, payload))
         .catch(() => {
-          // Keep queue healthy
+          // Ignore transient heartbeat write errors
         });
     }
   }
 
   /**
    * Backs up Baileys multi-file auth credentials (data/wa-auth/*) to Upstash Redis
-   * within a safe size budget so WhatsApp stays logged in across server restarts & redeploys.
+   * using a 15-minute steady-state throttle and SHA-256 content dedupe so creds.update
+   * bursts do not consume gigabytes of Redis bandwidth.
    */
-  async backupAuthFiles(authDir: string): Promise<void> {
+  async backupAuthFiles(authDir: string, options?: { force?: boolean }): Promise<void> {
     if (!this.isCloudSyncEnabled() || !fs.existsSync(authDir)) return;
+    if (
+      !shouldBackupWhatsAppAuth({
+        lastBackupAtMs: this.lastAuthBackupAtMs,
+        force: options?.force,
+      })
+    ) {
+      return;
+    }
     try {
       const credsPath = path.join(authDir, 'creds.json');
-      if (fs.existsSync(credsPath)) {
-        const credsContent = fs.readFileSync(credsPath, 'utf8');
-        await upstashSet(REDIS_WA_CREDS_KEY, credsContent);
-      }
+      const credsContent = fs.existsSync(credsPath) ? fs.readFileSync(credsPath, 'utf8') : '';
 
       const entries = fs.readdirSync(authDir);
       const fileEntries: Array<{ name: string; size: number }> = [];
@@ -491,9 +696,28 @@ class PersistentStore {
       for (const name of pickedNames) {
         bundle[name] = fs.readFileSync(path.join(authDir, name), 'utf8');
       }
-      if (Object.keys(bundle).length > 0) {
-        await upstashSet(REDIS_WA_AUTH_KEY, JSON.stringify(bundle));
+      const bundleJson = Object.keys(bundle).length > 0 ? JSON.stringify(bundle) : '';
+      if (!credsContent && !bundleJson) return;
+
+      const digest = crypto
+        .createHash('sha256')
+        .update(credsContent)
+        .update('|')
+        .update(bundleJson)
+        .digest('hex');
+
+      if (digest === this.lastAuthBackupDigest) {
+        this.lastAuthBackupAtMs = Date.now();
+        return;
       }
+
+      const pairs: Array<[string, string]> = [];
+      if (credsContent) pairs.push([REDIS_WA_CREDS_KEY, credsContent]);
+      if (bundleJson) pairs.push([REDIS_WA_AUTH_KEY, bundleJson]);
+
+      await upstashPipelineSet(pairs);
+      this.lastAuthBackupAtMs = Date.now();
+      this.lastAuthBackupDigest = digest;
     } catch {
       // Ignore transient backup error
     }
@@ -526,7 +750,13 @@ class PersistentStore {
   }
 
   async clearRemoteAuth(): Promise<void> {
-    await Promise.all([upstashDel(REDIS_WA_AUTH_KEY), upstashDel(REDIS_WA_CREDS_KEY)]);
+    this.lastAuthBackupAtMs = 0;
+    this.lastAuthBackupDigest = null;
+    await Promise.all([
+      upstashDel(REDIS_WA_AUTH_KEY),
+      upstashDel(REDIS_WA_CREDS_KEY),
+      upstashDel(REDIS_HEARTBEAT_KEY),
+    ]);
   }
 
   getSettings(): AppSettings {

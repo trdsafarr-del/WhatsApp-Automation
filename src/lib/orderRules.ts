@@ -3016,6 +3016,33 @@ export function buildSettlementAndDelaySummary(
   };
 }
 
+/**
+ * Decides whether the full remote DB JSON blob must be downloaded from Upstash Redis.
+ * When a lightweight (~25-byte) revision token matches what we already loaded, skip the ~400 KB pull.
+ */
+export function shouldFetchFullRemoteDb(params: {
+  localRev: string | null;
+  remoteRev: string | null;
+  force?: boolean;
+}): boolean {
+  if (params.force) return true;
+  if (!params.remoteRev || !params.localRev) return true;
+  return params.remoteRev !== params.localRev;
+}
 
-
-
+/**
+ * Throttles Baileys multi-file auth bundle (~400-650 KB) uploads to Upstash Redis
+ * so frequent creds.update events do not burn gigabytes of Redis bandwidth.
+ */
+export function shouldBackupWhatsAppAuth(params: {
+  lastBackupAtMs: number;
+  force?: boolean;
+  nowMs?: number;
+  minIntervalMs?: number;
+}): boolean {
+  if (params.force) return true;
+  const nowMs = params.nowMs ?? Date.now();
+  const minIntervalMs = params.minIntervalMs ?? 15 * 60 * 1000;
+  if (!params.lastBackupAtMs || params.lastBackupAtMs <= 0) return true;
+  return nowMs - params.lastBackupAtMs >= minIntervalMs;
+}

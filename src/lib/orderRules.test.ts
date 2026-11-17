@@ -55,6 +55,8 @@ import {
   shiftMonthKey,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
+  shouldBackupWhatsAppAuth,
+  shouldFetchFullRemoteDb,
   shouldPreserveRecentLocalNote,
   shouldPreserveRecentLocalTags,
   shouldSkipAutoRestoreForRemoteHost,
@@ -1662,4 +1664,36 @@ test('Daily Meta Ads ₹500/day billing days and Profit & Loss + Excel deduction
   assert.equal((wsOrderPnl.getCell('Q8').value as { result?: number }).result, 330);
 });
 
+test('Upstash Redis bandwidth guards skip unchanged full DB pulls and throttle frequent auth backups', () => {
+  assert.equal(
+    shouldFetchFullRemoteDb({ localRev: 'rev-100', remoteRev: 'rev-100', force: false }),
+    false
+  );
+  assert.equal(
+    shouldFetchFullRemoteDb({ localRev: 'rev-100', remoteRev: 'rev-101', force: false }),
+    true
+  );
+  assert.equal(
+    shouldFetchFullRemoteDb({ localRev: null, remoteRev: 'rev-100', force: false }),
+    true
+  );
+  assert.equal(
+    shouldFetchFullRemoteDb({ localRev: 'rev-100', remoteRev: 'rev-100', force: true }),
+    true
+  );
 
+  const t0 = Date.parse('2026-11-17T10:00:00.000Z');
+  assert.equal(shouldBackupWhatsAppAuth({ lastBackupAtMs: 0, nowMs: t0 }), true);
+  assert.equal(
+    shouldBackupWhatsAppAuth({ lastBackupAtMs: t0, nowMs: t0 + 60_000 }),
+    false
+  );
+  assert.equal(
+    shouldBackupWhatsAppAuth({ lastBackupAtMs: t0, nowMs: t0 + 60_000, force: true }),
+    true
+  );
+  assert.equal(
+    shouldBackupWhatsAppAuth({ lastBackupAtMs: t0, nowMs: t0 + 16 * 60_000 }),
+    true
+  );
+});

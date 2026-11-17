@@ -143,7 +143,7 @@ class WhatsAppManager {
     }
     if (this.hasSavedAuth() && this.isAuthRegistered()) {
       if (store.isCloudSyncEnabled()) {
-        void store.backupAuthFiles(AUTH_DIR);
+        void store.backupAuthFiles(AUTH_DIR, { force: true });
       }
       // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
       void this.connect('baileys_qr');
@@ -153,12 +153,12 @@ class WhatsAppManager {
     }
   }
 
-  private scheduleAuthBackup() {
+  private scheduleAuthBackup(force = false) {
     if (!store.isCloudSyncEnabled()) return;
     if (this.authBackupTimer) clearTimeout(this.authBackupTimer);
     this.authBackupTimer = setTimeout(() => {
-      void store.backupAuthFiles(AUTH_DIR);
-    }, 1500);
+      void store.backupAuthFiles(AUTH_DIR, { force });
+    }, force ? 1500 : 10_000);
   }
 
   private startHeartbeat() {
@@ -168,7 +168,7 @@ class WhatsAppManager {
       if (this.status !== 'connected') return;
       const now = new Date().toISOString();
       this.lastHeartbeatAt = now;
-      store.updateWhatsAppMeta({
+      store.recordWhatsAppHeartbeat({
         lastHeartbeatAt: now,
         activeHostKind: detectHostRuntimeKind(),
       });
@@ -179,7 +179,7 @@ class WhatsAppManager {
           // Connection listener handles reconnect if socket dropped
         }
       }
-    }, 45_000);
+    }, 120_000);
 
     if (this.queueFlushTimer) clearInterval(this.queueFlushTimer);
     this.queueFlushTimer = setInterval(() => {
@@ -384,7 +384,7 @@ class WhatsAppManager {
             phoneNumber: userId ? formatJidToDisplayPhone(userId) : 'Linked Device',
             pushName: sock.user?.name || 'WhatsApp Business',
           });
-          this.scheduleAuthBackup();
+          this.scheduleAuthBackup(true);
           this.startHeartbeat();
           this.notifyWaiters();
           void this.flushQueuedOrders();
@@ -631,6 +631,13 @@ class WhatsAppManager {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.authBackupTimer) {
+      clearTimeout(this.authBackupTimer);
+      this.authBackupTimer = null;
+    }
+    if (this.isConnected() && this.isAuthRegistered()) {
+      await store.backupAuthFiles(AUTH_DIR, { force: true });
     }
     await this.closeSocketOnly();
   }
