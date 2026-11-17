@@ -252,6 +252,8 @@ export interface GeoSeoConfig {
   includeTier2Matrix: boolean;
   includeTier3Matrix: boolean;
   injectStorefrontGeoSchema: boolean;
+  shopifyProxyPrefix?: string;
+  showStorefrontZoneFooter?: boolean;
   hubs: GeoZoneHub[];
   localities: GeoLocality[];
   categories: GeoCakeCategory[];

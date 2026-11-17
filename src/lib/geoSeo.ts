@@ -297,6 +297,8 @@ export const DEFAULT_GEO_SEO_CONFIG: GeoSeoConfig = {
   includeTier2Matrix: true,
   includeTier3Matrix: true,
   injectStorefrontGeoSchema: true,
+  shopifyProxyPrefix: '/apps/cakes',
+  showStorefrontZoneFooter: true,
   hubs: DEFAULT_GEO_HUBS,
   localities: DEFAULT_FARIDABAD_LOCALITIES,
   categories: DEFAULT_GEO_CATEGORIES,
@@ -610,6 +612,40 @@ export function normalizeWebsiteBaseUrl(rawUrl: string): string {
   return `https://${clean}`;
 }
 
+export function normalizeShopifyProxyPrefix(rawPrefix?: string): string {
+  const trimmed = (rawPrefix || '').trim().replace(/^\/+|\/+$/g, '');
+  if (!trimmed) return '/apps/cakes';
+  const parts = trimmed.split('/').filter(Boolean);
+  const validRoots = new Set(['apps', 'a', 'community', 'tools']);
+  if (parts.length >= 2 && validRoots.has(parts[0].toLowerCase())) {
+    const sub = slugifyGeoPart(parts.slice(1).join('-')) || 'cakes';
+    return `/${parts[0].toLowerCase()}/${sub}`;
+  }
+  const sub = slugifyGeoPart(parts.join('-')) || 'cakes';
+  return `/apps/${sub}`;
+}
+
+export function buildStorefrontProxyPageUrl(config: GeoSeoConfig, slug?: string): string {
+  const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
+  const prefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
+  const cleanSlug = (slug || '').trim().replace(/^\/+|\/+$/g, '');
+  return cleanSlug ? `${siteUrl}${prefix}/${cleanSlug}` : `${siteUrl}${prefix}`;
+}
+
+export function buildStorefrontZoneStripData(config: GeoSeoConfig) {
+  const proxyPrefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
+  const city = config.cityName || 'Faridabad';
+  const activeHubs = (config.hubs || []).filter((h) => h.enabled);
+  return {
+    directoryHref: proxyPrefix,
+    directoryLabel: `${city} Unified 5 km Cake Zones (${getGeoSeoStats(config).totalPages.toLocaleString()}+ Pages)`,
+    hubLinks: activeHubs.map((h) => ({
+      name: `${h.name} (${h.pincode})`,
+      href: `${proxyPrefix}/${buildTier1Slug(h, city)}`,
+    })),
+  };
+}
+
 export function matchCatalogProductsForCategory(
   products: ProductCatalogItem[],
   category: GeoCakeCategory | null,
@@ -651,6 +687,8 @@ export interface GeoSeoPageData {
   tier: 1 | 2 | 3;
   pageUrl: string;
   canonicalUrl: string;
+  proxyPageUrl: string;
+  proxyPrefix: string;
   primaryWebsiteUrl: string;
   brandName: string;
   cityName: string;
@@ -731,10 +769,15 @@ export function buildGeoSeoPageData(
   config: GeoSeoConfig,
   ref: ResolvedGeoSeoRef,
   products: ProductCatalogItem[],
-  hostOrigin: string
+  hostOrigin: string,
+  opts?: { useProxyCanonical?: boolean }
 ): GeoSeoPageData {
   const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
   const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
+  const proxyPrefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
+  const proxyPageUrl = `${siteUrl}${proxyPrefix}/${ref.slug}`;
+  const useProxy = Boolean(opts?.useProxyCanonical);
+  const routePrefix = useProxy ? proxyPrefix : '/seo/faridabad';
   const brand = config.brandName || 'Broomies Bakery';
   const city = config.cityName || 'Faridabad';
   const state = config.stateName || 'Haryana';
@@ -771,7 +814,8 @@ export function buildGeoSeoPageData(
       : `Buy freshly baked ${catName.toLowerCase()} in ${areaName}, ${city} (${pincode}) — ${distanceKm.toFixed(1)} km from ${ref.hub.name} Hub. ${modLabel} at ${brand}.`;
   const metaDescription = clampSeoString(rawDesc, 160);
 
-  const pageUrl = `${cleanHost}/seo/faridabad/${ref.slug}`;
+  const directPageUrl = `${cleanHost}/seo/faridabad/${ref.slug}`;
+  const pageUrl = useProxy ? proxyPageUrl : directPageUrl;
   const matchedProducts = matchCatalogProductsForCategory(products, ref.category, pincode);
 
   const targetKeywords = [
@@ -809,7 +853,7 @@ export function buildGeoSeoPageData(
         .slice(0, 8)
         .map((c) => ({
           label: `${c.name} in ${currentLoc.name}`,
-          href: `/seo/faridabad/${buildTier2Slug(c, currentLoc, city)}`,
+          href: `${routePrefix}/${buildTier2Slug(c, currentLoc, city)}`,
         }))
     : [];
 
@@ -825,10 +869,15 @@ export function buildGeoSeoPageData(
         .slice(0, 8)
         .map(({ cov, dist }) => ({
           label: `${targetCat.name} in ${cov.locality.name} (${cov.locality.pincode})`,
-          href: `/seo/faridabad/${buildTier2Slug(targetCat, cov.locality, city)}`,
+          href: `${routePrefix}/${buildTier2Slug(targetCat, cov.locality, city)}`,
           distanceKm: dist,
         }))
     : [];
+
+  const directoryAbsoluteUrl = useProxy ? `${siteUrl}${proxyPrefix}` : `${cleanHost}/seo/faridabad`;
+  const hubAbsoluteUrl = useProxy
+    ? `${siteUrl}${proxyPrefix}/${buildTier1Slug(ref.hub, city)}`
+    : `${cleanHost}/seo/faridabad/${buildTier1Slug(ref.hub, city)}`;
 
   const jsonLdGraph: Record<string, unknown> = {
     '@context': 'https://schema.org',
@@ -867,12 +916,12 @@ export function buildGeoSeoPageData(
         '@type': 'BreadcrumbList',
         itemListElement: [
           { '@type': 'ListItem', position: 1, name: brand, item: siteUrl },
-          { '@type': 'ListItem', position: 2, name: `${city} Cake Zones`, item: `${cleanHost}/seo/faridabad` },
+          { '@type': 'ListItem', position: 2, name: `${city} Cake Zones`, item: directoryAbsoluteUrl },
           {
             '@type': 'ListItem',
             position: 3,
             name: `${ref.hub.name} Zone`,
-            item: `${cleanHost}/seo/faridabad/${buildTier1Slug(ref.hub, city)}`,
+            item: hubAbsoluteUrl,
           },
           { '@type': 'ListItem', position: 4, name: h1, item: pageUrl },
         ],
@@ -907,6 +956,8 @@ export function buildGeoSeoPageData(
     tier: ref.tier,
     pageUrl,
     canonicalUrl: pageUrl,
+    proxyPageUrl,
+    proxyPrefix,
     primaryWebsiteUrl: siteUrl,
     brandName: brand,
     cityName: city,
@@ -1102,15 +1153,20 @@ function escapeHtmlText(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
-export function buildSitemapIndexXml(hostOrigin: string, totalPages: number): string {
+export function buildSitemapIndexXml(
+  hostOrigin: string,
+  totalPages: number,
+  shardBaseUrl?: string
+): string {
   const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
+  const prefix = (shardBaseUrl || `${cleanHost}/sitemap-geo`).replace(/\/+$/, '');
   const shardCount = Math.max(1, Math.ceil(totalPages / SITEMAP_URLS_PER_SHARD));
   const lastMod = new Date().toISOString().split('T')[0];
 
   const entries: string[] = [];
   for (let s = 1; s <= shardCount; s += 1) {
     entries.push(
-      `  <sitemap>\n    <loc>${escapeXml(`${cleanHost}/sitemap-geo/${s}.xml`)}</loc>\n    <lastmod>${lastMod}</lastmod>\n  </sitemap>`
+      `  <sitemap>\n    <loc>${escapeXml(`${prefix}/${s}.xml`)}</loc>\n    <lastmod>${lastMod}</lastmod>\n  </sitemap>`
     );
   }
 
@@ -1120,9 +1176,11 @@ export function buildSitemapIndexXml(hostOrigin: string, totalPages: number): st
 export function buildGeoSitemapShardXml(
   hostOrigin: string,
   config: GeoSeoConfig,
-  shardNumber: number
+  shardNumber: number,
+  pageBaseUrl?: string
 ): string {
   const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
+  const baseUrl = (pageBaseUrl || `${cleanHost}/seo/faridabad`).replace(/\/+$/, '');
   const precomputed = {
     activeHubs: (config.hubs || []).filter((h) => h.enabled),
     covered: getCoveredLocalities(config),
@@ -1143,7 +1201,7 @@ export function buildGeoSitemapShardXml(
   const urls: string[] = [];
   if (shard === 1) {
     urls.push(
-      `  <url>\n    <loc>${escapeXml(`${cleanHost}/seo/faridabad`)}</loc>\n    <lastmod>${lastMod}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>`
+      `  <url>\n    <loc>${escapeXml(baseUrl)}</loc>\n    <lastmod>${lastMod}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>`
     );
   }
 
@@ -1152,11 +1210,27 @@ export function buildGeoSitemapShardXml(
     if (!ref) continue;
     const priority = ref.tier === 1 ? '0.9' : ref.tier === 2 ? '0.8' : '0.7';
     urls.push(
-      `  <url>\n    <loc>${escapeXml(`${cleanHost}/seo/faridabad/${ref.slug}`)}</loc>\n    <lastmod>${lastMod}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>${priority}</priority>\n  </url>`
+      `  <url>\n    <loc>${escapeXml(`${baseUrl}/${ref.slug}`)}</loc>\n    <lastmod>${lastMod}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>${priority}</priority>\n  </url>`
     );
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
+}
+
+export function buildProxySitemapIndexXml(config: GeoSeoConfig): string {
+  const stats = getGeoSeoStats(config);
+  const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
+  const prefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
+  return buildSitemapIndexXml(siteUrl, stats.totalPages, `${siteUrl}${prefix}/sitemap-geo`);
+}
+
+export function buildProxyGeoSitemapShardXml(
+  config: GeoSeoConfig,
+  shardNumber: number
+): string {
+  const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
+  const prefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
+  return buildGeoSitemapShardXml(siteUrl, config, shardNumber, `${siteUrl}${prefix}`);
 }
 
 function formatInrShopPrice(rawPrice?: string): string {
@@ -1783,4 +1857,386 @@ export function renderGeoSeoDirectoryHtml(
 </body>
 </html>`;
 }
+
+function buildShopifyProxyScopedStyles(): string {
+  return `<style>
+    .bb-proxy-wrap {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 20px 18px 56px;
+      color: #121212;
+      box-sizing: border-box;
+    }
+    .bb-proxy-wrap *, .bb-proxy-wrap *::before, .bb-proxy-wrap *::after {
+      box-sizing: border-box;
+    }
+    .bb-proxy-breadcrumb {
+      font-size: 13px;
+      color: #1f2937;
+      margin-bottom: 14px;
+    }
+    .bb-proxy-breadcrumb a {
+      color: #121212;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .bb-proxy-breadcrumb a:hover {
+      text-decoration: underline;
+    }
+    .bb-proxy-panel {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid #2b2b2b;
+      border-radius: 26px;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+      padding: 24px 26px;
+      margin-bottom: 26px;
+    }
+    .bb-proxy-h1 {
+      margin: 0 0 12px;
+      font-size: clamp(24px, 3vw, 36px);
+      line-height: 1.2;
+      font-weight: 500;
+      color: #121212;
+    }
+    .bb-proxy-section-title {
+      margin: 0 0 16px;
+      font-size: clamp(22px, 2.8vw, 32px);
+      font-weight: 400;
+      color: #121212;
+    }
+    .bb-proxy-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+      gap: 16px;
+      margin-bottom: 30px;
+    }
+    .bb-proxy-card {
+      border-radius: 26px;
+      border: 1px solid #2b2b2b;
+      background: #efefef;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.22);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .bb-proxy-media {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: #e5dfd7;
+      overflow: hidden;
+    }
+    .bb-proxy-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .bb-proxy-card-fallback {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      text-align: center;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: #3f2a21;
+      background: linear-gradient(135deg, #f3e8e0, #e6d7cb);
+    }
+    .bb-proxy-card-body {
+      padding: 14px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      flex: 1;
+    }
+    .bb-proxy-card-title {
+      margin: 0 0 6px;
+      font-size: 14px;
+      line-height: 1.35;
+      color: #121212;
+      font-weight: 400;
+    }
+    .bb-proxy-card-price {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 500;
+      color: #121212;
+      font-variant-numeric: tabular-nums;
+    }
+    .bb-proxy-btn-outline {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 10px 14px;
+      border-radius: 9999px;
+      border: 1.5px solid #222222;
+      background: #ffffff;
+      color: #121212;
+      font-size: 13px;
+      text-decoration: none;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+    }
+    .bb-proxy-btn-outline:hover {
+      background: #121212;
+      color: #ffffff;
+    }
+    .bb-proxy-btn-solid {
+      display: inline-block;
+      padding: 11px 22px;
+      border-radius: 9999px;
+      border: 1.5px solid #121212;
+      background: #121212;
+      color: #ffffff;
+      font-size: 13.5px;
+      font-weight: 500;
+      text-decoration: none;
+    }
+    .bb-proxy-btn-light {
+      display: inline-block;
+      padding: 11px 22px;
+      border-radius: 9999px;
+      border: 1.5px solid #222222;
+      background: #ffffff;
+      color: #121212;
+      font-size: 13.5px;
+      text-decoration: none;
+    }
+    .bb-proxy-link-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 0;
+      color: #121212;
+      font-size: 13.5px;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(18, 18, 18, 0.1);
+    }
+    .bb-proxy-link-row:hover { text-decoration: underline; }
+    @media (max-width: 720px) {
+      .bb-proxy-wrap { padding: 14px 12px 44px; }
+      .bb-proxy-panel { padding: 18px 16px; border-radius: 20px; }
+      .bb-proxy-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+      .bb-proxy-card { border-radius: 20px; }
+      .bb-proxy-card-body { padding: 11px 10px 13px; }
+    }
+  </style>`;
+}
+
+/**
+ * Renders an `application/liquid` body fragment served to Shopify App Proxy
+ * so Shopify renders the landing page directly inside `broomiesbakery.in`'s own Dawn theme.
+ */
+export function renderGeoSeoShopifyLiquidFragment(
+  data: GeoSeoPageData,
+  config: GeoSeoConfig,
+  whatsappPhone?: string
+): string {
+  const proxyPrefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
+  const waDigits = String(whatsappPhone || '919266424088').replace(/\D/g, '') || '919266424088';
+  const waMsg = encodeURIComponent(
+    `Hi ${data.brandName}, I want to order ${data.category?.name || 'Custom & Ready to Eat Cakes'} in ${data.areaLabel} (${data.pincode}).`
+  );
+
+  const productsHtml =
+    data.matchedProducts.length > 0
+      ? data.matchedProducts
+          .map((p) => {
+            const productPath = `/products/${encodeURIComponent(p.handle || '')}`;
+            const imgBlock = p.imageUrl
+              ? `<img src="${escapeHtmlText(p.imageUrl)}" alt="${escapeHtmlText(p.imageAlt || p.title)}" loading="eager" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><div class="bb-proxy-card-fallback" style="display:none;">${escapeHtmlText(p.title)}</div>`
+              : `<div class="bb-proxy-card-fallback">${escapeHtmlText(p.title)}</div>`;
+            return `<article class="bb-proxy-card">
+              <div class="bb-proxy-media">${imgBlock}</div>
+              <div class="bb-proxy-card-body">
+                <div>
+                  <h3 class="bb-proxy-card-title">${escapeHtmlText(p.title)}</h3>
+                  <p class="bb-proxy-card-price">${escapeHtmlText(formatInrShopPrice(p.price))}</p>
+                </div>
+                <a href="${escapeHtmlText(productPath)}" class="bb-proxy-btn-outline">Choose options</a>
+              </div>
+            </article>`;
+          })
+          .join('')
+      : `<div class="bb-proxy-panel" style="grid-column:1/-1;text-align:center;">
+          <p style="margin:0 0 14px;font-size:16px;font-weight:500;">Explore Custom &amp; Ready to Eat Cakes at ${escapeHtmlText(data.brandName)}</p>
+          <a href="/collections/all" class="bb-proxy-btn-outline" style="max-width:260px;margin:0 auto;">Shop All Fresh Cakes</a>
+        </div>`;
+
+  const faqsHtml = data.faqs
+    .map(
+      (f) => `<div style="border-bottom:1px solid rgba(18,18,18,0.1);padding:13px 0;">
+        <h3 style="margin:0 0 6px;font-size:15.5px;font-weight:600;color:#121212;">${escapeHtmlText(f.question)}</h3>
+        <p style="margin:0;font-size:14px;line-height:1.6;color:#374151;">${escapeHtmlText(f.answer)}</p>
+      </div>`
+    )
+    .join('');
+
+  const catLinksHtml = data.siblingCategoryLinks
+    .map(
+      (l) =>
+        `<a href="${escapeHtmlText(l.href)}" class="bb-proxy-link-row"><span>${escapeHtmlText(l.label)}</span><span>→</span></a>`
+    )
+    .join('');
+
+  const locLinksHtml = data.nearbyLocalityLinks
+    .map(
+      (l) =>
+        `<a href="${escapeHtmlText(l.href)}" class="bb-proxy-link-row"><span>${escapeHtmlText(l.label)}</span><span style="color:#4b5563;font-size:12px;">${l.distanceKm.toFixed(1)} km</span></a>`
+    )
+    .join('');
+
+  return `${buildShopifyProxyScopedStyles()}
+<script type="application/ld+json">${JSON.stringify(data.jsonLdGraph)}</script>
+<script>
+  try {
+    document.title = ${JSON.stringify(data.seoTitle)};
+    var metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) metaDesc.setAttribute('content', ${JSON.stringify(data.metaDescription)});
+    var canLink = document.querySelector('link[rel="canonical"]');
+    if (canLink) canLink.setAttribute('href', ${JSON.stringify(data.canonicalUrl)});
+  } catch (e) {}
+</script>
+<div class="bb-proxy-wrap" data-seo-slug="${escapeHtmlText(data.slug)}">
+  <nav aria-label="Breadcrumb" class="bb-proxy-breadcrumb">
+    <a href="/">${escapeHtmlText(data.brandName)}</a>
+    <span> / </span>
+    <a href="${escapeHtmlText(proxyPrefix)}">${escapeHtmlText(data.cityName)} Cake Zones</a>
+    <span> / </span>
+    <span>${escapeHtmlText(data.areaLabel)}</span>
+  </nav>
+
+  <section class="bb-proxy-panel">
+    <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">
+      ${escapeHtmlText(data.nearestHub.name)} Hub · ${data.distanceKm.toFixed(1)} km Express Radius · PIN ${escapeHtmlText(data.pincode)}
+    </p>
+    <h1 class="bb-proxy-h1">${escapeHtmlText(data.h1)}</h1>
+    <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#333333;max-width:74ch;">
+      ${escapeHtmlText(data.heroSummary)}
+    </p>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+      <a href="/collections/all" class="bb-proxy-btn-solid">Order Fresh Cakes Now</a>
+      <a href="https://wa.me/${waDigits}?text=${waMsg}" target="_blank" rel="noopener noreferrer" class="bb-proxy-btn-light">Custom Cake on WhatsApp</a>
+    </div>
+  </section>
+
+  <section>
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:14px;">
+      <h2 class="bb-proxy-section-title" style="margin-bottom:0;">Best Seller – ${escapeHtmlText(data.areaLabel)}</h2>
+      <span style="font-size:13px;color:#1f2937;">Custom Design · Ready to Eat · 100% Eggless Options</span>
+    </div>
+    <div class="bb-proxy-grid">${productsHtml}</div>
+  </section>
+
+  <section class="bb-proxy-panel">
+    <h2 style="margin:0 0 10px;font-size:20px;font-weight:500;color:#121212;">Unified 5 km Faridabad Cake Delivery Coverage</h2>
+    <p style="margin:0 0 12px;font-size:14.5px;line-height:1.6;color:#333333;">
+      Our unified cake kitchen network merges 5 km rapid delivery circles across
+      <strong>${escapeHtmlText(data.allActiveHubs.map((h) => `${h.name} (${h.pincode})`).join(', '))}</strong>
+      so customers searching for <strong>custom cakes</strong> or <strong>ready to eat cakes</strong> receive oven-fresh cakes with local rider care.
+    </p>
+    <p style="margin:0;font-size:12.5px;color:#4b5563;">
+      Popular Searches: ${escapeHtmlText(data.targetKeywords.join(' · '))}
+    </p>
+  </section>
+
+  <section class="bb-proxy-panel">
+    <h2 style="margin:0 0 6px;font-size:20px;font-weight:500;color:#121212;">Frequently Asked Questions – ${escapeHtmlText(data.areaLabel)}</h2>
+    ${faqsHtml}
+  </section>
+
+  <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;">
+    <div class="bb-proxy-panel" style="margin-bottom:0;">
+      <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">More Cake Categories Nearby</h3>
+      ${catLinksHtml}
+    </div>
+    <div class="bb-proxy-panel" style="margin-bottom:0;">
+      <h3 style="margin:0 0 10px;font-size:17px;font-weight:500;color:#121212;">Nearby Faridabad Sectors (Within 5 km)</h3>
+      ${locLinksHtml}
+    </div>
+  </section>
+</div>`;
+}
+
+/**
+ * Renders the Master Directory landing index at `broomiesbakery.in/apps/cakes` inside Shopify theme.
+ */
+export function renderGeoSeoDirectoryLiquidFragment(
+  config: GeoSeoConfig,
+  whatsappPhone?: string
+): string {
+  const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
+  const proxyPrefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
+  const stats = getGeoSeoStats(config);
+  const activeHubs = (config.hubs || []).filter((h) => h.enabled);
+  const covered = getCoveredLocalities(config);
+  const cats = (config.categories || []).filter((c) => c.enabled);
+  const waDigits = String(whatsappPhone || '919266424088').replace(/\D/g, '') || '919266424088';
+
+  const hubCards = activeHubs
+    .map(
+      (h) => `<a href="${escapeHtmlText(`${proxyPrefix}/${buildTier1Slug(h, config.cityName)}`)}" class="bb-proxy-card" style="text-decoration:none;color:#121212;padding:18px;background:#ffffff;">
+        <div>
+          <div style="font-weight:500;font-size:18px;color:#121212;">${escapeHtmlText(h.name)} (${h.radiusKm} km Zone)</div>
+          <div style="font-size:13px;color:#4b5563;margin:6px 0 14px;">PIN ${escapeHtmlText(h.pincode)} · ${covered.filter((c) => c.matchingHubIds.includes(h.id)).length} Sectors Covered</div>
+        </div>
+        <span class="bb-proxy-btn-outline">Explore ${escapeHtmlText(h.name)} Cakes</span>
+      </a>`
+    )
+    .join('');
+
+  const localityGrid = covered
+    .map((cov) => {
+      const customCat = cats[0];
+      const href = customCat
+        ? `${proxyPrefix}/${buildTier2Slug(customCat, cov.locality, config.cityName)}`
+        : proxyPrefix;
+      return `<a href="${escapeHtmlText(href)}" style="display:flex;justify-content:space-between;align-items:center;border:1px solid #2b2b2b;border-radius:16px;background:#ffffff;padding:12px 15px;text-decoration:none;color:#121212;font-size:13.5px;box-shadow:0 3px 8px rgba(0,0,0,0.12);">
+        <span style="font-weight:500;">${escapeHtmlText(cov.locality.name)}</span>
+        <span style="color:#4b5563;font-size:12px;">${cov.distanceKm.toFixed(1)} km · ${escapeHtmlText(cov.locality.pincode)}</span>
+      </a>`;
+    })
+    .join('');
+
+  const seoTitle = `${config.brandName} – Faridabad Cake Delivery Zones (Sec 31, 88, 35, 42)`;
+  const seoDesc = `Explore ${stats.totalPages.toLocaleString()} cake delivery pages for ${config.brandName} across Sector 31, 88, 35 & 42 (5 km unified zone) in Faridabad.`;
+
+  return `${buildShopifyProxyScopedStyles()}
+<script type="application/ld+json">${JSON.stringify(buildBakeryStorefrontSchema(config, siteUrl))}</script>
+<script>
+  try {
+    document.title = ${JSON.stringify(seoTitle)};
+    var metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) metaDesc.setAttribute('content', ${JSON.stringify(seoDesc)});
+    var canLink = document.querySelector('link[rel="canonical"]');
+    if (canLink) canLink.setAttribute('href', ${JSON.stringify(`${siteUrl}${proxyPrefix}`)});
+  } catch (e) {}
+</script>
+<div class="bb-proxy-wrap">
+  <section class="bb-proxy-panel">
+    <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#0f5132;">${stats.totalPages.toLocaleString()} Live Domain-Hosted Cake Pages · ${stats.coveredLocalitiesCount} Faridabad Localities</p>
+    <h1 class="bb-proxy-h1">${escapeHtmlText(config.brandName)} – Faridabad Unified 5 km Cake Delivery Zones</h1>
+    <p style="margin:0 0 18px;font-size:15px;color:#333333;">Serving Custom Cakes &amp; Ready to Eat Cakes directly on ${escapeHtmlText(siteUrl.replace(/^https?:\/\//, ''))}</p>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;">
+      <a href="/collections/all" class="bb-proxy-btn-solid">Order Cakes Now</a>
+      <a href="https://wa.me/${waDigits}?text=${encodeURIComponent(`Hi ${config.brandName}, I want to order a custom cake in Faridabad!`)}" target="_blank" rel="noopener noreferrer" class="bb-proxy-btn-light">Custom Order on WhatsApp</a>
+    </div>
+  </section>
+
+  <h2 class="bb-proxy-section-title">Unified 5 km Zone Hubs</h2>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-bottom:32px;">
+    ${hubCards}
+  </div>
+
+  <h2 class="bb-proxy-section-title">All Covered Faridabad Sectors &amp; Colonies (≤ 5 km Radius)</h2>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;">
+    ${localityGrid}
+  </div>
+</div>`;
+}
+
 

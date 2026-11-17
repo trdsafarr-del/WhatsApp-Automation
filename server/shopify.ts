@@ -100,6 +100,42 @@ export function verifyShopifyWebhookHmac(
   return crypto.timingSafeEqual(computedBuf, headerBuf);
 }
 
+/**
+ * Verifies Shopify App Proxy HMAC-SHA256 signature query param.
+ * Spec: sort all non-`signature` query keys lexicographically, join array values with `,`,
+ * concatenate as `key=value` with NO delimiter, HMAC-SHA256 hex digest with App Client Secret.
+ */
+export function verifyShopifyProxySignature(
+  query: Record<string, unknown>,
+  secret: string
+): boolean {
+  const cleanSecret = (secret || '').trim();
+  if (!cleanSecret) return true;
+  const sigRaw = query.signature;
+  const signature = Array.isArray(sigRaw) ? String(sigRaw[0] || '') : String(sigRaw || '');
+  if (!/^[a-f0-9]{64}$/i.test(signature)) return false;
+
+  const sortedInput = Object.keys(query)
+    .filter((k) => k !== 'signature' && query[k] !== undefined)
+    .sort()
+    .map((k) => {
+      const val = query[k];
+      const strVal = Array.isArray(val) ? val.map((v) => String(v ?? '')).join(',') : String(val ?? '');
+      return `${k}=${strVal}`;
+    })
+    .join('');
+
+  const expectedHex = crypto
+    .createHmac('sha256', cleanSecret)
+    .update(sortedInput, 'utf8')
+    .digest('hex');
+
+  const expectedBuf = Buffer.from(expectedHex.toLowerCase(), 'utf8');
+  const receivedBuf = Buffer.from(signature.toLowerCase(), 'utf8');
+  if (expectedBuf.length !== receivedBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, receivedBuf);
+}
+
 function inferPaymentMethod(raw: ShopifyRawOrder): string {
   const gateways = Array.isArray(raw.payment_gateway_names)
     ? raw.payment_gateway_names.join(' ').toLowerCase()

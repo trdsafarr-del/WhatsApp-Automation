@@ -2,19 +2,25 @@ import type { Express, Request, Response } from 'express';
 import {
   buildGeoSeoPageData,
   buildGeoSitemapShardXml,
+  buildProxyGeoSitemapShardXml,
+  buildProxySitemapIndexXml,
   buildSitemapIndexXml,
   buildTier1Slug,
+  buildTier2Slug,
   getCoveredLocalities,
   getGeoSeoStats,
+  normalizeShopifyProxyPrefix,
   normalizeWebsiteBaseUrl,
   queryGeoSeoPages,
   renderGeoSeoDirectoryHtml,
+  renderGeoSeoDirectoryLiquidFragment,
   renderGeoSeoLandingHtml,
+  renderGeoSeoShopifyLiquidFragment,
   resolveGeoSeoPageBySlug,
 } from '../src/lib/geoSeo.js';
 import { normalizeStorefrontOrigin } from '../src/lib/storefrontRules.js';
 import type { GeoSeoConfig } from '../src/lib/types.js';
-import { upsertShopifyStorePage } from './shopify.js';
+import { upsertShopifyStorePage, verifyShopifyProxySignature } from './shopify.js';
 import { store } from './store.js';
 
 function resolvePublicSeoHost(req: Request): string {
@@ -102,6 +108,121 @@ export function registerGeoSeoRoutes(app: Express) {
     res.send(renderGeoSeoLandingHtml(pageData, geoConfig, waPhone));
   });
 
+  // =========================================================================
+  // SHOPIFY APP PROXY ROUTES — Hosts all 16,436+ pages on broomiesbakery.in
+  // Mapping in Shopify Dev Dashboard:
+  //   Subpath prefix: apps | Subpath: cakes
+  //   Proxy URL: https://whatsa86.vercel.app/api/shopify-proxy
+  // =========================================================================
+  const validateShopifyProxyRequest = (req: Request): boolean => {
+    const settings = store.getSettings();
+    const secret = (settings.shopifyClientSecret || settings.shopifyWebhookSecret || '').trim();
+    if (!secret) return true;
+    const hasProxyParams =
+      req.query.signature !== undefined ||
+      req.query.path_prefix !== undefined ||
+      req.query.logged_in_customer_id !== undefined;
+    if (!hasProxyParams) {
+      // Allow direct dashboard / browser preview when not coming through signed Shopify proxy
+      return true;
+    }
+    return verifyShopifyProxySignature(req.query as Record<string, unknown>, secret);
+  };
+
+  const resolveEffectiveProxyConfig = (req: Request, base: GeoSeoConfig): GeoSeoConfig => {
+    const pathPrefixQuery = typeof req.query.path_prefix === 'string' ? req.query.path_prefix : '';
+    const effectivePrefix = pathPrefixQuery
+      ? normalizeShopifyProxyPrefix(pathPrefixQuery)
+      : normalizeShopifyProxyPrefix(base.shopifyProxyPrefix);
+    return {
+      ...base,
+      shopifyProxyPrefix: effectivePrefix,
+    };
+  };
+
+  // Domain-hosted Master XML Sitemap Index: https://broomiesbakery.in/apps/cakes/sitemap.xml
+  app.get('/api/shopify-proxy/sitemap.xml', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    if (!validateShopifyProxyRequest(req)) {
+      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
+      return;
+    }
+    const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=600');
+    res.send(buildProxySitemapIndexXml(geoConfig));
+  });
+
+  // Domain-hosted Geo-SEO XML Sitemap Shards: https://broomiesbakery.in/apps/cakes/sitemap-geo/1.xml
+  app.get('/api/shopify-proxy/sitemap-geo/:shard', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    if (!validateShopifyProxyRequest(req)) {
+      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
+      return;
+    }
+    const shardRaw = String(req.params.shard || '1').replace(/\.xml$/i, '');
+    const shardNum = Number.parseInt(shardRaw, 10);
+    const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
+    const stats = getGeoSeoStats(geoConfig);
+    if (!Number.isFinite(shardNum) || shardNum < 1 || shardNum > stats.sitemapShardCount) {
+      res.status(404).type('text/plain').send('Proxy sitemap shard not found');
+      return;
+    }
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=600');
+    res.send(buildProxyGeoSitemapShardXml(geoConfig, shardNum));
+  });
+
+  // Root Storefront Zone Directory on broomiesbakery.in/apps/cakes
+  app.get('/api/shopify-proxy', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    if (!validateShopifyProxyRequest(req)) {
+      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
+      return;
+    }
+    const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
+    const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
+    res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(renderGeoSeoDirectoryLiquidFragment(geoConfig, waPhone));
+  });
+
+  // All 16,436+ Cake Landing Pages rendered inside broomiesbakery.in/apps/cakes/:slug
+  app.get('/api/shopify-proxy/:slug', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    if (!validateShopifyProxyRequest(req)) {
+      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
+      return;
+    }
+    const slug = String(req.params.slug || '').trim();
+    const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
+    const proxyPrefix = normalizeShopifyProxyPrefix(geoConfig.shopifyProxyPrefix);
+
+    if (!geoConfig.enabled) {
+      res.status(404).setHeader('Content-Type', 'application/liquid; charset=utf-8').send(
+        `<div style="padding:40px;text-align:center;"><h1>Faridabad Cake Zones Paused</h1><p><a href="/collections/all">Browse All Cakes</a></p></div>`
+      );
+      return;
+    }
+
+    const ref = resolveGeoSeoPageBySlug(geoConfig, slug);
+    if (!ref) {
+      res.status(404).setHeader('Content-Type', 'application/liquid; charset=utf-8').send(
+        `<div style="padding:40px;text-align:center;"><h1>Cake Delivery Zone Not Found</h1><p><a href="${proxyPrefix}">Browse All Faridabad Cake Zones</a> · <a href="/collections/all">Shop Cakes</a></p></div>`
+      );
+      return;
+    }
+
+    const host = resolvePublicSeoHost(req);
+    const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
+    const pageData = buildGeoSeoPageData(geoConfig, ref, store.getProducts(), host, {
+      useProxyCanonical: true,
+    });
+    res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(renderGeoSeoShopifyLiquidFragment(pageData, geoConfig, waPhone));
+  });
+
   // Dashboard API: Read Geo-SEO Config & Stats
   app.get('/api/seo/geo-config', async (_req: Request, res: Response) => {
     await store.ensureHydrated();
@@ -154,6 +275,14 @@ export function registerGeoSeoRoutes(app: Express) {
         typeof body.injectStorefrontGeoSchema === 'boolean'
           ? body.injectStorefrontGeoSchema
           : cur.injectStorefrontGeoSchema,
+      shopifyProxyPrefix:
+        typeof body.shopifyProxyPrefix === 'string' && body.shopifyProxyPrefix.trim()
+          ? normalizeShopifyProxyPrefix(body.shopifyProxyPrefix)
+          : normalizeShopifyProxyPrefix(cur.shopifyProxyPrefix),
+      showStorefrontZoneFooter:
+        typeof body.showStorefrontZoneFooter === 'boolean'
+          ? body.showStorefrontZoneFooter
+          : cur.showStorefrontZoneFooter ?? true,
       hubs: Array.isArray(body.hubs) && body.hubs.length > 0 ? body.hubs : cur.hubs,
       localities:
         Array.isArray(body.localities) && body.localities.length > 0
@@ -219,15 +348,17 @@ export function registerGeoSeoRoutes(app: Express) {
     res.json({ ok: true, pageData });
   });
 
-  // Dashboard API: Push Unified Zone Pillar Pages directly into broomiesbakery.in/pages/...
+  // Dashboard API: Push Unified Zone Pillar & Priority Local Pages directly into broomiesbakery.in/pages/...
   app.post('/api/seo/push-shopify-pages', async (req: Request, res: Response) => {
     await store.ensureHydrated();
+    const body = (req.body || {}) as { includePriorityLocalPages?: boolean };
     const settings = store.getSettings();
     const geoConfig = store.getGeoSeoConfig();
     const covered = getCoveredLocalities(geoConfig);
     const activeHubs = (geoConfig.hubs || []).filter((h) => h.enabled);
-    const host = resolvePublicSeoHost(req);
+    const activeCats = (geoConfig.categories || []).filter((c) => c.enabled);
     const siteUrl = normalizeWebsiteBaseUrl(geoConfig.primaryWebsiteUrl);
+    const proxyPrefix = normalizeShopifyProxyPrefix(geoConfig.shopifyProxyPrefix);
 
     const results: Array<{ handle: string; ok: boolean; action?: string; error?: string }> = [];
 
@@ -238,14 +369,14 @@ export function registerGeoSeoRoutes(app: Express) {
         <h2>Covered Sectors &amp; Colonies (Within 5 km Radius)</h2>
         <ul>
           ${covered
-            .slice(0, 40)
+            .slice(0, 45)
             .map(
               (c) =>
-                `<li><a href="${host}/seo/faridabad/${c.locality.slug ? `custom-cakes-in-${c.locality.slug}-faridabad` : ''}">${c.locality.name} (${c.locality.pincode})</a> — ${c.distanceKm.toFixed(1)} km from ${c.nearestHub.name} Hub</li>`
+                `<li><a href="${proxyPrefix}/custom-cakes-in-${c.locality.slug}-faridabad">${c.locality.name} (${c.locality.pincode})</a> — ${c.distanceKm.toFixed(1)} km from ${c.nearestHub.name} Hub</li>`
             )
             .join('')}
         </ul>
-        <p><a href="${host}/seo/faridabad">View All ${getGeoSeoStats(geoConfig).totalPages.toLocaleString()} Faridabad Cake Delivery Pages</a> | <a href="${siteUrl}/collections/all">Shop Cakes Online</a></p>
+        <p><a href="${proxyPrefix}">View All ${getGeoSeoStats(geoConfig).totalPages.toLocaleString()} Faridabad Cake Delivery Pages</a> | <a href="/collections/all">Shop Cakes Online</a></p>
       </div>
     `;
 
@@ -276,11 +407,11 @@ export function registerGeoSeoRoutes(app: Express) {
             ${hubSectors
               .map(
                 (s) =>
-                  `<li><a href="${host}/seo/faridabad/custom-cakes-in-${s.locality.slug}-faridabad">Custom Cakes in ${s.locality.name}</a> · <a href="${host}/seo/faridabad/ready-to-eat-cakes-in-${s.locality.slug}-faridabad">Ready to Eat Cakes in ${s.locality.name}</a> (${s.distanceKm.toFixed(1)} km)</li>`
+                  `<li><a href="${proxyPrefix}/custom-cakes-in-${s.locality.slug}-faridabad">Custom Cakes in ${s.locality.name}</a> · <a href="${proxyPrefix}/ready-to-eat-cakes-in-${s.locality.slug}-faridabad">Ready to Eat Cakes in ${s.locality.name}</a> (${s.distanceKm.toFixed(1)} km)</li>`
               )
               .join('')}
           </ul>
-          <p><a href="${siteUrl}/collections/all">Browse &amp; Order Fresh Cakes on ${geoConfig.brandName}</a></p>
+          <p><a href="/collections/all">Browse &amp; Order Fresh Cakes on ${geoConfig.brandName}</a></p>
         </div>
       `;
       const pushRes = await upsertShopifyStorePage(settings, {
@@ -293,6 +424,34 @@ export function registerGeoSeoRoutes(app: Express) {
       results.push({ handle, ...pushRes });
     }
 
+    // 3. Optional Priority Sector x Custom/Ready-to-Eat Native /pages/... push (top 16 priority pages)
+    if (body.includePriorityLocalPages) {
+      const priorityLocalities = activeHubs
+        .map((hub) => covered.find((c) => c.locality.slug === hub.slug) || covered.find((c) => c.nearestHub.id === hub.id))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c));
+      const priorityCats = activeCats.slice(0, 4); // Custom Cakes, Ready to Eat Cakes, Birthday Cakes, Eggless Fresh Cakes
+      for (const cov of priorityLocalities) {
+        for (const cat of priorityCats) {
+          const handle = buildTier2Slug(cat, cov.locality, geoConfig.cityName);
+          const localBody = `
+            <div class="broomies-geo-local">
+              <p>Order freshly baked <strong>${cat.name}</strong> in <strong>${cov.locality.name}, ${geoConfig.cityName} (${cov.locality.pincode})</strong> — delivered directly from our nearby <strong>${cov.nearestHub.name} Kitchen Hub (${cov.distanceKm.toFixed(1)} km away)</strong>.</p>
+              <p><a href="/collections/all">Shop ${cat.name} Online</a> | <a href="${proxyPrefix}/${handle}">View Live ${cov.locality.name} Cake Menu</a></p>
+            </div>
+          `;
+          const pushRes = await upsertShopifyStorePage(settings, {
+            title: `${cat.name} in ${cov.locality.name}, ${geoConfig.cityName} (${cov.locality.pincode})`,
+            handle,
+            bodyHtml: localBody,
+            metaTitle: `${cat.name} in ${cov.locality.name} ${geoConfig.cityName} | ${geoConfig.brandName}`,
+            metaDescription: `Fresh ${cat.name.toLowerCase()} delivered in ${cov.locality.name} (${cov.locality.pincode}), ${cov.distanceKm.toFixed(1)} km from ${cov.nearestHub.name}. Order on ${siteUrl.replace(/^https?:\/\//, '')}.`,
+          });
+          results.push({ handle, ...pushRes });
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      }
+    }
+
     const okCount = results.filter((r) => r.ok).length;
     res.json({
       ok: okCount > 0,
@@ -302,18 +461,21 @@ export function registerGeoSeoRoutes(app: Express) {
     });
   });
 
-  // Dashboard API: Export Priority Geo-SEO Matrix CSV (up to 1,000 rows)
+  // Dashboard API: Export Priority Geo-SEO Matrix CSV
   app.get('/api/seo/export-csv', async (req: Request, res: Response) => {
     await store.ensureHydrated();
     const geoConfig = store.getGeoSeoConfig();
     const host = resolvePublicSeoHost(req);
+    const siteUrl = normalizeWebsiteBaseUrl(geoConfig.primaryWebsiteUrl);
+    const proxyPrefix = normalizeShopifyProxyPrefix(geoConfig.shopifyProxyPrefix);
     const result = queryGeoSeoPages(geoConfig, { page: 1, limit: 100 });
     const rows = [
-      'Slug,URL,Title,Target Keyword,Nearest Hub,Locality,Pincode,Distance (km),Category',
+      'Slug,ShopifyDomainURL,DirectURL,Title,Target Keyword,Nearest Hub,Locality,Pincode,Distance (km),Category',
     ];
     for (const item of result.items) {
       const cells = [
         item.slug,
+        `${siteUrl}${proxyPrefix}/${item.slug}`,
         `${host}/seo/faridabad/${item.slug}`,
         item.title,
         item.keyword,

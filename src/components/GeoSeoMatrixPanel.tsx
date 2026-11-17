@@ -23,6 +23,8 @@ import {
   DEFAULT_GEO_SEO_CONFIG,
   getCoveredLocalities,
   getGeoSeoStats,
+  normalizeShopifyProxyPrefix,
+  normalizeWebsiteBaseUrl,
   slugifyGeoPart,
   slugifyLocalityPart,
 } from '../lib/geoSeo';
@@ -55,6 +57,7 @@ interface QueriedPageItem {
 interface InspectedPagePayload {
   slug: string;
   pageUrl: string;
+  proxyPageUrl?: string;
   primaryWebsiteUrl: string;
   seoTitle: string;
   metaDescription: string;
@@ -303,11 +306,15 @@ export function GeoSeoMatrixPanel({
     void persistConfig(next, `Added search intent "${label}".`);
   };
 
-  const handlePushShopifyPages = async () => {
+  const handlePushShopifyPages = async (includePriorityLocalPages = false) => {
     setPushingShopify(true);
     setBanner(null);
     try {
-      const res = await fetch('/api/seo/push-shopify-pages', { method: 'POST' });
+      const res = await fetch('/api/seo/push-shopify-pages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ includePriorityLocalPages }),
+      });
       const data = (await res.json()) as {
         ok?: boolean;
         pushedCount?: number;
@@ -322,7 +329,7 @@ export function GeoSeoMatrixPanel({
       }
       setBanner({
         ok: true,
-        text: `Published ${data.pushedCount ?? 0} Faridabad Zone Pillar Pages directly onto ${draft.primaryWebsiteUrl}/pages/...`,
+        text: `Published ${data.pushedCount ?? 0} Faridabad Cake Zone pages directly onto ${cleanSiteUrl}/pages/...`,
       });
     } catch {
       setBanner({ ok: false, text: 'Network error pushing Shopify pillar pages.' });
@@ -336,6 +343,23 @@ export function GeoSeoMatrixPanel({
     if (typeof window !== 'undefined') return window.location.origin;
     return 'https://whatsa86.vercel.app';
   }, [hostOrigin]);
+
+  const cleanSiteUrl = useMemo(
+    () => normalizeWebsiteBaseUrl(draft.primaryWebsiteUrl),
+    [draft.primaryWebsiteUrl]
+  );
+  const proxyPrefix = useMemo(
+    () => normalizeShopifyProxyPrefix(draft.shopifyProxyPrefix),
+    [draft.shopifyProxyPrefix]
+  );
+  const [proxyRootPart, proxySubPart] = useMemo(() => {
+    const parts = proxyPrefix.replace(/^\/+/, '').split('/');
+    return [parts[0] || 'apps', parts[1] || 'cakes'];
+  }, [proxyPrefix]);
+  const proxyTargetOrigin = /^https:\/\//i.test(resolvedOrigin)
+    ? resolvedOrigin
+    : 'https://whatsa86.vercel.app';
+  const proxyTargetEndpoint = `${proxyTargetOrigin}/api/shopify-proxy`;
 
   const totalExplorerPages = Math.max(1, Math.ceil(totalMatched / 15));
 
@@ -436,12 +460,13 @@ export function GeoSeoMatrixPanel({
             />
           </label>
           <label className="block text-xs text-slate-300">
-            Bakery Brand Name
+            Shopify App Proxy Path
             <input
               type="text"
-              value={draft.brandName}
-              onChange={(e) => setDraft({ ...draft, brandName: e.target.value })}
-              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/90 px-3 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+              value={draft.shopifyProxyPrefix || '/apps/cakes'}
+              onChange={(e) => setDraft({ ...draft, shopifyProxyPrefix: e.target.value })}
+              placeholder="/apps/cakes"
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/90 px-3 py-2 font-mono text-xs text-emerald-300 focus:border-emerald-500 focus:outline-none"
             />
           </label>
           <label className="block text-xs text-slate-300">
@@ -488,6 +513,17 @@ export function GeoSeoMatrixPanel({
           <label className="inline-flex items-center gap-2">
             <input
               type="checkbox"
+              checked={draft.showStorefrontZoneFooter !== false}
+              onChange={(e) =>
+                setDraft({ ...draft, showStorefrontZoneFooter: e.target.checked })
+              }
+              className="h-4 w-4 accent-emerald-500"
+            />
+            <span>Show Faridabad 5 km Zone Strip Above Footer</span>
+          </label>
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
               checked={draft.includeTier3Matrix}
               onChange={(e) => setDraft({ ...draft, includeTier3Matrix: e.target.checked })}
               className="h-4 w-4 accent-emerald-500"
@@ -496,6 +532,85 @@ export function GeoSeoMatrixPanel({
           </label>
         </div>
       </form>
+
+      {/* Host All 16,436 Pages Directly On broomiesbakery.in via Shopify App Proxy */}
+      <div className="rounded-xl border border-emerald-500/35 bg-gradient-to-br from-emerald-950/35 via-slate-900/90 to-slate-900/90 p-4 backdrop-blur-md sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-emerald-500/20 pb-3">
+          <div>
+            <h3 className="font-display text-sm font-semibold text-white">
+              Host All {liveStats.totalPages.toLocaleString()} Pages Directly on{' '}
+              <span className="font-mono text-emerald-300">
+                {cleanSiteUrl.replace(/^https?:\/\//, '')}
+                {proxyPrefix}/...
+              </span>{' '}
+              (Shopify App Proxy)
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-300">
+              In <span className="font-mono text-slate-100">dev.shopify.com &rarr; Create version &rarr; App proxy</span>, fill these exact 3 fields and click{' '}
+              <strong className="text-white">Release</strong>. Every page loads inside Broomies Bakery&apos;s own Shopify theme &amp; domain:
+            </p>
+          </div>
+          <a
+            href="/api/shopify-proxy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 whitespace-nowrap"
+          >
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            Preview Shopify Liquid Fragment
+          </a>
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-slate-800 bg-slate-950/85 p-3">
+            <p className="text-[11px] font-medium text-slate-400">1. Subpath prefix (Dropdown)</p>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <code className="font-mono text-xs font-semibold text-emerald-300">
+                {proxyRootPart}
+              </code>
+              <button
+                type="button"
+                onClick={() => void handleCopy('proxy-root', proxyRootPart)}
+                className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700"
+              >
+                {copiedKey === 'proxy-root' ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/85 p-3">
+            <p className="text-[11px] font-medium text-slate-400">2. Subpath (Text Box)</p>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <code className="font-mono text-xs font-semibold text-emerald-300">
+                {proxySubPart}
+              </code>
+              <button
+                type="button"
+                onClick={() => void handleCopy('proxy-sub', proxySubPart)}
+                className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700"
+              >
+                {copiedKey === 'proxy-sub' ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/85 p-3">
+            <p className="text-[11px] font-medium text-slate-400">3. Proxy URL</p>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <code className="truncate font-mono text-xs font-semibold text-sky-300">
+                {proxyTargetEndpoint}
+              </code>
+              <button
+                type="button"
+                onClick={() => void handleCopy('proxy-url', proxyTargetEndpoint)}
+                className="shrink-0 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700"
+              >
+                {copiedKey === 'proxy-url' ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {banner && (
         <div
@@ -638,13 +753,13 @@ export function GeoSeoMatrixPanel({
                     </tr>
                   ) : (
                     queriedItems.map((item) => {
-                      const fullUrl = `${resolvedOrigin}/seo/faridabad/${item.slug}`;
+                      const shopifyDomainUrl = `${cleanSiteUrl}${proxyPrefix}/${item.slug}`;
                       return (
                         <tr key={item.slug} className="hover:bg-slate-800/35">
                           <td className="px-4 py-3">
                             <p className="font-semibold text-white">{item.title}</p>
-                            <p className="mt-0.5 font-mono text-[11px] text-slate-400">
-                              /seo/faridabad/{item.slug}
+                            <p className="mt-0.5 font-mono text-[11px] text-emerald-300">
+                              {cleanSiteUrl.replace(/^https?:\/\//, '')}{proxyPrefix}/{item.slug}
                             </p>
                           </td>
                           <td className="px-4 py-3 text-slate-300">
@@ -672,7 +787,7 @@ export function GeoSeoMatrixPanel({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => void handleCopy(item.slug, fullUrl)}
+                                onClick={() => void handleCopy(item.slug, shopifyDomainUrl)}
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-700"
                               >
                                 {copiedKey === item.slug ? (
@@ -1119,94 +1234,108 @@ export function GeoSeoMatrixPanel({
               XML Sitemaps &amp; Crawl Endpoints
             </h4>
             <p className="text-xs leading-relaxed text-slate-400">
-              Submit <span className="font-mono text-emerald-300">/sitemap.xml</span> inside Google
+              Submit <span className="font-mono text-emerald-300">{proxyPrefix}/sitemap.xml</span> on{' '}
+              <span className="font-mono text-slate-200">{cleanSiteUrl.replace(/^https?:\/\//, '')}</span> inside Google
               Search Console so Google discovers &amp; indexes all{' '}
               <span className="font-mono text-white tabular-nums">
                 {liveStats.totalPages.toLocaleString()}
               </span>{' '}
-              Faridabad landing pages across {liveStats.sitemapShardCount} shards.
+              Faridabad landing pages directly on your own Shopify domain.
             </p>
 
             <div className="space-y-2.5 text-xs">
               {[
                 {
+                  key: 'proxy-sitemap',
+                  label: 'Shopify Domain Sitemap Index (Submit in Search Console)',
+                  displayUrl: `${cleanSiteUrl}${proxyPrefix}/sitemap.xml`,
+                  openHref: '/api/shopify-proxy/sitemap.xml',
+                },
+                {
+                  key: 'proxy-shard1',
+                  label: 'Shopify Domain Shard #1 (First 5,000 Pages)',
+                  displayUrl: `${cleanSiteUrl}${proxyPrefix}/sitemap-geo/1.xml`,
+                  openHref: '/api/shopify-proxy/sitemap-geo/1.xml',
+                },
+                {
+                  key: 'proxy-dir',
+                  label: 'Shopify Domain Unified Zone Directory',
+                  displayUrl: `${cleanSiteUrl}${proxyPrefix}`,
+                  openHref: '/api/shopify-proxy',
+                },
+                {
                   key: 'sitemap',
-                  label: 'Master XML Sitemap Index',
-                  path: '/sitemap.xml',
+                  label: 'Direct App Sitemap Index (Backup Mirror)',
+                  displayUrl: `${resolvedOrigin}/sitemap.xml`,
+                  openHref: '/sitemap.xml',
                 },
-                {
-                  key: 'shard1',
-                  label: 'Geo-SEO Sitemap Shard #1 (First 5,000 Pages)',
-                  path: '/sitemap-geo/1.xml',
-                },
-                {
-                  key: 'robots',
-                  label: 'Robots.txt Crawl Rules',
-                  path: '/robots.txt',
-                },
-                {
-                  key: 'dir',
-                  label: 'Faridabad Unified Zone HTML Directory',
-                  path: '/seo/faridabad',
-                },
-              ].map((entry) => {
-                const fullUrl = `${resolvedOrigin}${entry.path}`;
-                return (
-                  <div
-                    key={entry.key}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium text-white">{entry.label}</p>
-                      <p className="mt-0.5 truncate font-mono text-[11px] text-emerald-300">
-                        {fullUrl}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => void handleCopy(entry.key, fullUrl)}
-                        className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-700"
-                      >
-                        {copiedKey === entry.key ? 'Copied' : 'Copy'}
-                      </button>
-                      <a
-                        href={entry.path}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-md bg-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-sky-300 hover:bg-slate-700"
-                      >
-                        Open
-                      </a>
-                    </div>
+              ].map((entry) => (
+                <div
+                  key={entry.key}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/80 p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-white">{entry.label}</p>
+                    <p className="mt-0.5 truncate font-mono text-[11px] text-emerald-300">
+                      {entry.displayUrl}
+                    </p>
                   </div>
-                );
-              })}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void handleCopy(entry.key, entry.displayUrl)}
+                      className="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-700"
+                    >
+                      {copiedKey === entry.key ? 'Copied' : 'Copy'}
+                    </button>
+                    <a
+                      href={entry.openHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-md bg-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-sky-300 hover:bg-slate-700"
+                    >
+                      Open
+                    </a>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
           <div className="space-y-4 rounded-xl border border-slate-800/90 bg-slate-900/75 p-5">
             <h4 className="font-display text-sm font-semibold text-white">
-              Direct Sync to {draft.primaryWebsiteUrl}
+              Direct Sync to {cleanSiteUrl}
             </h4>
             <p className="text-xs leading-relaxed text-slate-400">
-              Your Shopify Bridge (<span className="font-mono text-slate-200">widget.js</span>)
-              already injects Broomies Bakery&apos;s Sector 31, 88, 35 &amp; 42 (5 km GeoCircle) Local
-              Business JSON-LD onto {draft.primaryWebsiteUrl}. You can also publish dedicated Zone
-              Pillar Pages directly inside Shopify Pages:
+              All {liveStats.totalPages.toLocaleString()} pages load at{' '}
+              <span className="font-mono text-emerald-300">
+                {cleanSiteUrl}
+                {proxyPrefix}/...
+              </span>{' '}
+              once Shopify App Proxy is saved. You can also publish native Shopify{' '}
+              <span className="font-mono text-slate-200">/pages/...</span> entries directly into your store:
             </p>
 
             <div className="flex flex-wrap gap-2.5">
               <button
                 type="button"
                 disabled={pushingShopify}
-                onClick={() => void handlePushShopifyPages()}
+                onClick={() => void handlePushShopifyPages(false)}
                 className="inline-flex min-h-[38px] items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
               >
                 <Send className="h-3.5 w-3.5" aria-hidden="true" />
                 {pushingShopify
-                  ? 'Pushing Pillar Pages...'
-                  : 'Push 5 Zone Pillar Pages to Shopify'}
+                  ? 'Pushing Pages...'
+                  : 'Push 5 Zone Pillar Pages (/pages)'}
+              </button>
+              <button
+                type="button"
+                disabled={pushingShopify}
+                onClick={() => void handlePushShopifyPages(true)}
+                className="inline-flex min-h-[38px] items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3.5 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-50"
+              >
+                <Layers className="h-3.5 w-3.5" aria-hidden="true" />
+                {pushingShopify ? 'Pushing...' : 'Push Pillar + Top 16 Local Pages'}
               </button>
               <a
                 href="/api/seo/export-csv"
@@ -1220,21 +1349,21 @@ export function GeoSeoMatrixPanel({
 
             <div className="rounded-lg border border-slate-800 bg-slate-950/75 p-3.5 text-xs text-slate-300">
               <p className="font-semibold text-white">
-                How to Rank Top Across Faridabad Zones:
+                How All {liveStats.totalPages.toLocaleString()} Pages Rank Under {cleanSiteUrl}:
               </p>
               <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[11.5px] text-slate-400">
                 <li>
-                  Ensure latest OrderPulse code is deployed on your public HTTPS host (e.g.{' '}
-                  <span className="font-mono text-slate-200">{resolvedOrigin}</span>).
+                  Set App Proxy in <span className="font-mono text-slate-200">dev.shopify.com</span>:{' '}
+                  <span className="font-mono text-emerald-300">{proxyRootPart}</span> /{' '}
+                  <span className="font-mono text-emerald-300">{proxySubPart}</span> &rarr;{' '}
+                  <span className="font-mono text-sky-300">{proxyTargetEndpoint}</span> and click Release.
                 </li>
                 <li>
-                  Open Google Search Console &rarr; Sitemaps &rarr; submit{' '}
-                  <span className="font-mono text-emerald-300">{resolvedOrigin}/sitemap.xml</span>.
+                  Open Google Search Console for <span className="font-mono text-slate-200">broomiesbakery.in</span> &rarr; Sitemaps &rarr; submit{' '}
+                  <span className="font-mono text-emerald-300">{proxyPrefix.replace(/^\//, '')}/sitemap.xml</span>.
                 </li>
                 <li>
-                  Keep Storefront Bridge active on{' '}
-                  <span className="font-mono text-slate-200">{draft.primaryWebsiteUrl}</span> so
-                  LocalBusiness + 4x 5 km GeoCircle schema strengthens main domain ranking.
+                  Storefront Bridge (<span className="font-mono text-slate-200">widget.js</span>) injects Bakery + 4x 5 km GeoCircle JSON-LD and the Zone Link Strip right on your homepage &amp; footer.
                 </li>
               </ol>
             </div>
@@ -1277,7 +1406,7 @@ export function GeoSeoMatrixPanel({
                   Google SERP Preview
                 </p>
                 <p className="mt-1 truncate font-mono text-[11px] text-emerald-800">
-                  {inspectedPage.pageUrl}
+                  {inspectedPage.proxyPageUrl || inspectedPage.pageUrl}
                 </p>
                 <p className="mt-0.5 text-sm font-semibold text-[#1a0dab]">
                   {inspectedPage.seoTitle}
@@ -1300,6 +1429,15 @@ export function GeoSeoMatrixPanel({
               </div>
 
               <div className="flex flex-wrap justify-end gap-2 pt-2">
+                <a
+                  href={`/api/shopify-proxy/${inspectedPage.slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 font-medium text-sky-300 hover:bg-slate-700"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                  Preview Shopify Liquid
+                </a>
                 <a
                   href={`/seo/faridabad/${inspectedPage.slug}`}
                   target="_blank"
