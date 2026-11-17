@@ -772,7 +772,7 @@ export function buildGeoSeoPageData(
   hostOrigin: string,
   opts?: { useProxyCanonical?: boolean }
 ): GeoSeoPageData {
-  const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
+  const cleanHost = (hostOrigin || 'https://faridabad.broomiesbakery.in').replace(/\/+$/, '');
   const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
   const proxyPrefix = normalizeShopifyProxyPrefix(config.shopifyProxyPrefix);
   const proxyPageUrl = `${siteUrl}${proxyPrefix}/${ref.slug}`;
@@ -1158,7 +1158,7 @@ export function buildSitemapIndexXml(
   totalPages: number,
   shardBaseUrl?: string
 ): string {
-  const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
+  const cleanHost = (hostOrigin || 'https://faridabad.broomiesbakery.in').replace(/\/+$/, '');
   const prefix = (shardBaseUrl || `${cleanHost}/sitemap-geo`).replace(/\/+$/, '');
   const shardCount = Math.max(1, Math.ceil(totalPages / SITEMAP_URLS_PER_SHARD));
   const lastMod = new Date().toISOString().split('T')[0];
@@ -1179,7 +1179,7 @@ export function buildGeoSitemapShardXml(
   shardNumber: number,
   pageBaseUrl?: string
 ): string {
-  const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
+  const cleanHost = (hostOrigin || 'https://faridabad.broomiesbakery.in').replace(/\/+$/, '');
   const baseUrl = (pageBaseUrl || `${cleanHost}/seo/faridabad`).replace(/\/+$/, '');
   const precomputed = {
     activeHubs: (config.hubs || []).filter((h) => h.enabled),
@@ -1780,7 +1780,7 @@ export function renderGeoSeoDirectoryHtml(
   hostOrigin: string,
   whatsappPhone?: string
 ): string {
-  const cleanHost = (hostOrigin || 'https://whatsa86.vercel.app').replace(/\/+$/, '');
+  const cleanHost = (hostOrigin || 'https://faridabad.broomiesbakery.in').replace(/\/+$/, '');
   const siteUrl = normalizeWebsiteBaseUrl(config.primaryWebsiteUrl);
   const stats = getGeoSeoStats(config);
   const activeHubs = (config.hubs || []).filter((h) => h.enabled);

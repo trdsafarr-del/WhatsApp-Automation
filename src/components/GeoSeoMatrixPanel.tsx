@@ -380,7 +380,7 @@ export function GeoSeoMatrixPanel({
   const resolvedOrigin = useMemo(() => {
     if (hostOrigin) return hostOrigin.replace(/\/+$/, '');
     if (typeof window !== 'undefined') return window.location.origin;
-    return 'https://whatsa86.vercel.app';
+    return 'https://faridabad.broomiesbakery.in';
   }, [hostOrigin]);
 
   const cleanSiteUrl = useMemo(
@@ -397,7 +397,7 @@ export function GeoSeoMatrixPanel({
   }, [proxyPrefix]);
   const proxyTargetOrigin = /^https:\/\//i.test(resolvedOrigin)
     ? resolvedOrigin
-    : 'https://whatsa86.vercel.app';
+    : 'https://faridabad.broomiesbakery.in';
   const proxyTargetEndpoint = `${proxyTargetOrigin}/api/shopify-proxy`;
 
   const totalExplorerPages = Math.max(1, Math.ceil(totalMatched / 15));

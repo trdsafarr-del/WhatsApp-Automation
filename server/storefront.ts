@@ -1499,7 +1499,7 @@ export function registerStorefrontRoutes(app: Express) {
       res.status(400).json({
         ok: false,
         error:
-          'Shopify ScriptTag requires a live HTTPS URL (http://localhost cannot be installed). Enter your live HTTPS URL (e.g. https://whatsa86.vercel.app) in "Public App URL" below and click Install again.',
+          'Shopify ScriptTag requires a live HTTPS URL (http://localhost cannot be installed). Enter your live HTTPS URL (e.g. https://faridabad.broomiesbakery.in) in "Public App URL" below and click Install again.',
         storefrontConfig: config,
       });
       return;

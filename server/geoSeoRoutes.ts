@@ -112,7 +112,7 @@ export function registerGeoSeoRoutes(app: Express) {
   // SHOPIFY APP PROXY ROUTES — Hosts all 16,436+ pages on broomiesbakery.in
   // Mapping in Shopify Dev Dashboard:
   //   Subpath prefix: apps | Subpath: cakes
-  //   Proxy URL: https://whatsa86.vercel.app/api/shopify-proxy
+  //   Proxy URL: https://faridabad.broomiesbakery.in/api/shopify-proxy
   // =========================================================================
   const inspectShopifyProxySignature = (req: Request): 'valid' | 'mismatch' | 'unsigned' => {
     const settings = store.getSettings();

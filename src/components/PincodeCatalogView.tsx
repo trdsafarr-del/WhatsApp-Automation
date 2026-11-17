@@ -1224,7 +1224,7 @@ export function PincodeCatalogView({
               placeholder={
                 typeof window !== 'undefined' && window.location.protocol === 'https:'
                   ? window.location.origin
-                  : 'https://whatsa86.vercel.app'
+                  : 'https://faridabad.broomiesbakery.in'
               }
               className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-2 font-mono text-xs text-white focus:border-emerald-500 focus:outline-none"
             />
