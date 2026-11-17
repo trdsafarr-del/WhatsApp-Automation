@@ -26,6 +26,7 @@ import {
   testDelhiveryConnection,
 } from './server/delhivery.js';
 import { store } from './server/store.js';
+import { registerGeoSeoRoutes } from './server/geoSeoRoutes.js';
 import { registerStorefrontRoutes } from './server/storefront.js';
 import { syncShopifyOrdersNow } from './server/sync.js';
 import { whatsappManager } from './server/whatsapp.js';
@@ -75,12 +76,14 @@ async function startServer() {
       metrics: computeOrderMetrics(orders),
       products: store.getProducts(),
       storefrontConfig: store.getStorefrontConfig(),
+      geoSeoConfig: store.getGeoSeoConfig(),
       cloudSyncEnabled: store.isCloudSyncEnabled(),
       serverTime: new Date().toISOString(),
     });
   });
 
   registerStorefrontRoutes(app);
+  registerGeoSeoRoutes(app);
 
   // WhatsApp QR / Session controls
   app.post('/api/whatsapp/connect', async (req: Request, res: Response) => {

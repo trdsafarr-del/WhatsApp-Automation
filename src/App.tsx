@@ -26,11 +26,13 @@ import { SettingsView, type SettingsTab } from './components/SettingsView';
 import { SetupGuideView } from './components/SetupGuideView';
 import { ThemeStudioView } from './components/ThemeStudioView';
 import { WhatsAppQrView } from './components/WhatsAppQrView';
+import { DEFAULT_GEO_SEO_CONFIG } from './lib/geoSeo';
 import { DEFAULT_SETTINGS, getWhatsAppDisplayState, hasHighRtoTag } from './lib/orderRules';
 import { DEFAULT_STOREFRONT_CONFIG } from './lib/storefrontRules';
 import type {
   AppSettings,
   DashboardPayload,
+  GeoSeoConfig,
   OrderMetrics,
   OrderRecord,
   ProductCatalogItem,
@@ -157,6 +159,7 @@ export default function App() {
   const [storefrontConfig, setStorefrontConfig] = useState<StorefrontConfig>(
     DEFAULT_STOREFRONT_CONFIG
   );
+  const [geoSeoConfig, setGeoSeoConfig] = useState<GeoSeoConfig>(DEFAULT_GEO_SEO_CONFIG);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -199,6 +202,13 @@ export default function App() {
           JSON.stringify(prev) === JSON.stringify(data.storefrontConfig)
             ? prev
             : data.storefrontConfig!
+        );
+      }
+      if (data.geoSeoConfig) {
+        setGeoSeoConfig((prev) =>
+          JSON.stringify(prev) === JSON.stringify(data.geoSeoConfig)
+            ? prev
+            : data.geoSeoConfig!
         );
       }
       setCloudSyncEnabled(Boolean(data.cloudSyncEnabled));
@@ -1149,9 +1159,11 @@ export default function App() {
               <SeoManagerView
                 products={products}
                 storefrontConfig={storefrontConfig}
+                geoSeoConfig={geoSeoConfig}
                 settings={settings}
                 onProductsUpdated={setProducts}
                 onStorefrontConfigUpdated={setStorefrontConfig}
+                onGeoSeoConfigUpdated={setGeoSeoConfig}
               />
             ) : activeTab === 'theme' ? (
               <ThemeStudioView

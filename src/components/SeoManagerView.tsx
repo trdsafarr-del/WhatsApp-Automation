@@ -4,12 +4,14 @@ import {
   CheckCircle2,
   Code2,
   ExternalLink,
+  MapPin,
   RefreshCw,
   Save,
   Search,
   Sparkles,
   Wand2,
 } from 'lucide-react';
+import { DEFAULT_GEO_SEO_CONFIG, getGeoSeoStats } from '../lib/geoSeo';
 import {
   buildProductJsonLd,
   computeSeoAudit,
@@ -17,23 +19,34 @@ import {
   renderBulkSeoTemplate,
   slugifyProductHandle,
 } from '../lib/storefrontRules';
-import type { AppSettings, ProductCatalogItem, StorefrontConfig } from '../lib/types';
+import type {
+  AppSettings,
+  GeoSeoConfig,
+  ProductCatalogItem,
+  StorefrontConfig,
+} from '../lib/types';
+import { GeoSeoMatrixPanel } from './GeoSeoMatrixPanel';
 
 interface SeoManagerViewProps {
   products: ProductCatalogItem[];
   storefrontConfig: StorefrontConfig;
+  geoSeoConfig?: GeoSeoConfig;
   settings: AppSettings;
   onProductsUpdated: (products: ProductCatalogItem[]) => void;
   onStorefrontConfigUpdated: (config: StorefrontConfig) => void;
+  onGeoSeoConfigUpdated?: (config: GeoSeoConfig) => void;
 }
 
 export function SeoManagerView({
   products,
   storefrontConfig,
+  geoSeoConfig = DEFAULT_GEO_SEO_CONFIG,
   settings,
   onProductsUpdated,
   onStorefrontConfigUpdated,
+  onGeoSeoConfigUpdated,
 }: SeoManagerViewProps) {
+  const [seoMode, setSeoMode] = useState<'geo_matrix' | 'product_audit'>('geo_matrix');
   const [searchQuery, setSearchQuery] = useState('');
   const [auditFilter, setAuditFilter] = useState<'all' | 'needs_attention' | 'missing_alt' | 'good'>(
     'all'
@@ -304,42 +317,86 @@ export function SeoManagerView({
     }
   };
 
+  const geoStats = useMemo(() => getGeoSeoStats(geoSeoConfig), [geoSeoConfig]);
+
   return (
     <div className="space-y-5">
       {/* Header Bar */}
       <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:flex-row sm:items-center sm:p-5">
         <div>
           <h2 className="font-display text-base font-semibold text-white sm:text-lg">
-            Storefront SEO Manager & Rich Schema Studio
+            Broomies Bakery Geo-SEO &amp; Product Schema Studio
           </h2>
           <p className="mt-0.5 text-xs text-slate-400">
-            Audit Google Search titles, meta descriptions, URL handles, image alt texts, and auto-inject Schema.org JSON-LD.
+            Manage {geoStats.totalPages.toLocaleString()}+ Faridabad 5 km Zone Landing Pages for{' '}
+            <span className="font-mono text-emerald-300">{geoSeoConfig.primaryWebsiteUrl}</span> plus
+            live Shopify catalog SEO.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={loadingSamples}
-            onClick={() => void handleLoadSamples()}
-            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
-          >
-            <Sparkles className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
-            {loadingSamples ? 'Loading...' : 'Load Sample Catalog'}
-          </button>
-          <button
-            type="button"
-            disabled={syncingShopify}
-            onClick={() => void handleSyncShopifyProducts()}
-            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${syncingShopify ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-            {syncingShopify ? 'Syncing...' : 'Sync Shopify Products'}
-          </button>
+          <div className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950/90 p-1">
+            <button
+              type="button"
+              onClick={() => setSeoMode('geo_matrix')}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                seoMode === 'geo_matrix'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
+              Geo-SEO ({geoStats.totalPages.toLocaleString()})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSeoMode('product_audit')}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                seoMode === 'product_audit'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Search className="h-3.5 w-3.5" aria-hidden="true" />
+              Product SEO ({products.length})
+            </button>
+          </div>
+          {seoMode === 'product_audit' && (
+            <>
+              <button
+                type="button"
+                disabled={loadingSamples}
+                onClick={() => void handleLoadSamples()}
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
+                {loadingSamples ? 'Loading...' : 'Load Samples'}
+              </button>
+              <button
+                type="button"
+                disabled={syncingShopify}
+                onClick={() => void handleSyncShopifyProducts()}
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${syncingShopify ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                {syncingShopify ? 'Syncing...' : 'Sync Shopify'}
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {seoMode === 'geo_matrix' ? (
+        <GeoSeoMatrixPanel
+          geoSeoConfig={geoSeoConfig}
+          onGeoSeoConfigUpdated={(next) => {
+            if (onGeoSeoConfigUpdated) onGeoSeoConfigUpdated(next);
+          }}
+        />
+      ) : (
+        <div className="space-y-5">
 
       {banner && (
         <div
@@ -769,6 +826,8 @@ export function SeoManagerView({
               </form>
             ) : null}
           </div>
+        </div>
+      )}
         </div>
       )}
     </div>

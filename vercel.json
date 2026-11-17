@@ -8,7 +8,27 @@
       "destination": "/api/index"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/seo/faridabad",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/seo/(.*)",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/sitemap-geo/(.*)",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/robots.txt",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!api/|seo/|sitemap|robots\\.txt).*)",
       "destination": "/index.html"
     }
   ]

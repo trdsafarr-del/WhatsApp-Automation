@@ -8,11 +8,13 @@ import {
   readCleanEnvVar,
   selectPriorityAuthFiles,
 } from '../src/lib/orderRules.js';
+import { DEFAULT_GEO_SEO_CONFIG } from '../src/lib/geoSeo.js';
 import {
   DEFAULT_STOREFRONT_CONFIG,
 } from '../src/lib/storefrontRules.js';
 import type {
   AppSettings,
+  GeoSeoConfig,
   OrderEvent,
   OrderRecord,
   ProductCatalogItem,
@@ -41,6 +43,7 @@ export interface DatabaseState {
   orders: OrderRecord[];
   products: ProductCatalogItem[];
   storefrontConfig: StorefrontConfig;
+  geoSeoConfig: GeoSeoConfig;
   whatsappMeta: {
     mode: WhatsAppState['mode'];
     connectedAt: string | null;
@@ -261,11 +264,16 @@ class PersistentStore {
             ...DEFAULT_STOREFRONT_CONFIG,
             ...(parsed.storefrontConfig || {}),
           };
+          const mergedGeoSeoConfig: GeoSeoConfig = {
+            ...DEFAULT_GEO_SEO_CONFIG,
+            ...(parsed.geoSeoConfig || {}),
+          };
           this.state = {
             settings: mergedSettings,
             orders: cleanedOrders,
             products: Array.from(mergedProductsMap.values()),
             storefrontConfig: mergedStorefrontConfig,
+            geoSeoConfig: mergedGeoSeoConfig,
             whatsappMeta: {
               mode: 'baileys_qr',
               connectedAt: parsed.whatsappMeta?.connectedAt || null,
@@ -333,6 +341,10 @@ class PersistentStore {
           ...DEFAULT_STOREFRONT_CONFIG,
           ...(parsed.storefrontConfig || {}),
         },
+        geoSeoConfig: {
+          ...DEFAULT_GEO_SEO_CONFIG,
+          ...(parsed.geoSeoConfig || {}),
+        },
         whatsappMeta: {
           mode: 'baileys_qr',
           connectedAt: parsed.whatsappMeta?.connectedAt || null,
@@ -346,6 +358,7 @@ class PersistentStore {
         eventsDeduped ||
         !parsed.settings?.syncStartDate ||
         !parsed.storefrontConfig ||
+        !parsed.geoSeoConfig ||
         (Array.isArray(parsed.orders) && cleanedOrders.length !== parsed.orders.length);
       return { state: loaded, needsRewrite };
     } catch {
@@ -373,6 +386,7 @@ class PersistentStore {
       orders: [],
       products: [],
       storefrontConfig: { ...DEFAULT_STOREFRONT_CONFIG },
+      geoSeoConfig: { ...DEFAULT_GEO_SEO_CONFIG },
       whatsappMeta: {
         mode: 'baileys_qr',
         connectedAt: null,
@@ -674,6 +688,23 @@ class PersistentStore {
     };
     this.persistState(this.state);
     return this.state.storefrontConfig;
+  }
+
+  getGeoSeoConfig(): GeoSeoConfig {
+    return {
+      ...DEFAULT_GEO_SEO_CONFIG,
+      ...(this.state.geoSeoConfig || {}),
+    };
+  }
+
+  updateGeoSeoConfig(partial: Partial<GeoSeoConfig>): GeoSeoConfig {
+    this.state.geoSeoConfig = {
+      ...this.getGeoSeoConfig(),
+      ...partial,
+      updatedAt: new Date().toISOString(),
+    };
+    this.persistState(this.state);
+    return this.state.geoSeoConfig;
   }
 }
 

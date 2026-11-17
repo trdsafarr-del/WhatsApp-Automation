@@ -977,3 +977,102 @@ export async function installShopifyScriptTag(
     };
   }
 }
+
+export async function upsertShopifyStorePage(
+  settings: AppSettings,
+  page: {
+    title: string;
+    handle: string;
+    bodyHtml: string;
+    metaTitle?: string;
+    metaDescription?: string;
+  }
+): Promise<{ ok: boolean; action?: 'created' | 'updated'; pageId?: string; error?: string }> {
+  if (!hasLiveShopifyCredentials(settings)) {
+    return { ok: false, error: 'Configure Shopify credentials in Automation & Shopify first.' };
+  }
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { ok: false, error: auth.error };
+  }
+
+  try {
+    const findRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/pages.json?handle=${encodeURIComponent(page.handle)}`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': auth.token,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (!findRes.ok) {
+      const text = await findRes.text();
+      if (findRes.status === 403) {
+        return {
+          ok: false,
+          error:
+            'Shopify app needs "write_content" scope to create Storefront Pages directly. You can still use the 10,000+ Geo-SEO Pages + XML Sitemap or copy/import CSV.',
+        };
+      }
+      return { ok: false, error: `Shopify Pages API ${findRes.status}: ${text.slice(0, 160)}` };
+    }
+
+    const existingJson = (await findRes.json()) as {
+      pages?: Array<{ id?: number | string; handle?: string }>;
+    };
+    const existingPage = (existingJson.pages || []).find((p) => p.handle === page.handle);
+
+    const payload = {
+      page: {
+        ...(existingPage?.id ? { id: existingPage.id } : {}),
+        title: page.title,
+        handle: page.handle,
+        body_html: page.bodyHtml,
+        published: true,
+        metafields_global_title_tag: page.metaTitle || page.title,
+        metafields_global_description_tag: page.metaDescription || '',
+      },
+    };
+
+    const targetUrl = existingPage?.id
+      ? `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/pages/${existingPage.id}.json`
+      : `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/pages.json`;
+
+    const saveRes = await fetch(targetUrl, {
+      method: existingPage?.id ? 'PUT' : 'POST',
+      headers: {
+        'X-Shopify-Access-Token': auth.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!saveRes.ok) {
+      const text = await saveRes.text();
+      if (saveRes.status === 403) {
+        return {
+          ok: false,
+          error:
+            'Shopify app needs "write_content" permission to push Pages directly to broomiesbakery.in/pages.',
+        };
+      }
+      return { ok: false, error: `Shopify Page save failed (${saveRes.status}): ${text.slice(0, 160)}` };
+    }
+
+    const saved = (await saveRes.json()) as { page?: { id?: number | string } };
+    return {
+      ok: true,
+      action: existingPage?.id ? 'updated' : 'created',
+      pageId: saved.page?.id ? String(saved.page.id) : undefined,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Network error publishing Shopify page',
+    };
+  }
+}
+

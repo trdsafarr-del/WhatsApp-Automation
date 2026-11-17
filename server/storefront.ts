@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from 'express';
+import { buildBakeryStorefrontSchema } from '../src/lib/geoSeo.js';
 import {
   buildProductJsonLd,
   computeSeoAudit,
@@ -553,6 +554,13 @@ function buildStorefrontWidgetScript(origin: string): string {
 
   function renderPdpAndCheckoutWidgets(payload) {
     if (!payload) return;
+    if (payload.bakeryGeoSchema && !document.getElementById('op-geo-bakery-schema')) {
+      var geoLd = document.createElement('script');
+      geoLd.id = 'op-geo-bakery-schema';
+      geoLd.type = 'application/ld+json';
+      geoLd.textContent = JSON.stringify(payload.bakeryGeoSchema);
+      document.head.appendChild(geoLd);
+    }
     var config = payload.storefrontConfig || {};
     if (config.pincodeGateEnabled === false) return;
 
@@ -980,11 +988,18 @@ export function registerStorefrontRoutes(app: Express) {
       };
     });
 
+    const geoConfig = store.getGeoSeoConfig();
+    const bakeryGeoSchema =
+      geoConfig.enabled && geoConfig.injectStorefrontGeoSchema !== false
+        ? buildBakeryStorefrontSchema(geoConfig)
+        : undefined;
+
     res.json({
       ok: true,
       pincode,
       delhivery,
       storefrontConfig,
+      bakeryGeoSchema,
       products: evaluated,
     });
   });

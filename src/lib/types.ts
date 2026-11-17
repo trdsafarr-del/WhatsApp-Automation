@@ -204,6 +204,61 @@ export interface DelhiveryServiceabilityResult {
   source: 'delhivery_api' | 'rules_only';
 }
 
+export interface GeoZoneHub {
+  id: string;
+  name: string;
+  slug: string;
+  pincode: string;
+  lat: number;
+  lng: number;
+  radiusKm: number;
+  enabled: boolean;
+}
+
+export interface GeoLocality {
+  id: string;
+  name: string;
+  slug: string;
+  pincode: string;
+  lat: number;
+  lng: number;
+  areaType?: 'sector' | 'colony' | 'society' | 'landmark';
+}
+
+export interface GeoCakeCategory {
+  id: string;
+  name: string;
+  slug: string;
+  keywords: string[];
+  matchTerms: string[];
+  enabled: boolean;
+}
+
+export interface GeoIntentModifier {
+  id: string;
+  label: string;
+  slug: string;
+  shortDesc: string;
+  enabled: boolean;
+}
+
+export interface GeoSeoConfig {
+  enabled: boolean;
+  primaryWebsiteUrl: string;
+  brandName: string;
+  cityName: string;
+  stateName: string;
+  combineAllHubsIntoSingleZone: boolean;
+  includeTier2Matrix: boolean;
+  includeTier3Matrix: boolean;
+  injectStorefrontGeoSchema: boolean;
+  hubs: GeoZoneHub[];
+  localities: GeoLocality[];
+  categories: GeoCakeCategory[];
+  modifiers: GeoIntentModifier[];
+  updatedAt: string;
+}
+
 export interface DashboardPayload {
   orders: OrderRecord[];
   whatsapp: WhatsAppState;
@@ -211,6 +266,8 @@ export interface DashboardPayload {
   metrics: OrderMetrics;
   products?: ProductCatalogItem[];
   storefrontConfig?: StorefrontConfig;
+  geoSeoConfig?: GeoSeoConfig;
   cloudSyncEnabled?: boolean;
   serverTime: string;
 }
+
