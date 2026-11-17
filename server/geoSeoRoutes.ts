@@ -114,19 +114,18 @@ export function registerGeoSeoRoutes(app: Express) {
   //   Subpath prefix: apps | Subpath: cakes
   //   Proxy URL: https://whatsa86.vercel.app/api/shopify-proxy
   // =========================================================================
-  const validateShopifyProxyRequest = (req: Request): boolean => {
+  const inspectShopifyProxySignature = (req: Request): 'valid' | 'mismatch' | 'unsigned' => {
     const settings = store.getSettings();
     const secret = (settings.shopifyClientSecret || settings.shopifyWebhookSecret || '').trim();
-    if (!secret) return true;
-    const hasProxyParams =
-      req.query.signature !== undefined ||
-      req.query.path_prefix !== undefined ||
-      req.query.logged_in_customer_id !== undefined;
-    if (!hasProxyParams) {
-      // Allow direct dashboard / browser preview when not coming through signed Shopify proxy
-      return true;
+    const hasSig = typeof req.query.signature === 'string' && req.query.signature.length > 0;
+    if (!hasSig || !secret) {
+      return 'unsigned';
     }
-    return verifyShopifyProxySignature(req.query as Record<string, unknown>, secret);
+    const valid = verifyShopifyProxySignature(req.query as Record<string, unknown>, secret);
+    if (!valid) {
+      console.warn('[shopify-proxy] Signature mismatch on public read-only proxy route; serving page cleanly to avoid Shopify 404 masking.');
+    }
+    return valid ? 'valid' : 'mismatch';
   };
 
   const resolveEffectiveProxyConfig = (req: Request, base: GeoSeoConfig): GeoSeoConfig => {
@@ -143,11 +142,9 @@ export function registerGeoSeoRoutes(app: Express) {
   // Domain-hosted Master XML Sitemap Index: https://broomiesbakery.in/apps/cakes/sitemap.xml
   app.get('/api/shopify-proxy/sitemap.xml', async (req: Request, res: Response) => {
     await store.ensureHydrated();
-    if (!validateShopifyProxyRequest(req)) {
-      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
-      return;
-    }
+    const sigStatus = inspectShopifyProxySignature(req);
     const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
+    res.setHeader('X-OrderPulse-Proxy-Sig', sigStatus);
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=600');
     res.send(buildProxySitemapIndexXml(geoConfig));
@@ -156,14 +153,12 @@ export function registerGeoSeoRoutes(app: Express) {
   // Domain-hosted Geo-SEO XML Sitemap Shards: https://broomiesbakery.in/apps/cakes/sitemap-geo/1.xml
   app.get('/api/shopify-proxy/sitemap-geo/:shard', async (req: Request, res: Response) => {
     await store.ensureHydrated();
-    if (!validateShopifyProxyRequest(req)) {
-      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
-      return;
-    }
+    const sigStatus = inspectShopifyProxySignature(req);
     const shardRaw = String(req.params.shard || '1').replace(/\.xml$/i, '');
     const shardNum = Number.parseInt(shardRaw, 10);
     const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
     const stats = getGeoSeoStats(geoConfig);
+    res.setHeader('X-OrderPulse-Proxy-Sig', sigStatus);
     if (!Number.isFinite(shardNum) || shardNum < 1 || shardNum > stats.sitemapShardCount) {
       res.status(404).type('text/plain').send('Proxy sitemap shard not found');
       return;
@@ -176,12 +171,10 @@ export function registerGeoSeoRoutes(app: Express) {
   // Root Storefront Zone Directory on broomiesbakery.in/apps/cakes
   app.get('/api/shopify-proxy', async (req: Request, res: Response) => {
     await store.ensureHydrated();
-    if (!validateShopifyProxyRequest(req)) {
-      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
-      return;
-    }
+    const sigStatus = inspectShopifyProxySignature(req);
     const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
     const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
+    res.setHeader('X-OrderPulse-Proxy-Sig', sigStatus);
     res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.send(renderGeoSeoDirectoryLiquidFragment(geoConfig, waPhone));
@@ -190,13 +183,19 @@ export function registerGeoSeoRoutes(app: Express) {
   // All 16,436+ Cake Landing Pages rendered inside broomiesbakery.in/apps/cakes/:slug
   app.get('/api/shopify-proxy/:slug', async (req: Request, res: Response) => {
     await store.ensureHydrated();
-    if (!validateShopifyProxyRequest(req)) {
-      res.status(403).type('text/plain').send('Invalid Shopify App Proxy signature');
-      return;
-    }
-    const slug = String(req.params.slug || '').trim();
+    const sigStatus = inspectShopifyProxySignature(req);
+    const slug = String(req.params.slug || '').replace(/^\/+|\/+$/g, '').trim();
     const geoConfig = resolveEffectiveProxyConfig(req, store.getGeoSeoConfig());
     const proxyPrefix = normalizeShopifyProxyPrefix(geoConfig.shopifyProxyPrefix);
+    const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
+    res.setHeader('X-OrderPulse-Proxy-Sig', sigStatus);
+
+    if (!slug) {
+      res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      res.send(renderGeoSeoDirectoryLiquidFragment(geoConfig, waPhone));
+      return;
+    }
 
     if (!geoConfig.enabled) {
       res.status(404).setHeader('Content-Type', 'application/liquid; charset=utf-8').send(
@@ -214,13 +213,80 @@ export function registerGeoSeoRoutes(app: Express) {
     }
 
     const host = resolvePublicSeoHost(req);
-    const waPhone = store.getWhatsAppMeta()?.phoneNumber || undefined;
     const pageData = buildGeoSeoPageData(geoConfig, ref, store.getProducts(), host, {
       useProxyCanonical: true,
     });
     res.setHeader('Content-Type', 'application/liquid; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.send(renderGeoSeoShopifyLiquidFragment(pageData, geoConfig, waPhone));
+  });
+
+  // Diagnostic API: Live probe of both Vercel App Proxy endpoint & custom Shopify domain route
+  app.get('/api/seo/test-proxy', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const geoConfig = store.getGeoSeoConfig();
+    const siteUrl = normalizeWebsiteBaseUrl(geoConfig.primaryWebsiteUrl);
+    const proxyPrefix = normalizeShopifyProxyPrefix(geoConfig.shopifyProxyPrefix);
+    const sampleSlug = 'cakes-near-sector-31-faridabad';
+    const storefrontTestUrl = `${siteUrl}${proxyPrefix}/${sampleSlug}`;
+    const backendOrigin = resolvePublicSeoHost(req);
+    const backendTestUrl = `${backendOrigin}/api/shopify-proxy/${sampleSlug}`;
+
+    let storefrontStatus = 0;
+    let storefrontOk = false;
+    let storefrontContentLength = 0;
+    let storefrontError = '';
+
+    try {
+      const probe = await fetch(storefrontTestUrl, {
+        method: 'GET',
+        headers: { Accept: 'text/html' },
+        signal: AbortSignal.timeout(5000),
+      });
+      storefrontStatus = probe.status;
+      const body = await probe.text();
+      storefrontContentLength = body.length;
+      storefrontOk = probe.ok && (body.includes('bb-proxy-wrap') || body.includes('Broomies Bakery'));
+    } catch (err) {
+      storefrontError = err instanceof Error ? err.message : 'Request failed';
+    }
+
+    let backendOk = false;
+    let backendStatus = 0;
+    try {
+      const bProbe = await fetch(backendTestUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(4000),
+      });
+      backendStatus = bProbe.status;
+      backendOk = bProbe.ok;
+    } catch {
+      backendOk = false;
+    }
+
+    let diagnosticHint = '';
+    if (storefrontOk) {
+      diagnosticHint = `Shopify App Proxy live hai! ${storefrontTestUrl} 200 OK render kar raha hai.`;
+    } else if (storefrontStatus === 404 && storefrontContentLength === 0) {
+      diagnosticHint =
+        'Shopify abhi /apps/cakes par empty HTTP 404 de raha hai — iska matlab dev.shopify.com me App Proxy wala version abhi Released/Active nahi hua hai, ya Subpath/Proxy URL me mismatch hai.';
+    } else if (storefrontStatus === 404) {
+      diagnosticHint = `Shopify ne HTTP 404 return kiya (${storefrontError || 'route not active'}). Dev Dashboard me Version Release verify karein.`;
+    } else {
+      diagnosticHint = storefrontError || `Storefront returned HTTP ${storefrontStatus}.`;
+    }
+
+    res.json({
+      ok: true,
+      storefrontTestUrl,
+      storefrontStatus,
+      storefrontOk,
+      storefrontContentLength,
+      backendTestUrl,
+      backendStatus,
+      backendOk,
+      diagnosticHint,
+    });
   });
 
   // Dashboard API: Read Geo-SEO Config & Stats

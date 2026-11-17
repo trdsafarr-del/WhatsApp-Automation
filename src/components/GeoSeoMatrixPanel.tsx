@@ -112,8 +112,17 @@ export function GeoSeoMatrixPanel({
   const [newCatKeywords, setNewCatKeywords] = useState('');
   const [newModLabel, setNewModLabel] = useState('');
 
-  // Shopify Pillar Push state
+  // Shopify Pillar Push & Live Proxy Check state
   const [pushingShopify, setPushingShopify] = useState(false);
+  const [checkingProxy, setCheckingProxy] = useState(false);
+  const [proxyHealth, setProxyHealth] = useState<{
+    storefrontTestUrl: string;
+    storefrontStatus: number;
+    storefrontOk: boolean;
+    storefrontContentLength: number;
+    backendOk: boolean;
+    diagnosticHint: string;
+  } | null>(null);
 
   useEffect(() => {
     setDraft(geoSeoConfig || DEFAULT_GEO_SEO_CONFIG);
@@ -213,6 +222,36 @@ export function GeoSeoMatrixPanel({
       setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 1800);
     } catch {
       // Clipboard blocked
+    }
+  };
+
+  const handleTestProxyLive = async () => {
+    setCheckingProxy(true);
+    try {
+      const res = await fetch('/api/seo/test-proxy');
+      const data = (await res.json()) as {
+        ok?: boolean;
+        storefrontTestUrl?: string;
+        storefrontStatus?: number;
+        storefrontOk?: boolean;
+        storefrontContentLength?: number;
+        backendOk?: boolean;
+        diagnosticHint?: string;
+      };
+      if (res.ok && data.ok && data.storefrontTestUrl) {
+        setProxyHealth({
+          storefrontTestUrl: data.storefrontTestUrl,
+          storefrontStatus: data.storefrontStatus ?? 0,
+          storefrontOk: Boolean(data.storefrontOk),
+          storefrontContentLength: data.storefrontContentLength ?? 0,
+          backendOk: Boolean(data.backendOk),
+          diagnosticHint: data.diagnosticHint || '',
+        });
+      }
+    } catch {
+      setBanner({ ok: false, text: 'Could not run Shopify App Proxy live check.' });
+    } finally {
+      setCheckingProxy(false);
     }
   };
 
@@ -550,15 +589,26 @@ export function GeoSeoMatrixPanel({
               <strong className="text-white">Release</strong>. Every page loads inside Broomies Bakery&apos;s own Shopify theme &amp; domain:
             </p>
           </div>
-          <a
-            href="/api/shopify-proxy"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 whitespace-nowrap"
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-            Preview Shopify Liquid Fragment
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={checkingProxy}
+              onClick={() => void handleTestProxyLive()}
+              className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-sky-500/45 bg-sky-500/15 px-3 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-500/25 whitespace-nowrap disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${checkingProxy ? 'animate-spin' : ''}`} aria-hidden="true" />
+              {checkingProxy ? 'Checking...' : 'Test broomiesbakery.in Live'}
+            </button>
+            <a
+              href="/api/shopify-proxy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 whitespace-nowrap"
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              Preview Shopify Liquid Fragment
+            </a>
+          </div>
         </div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -610,6 +660,36 @@ export function GeoSeoMatrixPanel({
             </div>
           </div>
         </div>
+
+        {proxyHealth && (
+          <div
+            className={`mt-3 rounded-lg border px-3.5 py-2.5 text-xs ${
+              proxyHealth.storefrontOk
+                ? 'border-emerald-500/40 bg-emerald-950/50 text-emerald-200'
+                : 'border-amber-500/45 bg-amber-950/40 text-amber-100'
+            }`}
+          >
+            <p className="font-semibold">
+              {proxyHealth.storefrontOk
+                ? `LIVE (HTTP ${proxyHealth.storefrontStatus}): ${proxyHealth.storefrontTestUrl}`
+                : `Storefront returned HTTP ${proxyHealth.storefrontStatus || 'Error'} (${proxyHealth.storefrontContentLength} bytes) — Vercel Backend: ${proxyHealth.backendOk ? '200 OK Ready' : 'Check Vercel'}`}
+            </p>
+            <p className="mt-1 text-[11.5px] opacity-90">{proxyHealth.diagnosticHint}</p>
+            {!proxyHealth.storefrontOk && (
+              <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 text-[11px] text-amber-200/90">
+                <li>
+                  Open <span className="font-mono">dev.shopify.com &rarr; orderpulse-whatsapp &rarr; Versions</span> and confirm the version with App Proxy has the green <strong className="text-white">Active / Released</strong> badge (not Draft).
+                </li>
+                <li>
+                  In <span className="font-mono">App proxy</span>, verify exact values: Prefix=<code className="text-white">{proxyRootPart}</code>, Subpath=<code className="text-white">{proxySubPart}</code>, URL=<code className="text-white">{proxyTargetEndpoint}</code>.
+                </li>
+                <li>
+                  Open <span className="font-mono">Shopify Admin &rarr; Settings &rarr; Apps and sales channels &rarr; orderpulse-whatsapp</span> and ensure the updated version is installed/active on Broomies Bakery.
+                </li>
+              </ol>
+            )}
+          </div>
+        )}
       </div>
 
       {banner && (
