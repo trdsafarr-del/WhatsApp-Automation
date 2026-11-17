@@ -21,6 +21,7 @@ import {
   testDelhiveryConnection,
 } from '../server/delhivery.js';
 import { store } from '../server/store.js';
+import { registerDashboardAuth } from '../server/auth.js';
 import { registerGeoSeoRoutes } from '../server/geoSeoRoutes.js';
 import { registerStorefrontRoutes } from '../server/storefront.js';
 import { syncShopifyOrdersNow } from '../server/sync.js';
@@ -40,6 +41,8 @@ app.use(
     },
   })
 );
+
+registerDashboardAuth(app);
 
 app.get('/api/health', async (_req: Request, res: Response) => {
   await store.ensureHydrated();

@@ -11,6 +11,7 @@ import {
   Sparkles,
   Wand2,
 } from 'lucide-react';
+import { dashboardFetch } from '../lib/dashboardAuth';
 import { DEFAULT_GEO_SEO_CONFIG, getGeoSeoStats } from '../lib/geoSeo';
 import {
   buildProductJsonLd,
@@ -159,7 +160,7 @@ export function SeoManagerView({
     setSyncingShopify(true);
     setBanner(null);
     try {
-      const res = await fetch('/api/products/sync-shopify', { method: 'POST' });
+      const res = await dashboardFetch('/api/products/sync-shopify', { method: 'POST' });
       const data = (await res.json()) as {
         ok?: boolean;
         totalCount?: number;
@@ -185,7 +186,7 @@ export function SeoManagerView({
     setLoadingSamples(true);
     setBanner(null);
     try {
-      const res = await fetch('/api/products/load-samples', { method: 'POST' });
+      const res = await dashboardFetch('/api/products/load-samples', { method: 'POST' });
       const data = (await res.json()) as { ok?: boolean; products?: ProductCatalogItem[] };
       if (res.ok && data.products) {
         onProductsUpdated(data.products);
@@ -205,7 +206,7 @@ export function SeoManagerView({
     setSavingProduct(true);
     setBanner(null);
     try {
-      const res = await fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/seo`, {
+      const res = await dashboardFetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/seo`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -256,7 +257,7 @@ export function SeoManagerView({
     setRunningBulk(true);
     setBanner(null);
     try {
-      await fetch('/api/storefront/config', {
+      await dashboardFetch('/api/storefront/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -271,7 +272,7 @@ export function SeoManagerView({
         }
       });
 
-      const res = await fetch('/api/products/bulk-seo', {
+      const res = await dashboardFetch('/api/products/bulk-seo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -306,7 +307,7 @@ export function SeoManagerView({
 
   const toggleJsonLd = async (checked: boolean) => {
     setEnableJsonLd(checked);
-    const res = await fetch('/api/storefront/config', {
+    const res = await dashboardFetch('/api/storefront/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enableJsonLdSchema: checked }),

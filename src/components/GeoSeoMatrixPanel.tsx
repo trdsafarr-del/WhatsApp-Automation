@@ -19,6 +19,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { dashboardFetch } from '../lib/dashboardAuth';
 import {
   DEFAULT_GEO_SEO_CONFIG,
   getCoveredLocalities,
@@ -135,7 +136,7 @@ export function GeoSeoMatrixPanel({
     setSaving(true);
     setBanner(null);
     try {
-      const res = await fetch('/api/seo/geo-config', {
+      const res = await dashboardFetch('/api/seo/geo-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nextConfig),
@@ -176,7 +177,7 @@ export function GeoSeoMatrixPanel({
           page: String(pageToLoad),
           limit: '15',
         });
-        const res = await fetch(`/api/seo/pages?${params.toString()}`);
+        const res = await dashboardFetch(`/api/seo/pages?${params.toString()}`);
         const data = (await res.json()) as {
           ok?: boolean;
           totalMatched?: number;
@@ -205,7 +206,7 @@ export function GeoSeoMatrixPanel({
   const handleInspectSlug = async (slug: string) => {
     setInspecting(true);
     try {
-      const res = await fetch(`/api/seo/page-inspect/${encodeURIComponent(slug)}`);
+      const res = await dashboardFetch(`/api/seo/page-inspect/${encodeURIComponent(slug)}`);
       const data = (await res.json()) as { ok?: boolean; pageData?: InspectedPagePayload };
       if (res.ok && data.ok && data.pageData) {
         setInspectedPage(data.pageData);
@@ -228,7 +229,7 @@ export function GeoSeoMatrixPanel({
   const handleTestProxyLive = async () => {
     setCheckingProxy(true);
     try {
-      const res = await fetch('/api/seo/test-proxy');
+      const res = await dashboardFetch('/api/seo/test-proxy');
       const data = (await res.json()) as {
         ok?: boolean;
         storefrontTestUrl?: string;
@@ -349,7 +350,7 @@ export function GeoSeoMatrixPanel({
     setPushingShopify(true);
     setBanner(null);
     try {
-      const res = await fetch('/api/seo/push-shopify-pages', {
+      const res = await dashboardFetch('/api/seo/push-shopify-pages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ includePriorityLocalPages }),

@@ -18,6 +18,7 @@ import {
   Truck,
   XCircle,
 } from 'lucide-react';
+import { dashboardFetch } from '../lib/dashboardAuth';
 import {
   buildShopifyLiquidSnippet,
   evaluateProductForPincode,
@@ -187,7 +188,7 @@ export function PincodeCatalogView({
     setSyncingShopify(true);
     setStatusBanner(null);
     try {
-      const res = await fetch('/api/products/sync-shopify', { method: 'POST' });
+      const res = await dashboardFetch('/api/products/sync-shopify', { method: 'POST' });
       const data = (await res.json()) as {
         ok?: boolean;
         importedCount?: number;
@@ -218,7 +219,7 @@ export function PincodeCatalogView({
     setLoadingSamples(true);
     setStatusBanner(null);
     try {
-      const res = await fetch('/api/products/load-samples', { method: 'POST' });
+      const res = await dashboardFetch('/api/products/load-samples', { method: 'POST' });
       const data = (await res.json()) as { ok?: boolean; products?: ProductCatalogItem[] };
       if (res.ok && data.products) {
         onProductsUpdated(data.products);
@@ -242,7 +243,7 @@ export function PincodeCatalogView({
     setCheckingPin(true);
     setPinCheckError(null);
     try {
-      const res = await fetch(
+      const res = await dashboardFetch(
         `/api/storefront/pincode-check?pincode=${encodeURIComponent(cleanPin)}`
       );
       const data = (await res.json()) as PincodeCheckResponse;
@@ -264,7 +265,7 @@ export function PincodeCatalogView({
 
     const tryIpDetect = async () => {
       try {
-        const res = await fetch('/api/storefront/auto-pincode');
+        const res = await dashboardFetch('/api/storefront/auto-pincode');
         const data = (await res.json()) as {
           detected?: boolean;
           pincode?: string;
@@ -294,7 +295,7 @@ export function PincodeCatalogView({
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           try {
-            const res = await fetch(
+            const res = await dashboardFetch(
               `/api/storefront/reverse-pincode?lat=${encodeURIComponent(
                 pos.coords.latitude
               )}&lon=${encodeURIComponent(pos.coords.longitude)}`
@@ -337,7 +338,7 @@ export function PincodeCatalogView({
     setStatusBanner(null);
     try {
       const estNum = Number.parseInt(editEstDays, 10);
-      const res = await fetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/pincode`, {
+      const res = await dashboardFetch(`/api/products/${encodeURIComponent(selectedProduct.id)}/pincode`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -378,7 +379,7 @@ export function PincodeCatalogView({
     setCreatingProduct(true);
     setStatusBanner(null);
     try {
-      const res = await fetch('/api/products', {
+      const res = await dashboardFetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -412,7 +413,7 @@ export function PincodeCatalogView({
   };
 
   const handleDeleteProduct = async (id: string, title: string) => {
-    const res = await fetch(`/api/products/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const res = await dashboardFetch(`/api/products/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (res.ok) {
       const data = (await res.json()) as { products?: ProductCatalogItem[] };
       if (data.products) onProductsUpdated(data.products);
@@ -425,7 +426,7 @@ export function PincodeCatalogView({
     setSavingBridge(true);
     setStatusBanner(null);
     try {
-      const res = await fetch('/api/storefront/config', {
+      const res = await dashboardFetch('/api/storefront/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bridgeForm),
@@ -444,7 +445,7 @@ export function PincodeCatalogView({
     setInstallingScript(true);
     setStatusBanner(null);
     try {
-      const res = await fetch('/api/storefront/install-shopify', {
+      const res = await dashboardFetch('/api/storefront/install-shopify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ storefrontAppUrl: bridgeForm.storefrontAppUrl }),

@@ -26,6 +26,7 @@ import {
   testDelhiveryConnection,
 } from './server/delhivery.js';
 import { store } from './server/store.js';
+import { registerDashboardAuth } from './server/auth.js';
 import { registerGeoSeoRoutes } from './server/geoSeoRoutes.js';
 import { registerStorefrontRoutes } from './server/storefront.js';
 import { syncShopifyOrdersNow } from './server/sync.js';
@@ -50,6 +51,9 @@ async function startServer() {
       },
     })
   );
+
+  // Protect all admin / dashboard / mutation /api/* routes with password lock (storefront & proxy remain public)
+  registerDashboardAuth(app);
 
   // Healthcheck for uptime monitors (UptimeRobot / Cron-Job.org 24/7 keep-alive)
   app.get('/api/health', async (_req: Request, res: Response) => {

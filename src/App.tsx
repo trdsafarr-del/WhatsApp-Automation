@@ -4,6 +4,7 @@ import {
   BookOpen,
   Layers,
   LayoutList,
+  Lock,
   MapPin,
   Menu,
   Palette,
@@ -17,6 +18,7 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react';
+import { DashboardLockScreen } from './components/DashboardLockScreen';
 import { LiveAmbientBackground, type BackgroundMode } from './components/LiveAmbientBackground';
 import { OrdersView } from './components/OrdersView';
 import { PincodeCatalogView } from './components/PincodeCatalogView';
@@ -26,6 +28,12 @@ import { SettingsView, type SettingsTab } from './components/SettingsView';
 import { SetupGuideView } from './components/SetupGuideView';
 import { ThemeStudioView } from './components/ThemeStudioView';
 import { WhatsAppQrView } from './components/WhatsAppQrView';
+import {
+  AUTH_LOCKED_EVENT,
+  clearDashboardToken,
+  dashboardFetch,
+  saveDashboardToken,
+} from './lib/dashboardAuth';
 import { DEFAULT_GEO_SEO_CONFIG } from './lib/geoSeo';
 import { DEFAULT_SETTINGS, getWhatsAppDisplayState, hasHighRtoTag } from './lib/orderRules';
 import { DEFAULT_STOREFRONT_CONFIG } from './lib/storefrontRules';
@@ -160,6 +168,7 @@ export default function App() {
     DEFAULT_STOREFRONT_CONFIG
   );
   const [geoSeoConfig, setGeoSeoConfig] = useState<GeoSeoConfig>(DEFAULT_GEO_SEO_CONFIG);
+  const [authState, setAuthState] = useState<'checking' | 'locked' | 'unlocked'>('checking');
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -188,7 +197,7 @@ export default function App() {
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const res = await fetch('/api/dashboard');
+      const res = await dashboardFetch('/api/dashboard');
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = (await res.json()) as DashboardPayload;
       setOrders(data.orders);
@@ -227,11 +236,51 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const checkAuth = async () => {
+      try {
+        const res = await dashboardFetch('/api/auth/status');
+        const data = (await res.json()) as { authenticated?: boolean };
+        if (!active) return;
+        setAuthState(data.authenticated ? 'unlocked' : 'locked');
+        if (!data.authenticated) setIsLoading(false);
+      } catch {
+        if (!active) return;
+        setAuthState('locked');
+        setIsLoading(false);
+      }
+    };
+    void checkAuth();
+
+    const handleAuthLocked = () => {
+      setAuthState('locked');
+      setIsLoading(false);
+    };
+    window.addEventListener(AUTH_LOCKED_EVENT, handleAuthLocked);
+    return () => {
+      active = false;
+      window.removeEventListener(AUTH_LOCKED_EVENT, handleAuthLocked);
+    };
+  }, []);
+
+  const handleLockDashboard = async () => {
+    clearDashboardToken();
+    setAuthState('locked');
+    try {
+      await dashboardFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Already locked locally
+    }
+  };
+
+  useEffect(() => {
+    if (authState !== 'unlocked') return;
     void fetchDashboard();
-  }, [fetchDashboard]);
+  }, [authState, fetchDashboard]);
 
   // Refresh immediately when returning to the app on phone/desktop
   useEffect(() => {
+    if (authState !== 'unlocked') return;
     const handleFocus = () => {
       if (activeTab !== 'settings') {
         void fetchDashboard();
@@ -248,23 +297,23 @@ export default function App() {
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [fetchDashboard, activeTab]);
+  }, [authState, fetchDashboard, activeTab]);
 
   // Poll backend smoothly while QR is waiting or on live views, pausing while editing Settings
   useEffect(() => {
-    if (activeTab === 'settings') return;
+    if (authState !== 'unlocked' || activeTab === 'settings') return;
     const intervalMs =
       whatsapp.status === 'qr_ready' || whatsapp.status === 'connecting' ? 2500 : 8000;
     const timer = setInterval(() => {
       void fetchDashboard();
     }, intervalMs);
     return () => clearInterval(timer);
-  }, [fetchDashboard, whatsapp.status, activeTab]);
+  }, [authState, fetchDashboard, whatsapp.status, activeTab]);
 
   const handleVoteOrder = async (orderId: string, option: string) => {
     setBusyOrderId(orderId);
     try {
-      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/vote`, {
+      const res = await dashboardFetch(`/api/orders/${encodeURIComponent(orderId)}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ option }),
@@ -285,7 +334,7 @@ export default function App() {
   const handleResendPoll = async (orderId: string) => {
     setBusyOrderId(orderId);
     try {
-      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/resend-poll`, {
+      const res = await dashboardFetch(`/api/orders/${encodeURIComponent(orderId)}/resend-poll`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -304,7 +353,7 @@ export default function App() {
   const handleSendTracking = async (orderId: string) => {
     setBusyOrderId(orderId);
     try {
-      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/send-tracking`, {
+      const res = await dashboardFetch(`/api/orders/${encodeURIComponent(orderId)}/send-tracking`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -326,7 +375,7 @@ export default function App() {
   ): Promise<{ ok: boolean; shopifySynced?: boolean; error?: string }> => {
     setBusyOrderId(orderId);
     try {
-      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/remark`, {
+      const res = await dashboardFetch(`/api/orders/${encodeURIComponent(orderId)}/remark`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ remark }),
@@ -360,7 +409,7 @@ export default function App() {
     setIsSyncing(true);
     setSyncMessage(null);
     try {
-      const res = await fetch('/api/shopify/sync', { method: 'POST' });
+      const res = await dashboardFetch('/api/shopify/sync', { method: 'POST' });
       const data = (await res.json()) as {
         ok?: boolean;
         importedCount?: number;
@@ -385,7 +434,7 @@ export default function App() {
   const handleWhatsAppConnect = async (mode: WhatsAppEngineMode, fresh = false) => {
     setWhatsappBusy(true);
     try {
-      const res = await fetch('/api/whatsapp/connect', {
+      const res = await dashboardFetch('/api/whatsapp/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, fresh }),
@@ -402,7 +451,7 @@ export default function App() {
   const handleWhatsAppPairingCode = async (phoneNumber: string) => {
     setWhatsappBusy(true);
     try {
-      const res = await fetch('/api/whatsapp/pairing-code', {
+      const res = await dashboardFetch('/api/whatsapp/pairing-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber }),
@@ -419,7 +468,7 @@ export default function App() {
   const handleWhatsAppRestart = async () => {
     setWhatsappBusy(true);
     try {
-      const res = await fetch('/api/whatsapp/restart', { method: 'POST' });
+      const res = await dashboardFetch('/api/whatsapp/restart', { method: 'POST' });
       if (res.ok) {
         const data = (await res.json()) as { whatsapp: WhatsAppState };
         setWhatsapp(data.whatsapp);
@@ -432,7 +481,7 @@ export default function App() {
   const handleWhatsAppDisconnect = async () => {
     setWhatsappBusy(true);
     try {
-      const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+      const res = await dashboardFetch('/api/whatsapp/disconnect', { method: 'POST' });
       if (res.ok) {
         const data = (await res.json()) as { whatsapp: WhatsAppState };
         setWhatsapp(data.whatsapp);
@@ -445,7 +494,7 @@ export default function App() {
   const handleWhatsAppPause = async () => {
     setWhatsappBusy(true);
     try {
-      const res = await fetch('/api/whatsapp/pause', { method: 'POST' });
+      const res = await dashboardFetch('/api/whatsapp/pause', { method: 'POST' });
       if (res.ok) {
         const data = (await res.json()) as { whatsapp: WhatsAppState };
         setWhatsapp(data.whatsapp);
@@ -456,7 +505,7 @@ export default function App() {
   };
 
   const handleSaveSettings = async (next: Partial<AppSettings>): Promise<boolean> => {
-    const res = await fetch('/api/settings', {
+    const res = await dashboardFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(next),
@@ -469,13 +518,13 @@ export default function App() {
   };
 
   const handleTestShopify = async () => {
-    const res = await fetch('/api/shopify/test', { method: 'POST' });
+    const res = await dashboardFetch('/api/shopify/test', { method: 'POST' });
     return (await res.json()) as { ok: boolean; shopName?: string; error?: string };
   };
 
   const handleTestDelhivery = async () => {
     try {
-      const res = await fetch('/api/delhivery/test', { method: 'POST' });
+      const res = await dashboardFetch('/api/delhivery/test', { method: 'POST' });
       const data = (await res.json()) as {
         ok: boolean;
         sampleAmount?: number;
@@ -494,7 +543,7 @@ export default function App() {
 
   const handleSyncDelhivery = async () => {
     try {
-      const res = await fetch('/api/delhivery/sync', { method: 'POST' });
+      const res = await dashboardFetch('/api/delhivery/sync', { method: 'POST' });
       const data = (await res.json()) as {
         ok: boolean;
         trackedCount?: number;
@@ -517,7 +566,7 @@ export default function App() {
 
   const handleImportDelhiveryCsv = async (csvText: string) => {
     try {
-      const res = await fetch('/api/delhivery/import-csv', {
+      const res = await dashboardFetch('/api/delhivery/import-csv', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ csvText }),
@@ -543,7 +592,7 @@ export default function App() {
     params: { settled: boolean; reference?: string; amount?: number }
   ): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/settle`, {
+      const res = await dashboardFetch(`/api/orders/${encodeURIComponent(orderId)}/settle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
@@ -563,7 +612,7 @@ export default function App() {
 
   const handleSettleBulk = async (orderIds: string[], reference?: string): Promise<boolean> => {
     try {
-      const res = await fetch('/api/orders/settle-bulk', {
+      const res = await dashboardFetch('/api/orders/settle-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderIds, reference }),
@@ -649,6 +698,30 @@ export default function App() {
       title: 'Shopify App, Env Sync & 24/7 Deployment Guide',
     },
   };
+
+  if (authState === 'checking') {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center bg-[#050912] text-slate-300">
+        <LiveAmbientBackground mode={bgMode} />
+        <div className="relative z-10 flex items-center gap-2.5 rounded-xl border border-slate-800 bg-slate-950/85 px-5 py-3 text-xs font-medium backdrop-blur-md">
+          <Lock className="h-4 w-4 animate-pulse text-emerald-400" aria-hidden="true" />
+          <span>Checking dashboard access...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === 'locked') {
+    return (
+      <DashboardLockScreen
+        onUnlocked={(token) => {
+          if (token) saveDashboardToken(token);
+          setIsLoading(true);
+          setAuthState('unlocked');
+        }}
+      />
+    );
+  }
 
   return (
     <div
@@ -1012,23 +1085,35 @@ export default function App() {
             </nav>
           )}
 
-          {/* Zone 3: Primary Action */}
-          <button
-            type="button"
-            disabled={isSyncing}
-            onClick={() => {
-              setActiveTab('orders');
-              void handleSyncShopify();
-            }}
-            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:gap-2 sm:px-4 sm:text-sm"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${isSyncing ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-            <span className="sm:hidden">{isSyncing ? 'Syncing' : 'Sync'}</span>
-            <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Shopify'}</span>
-          </button>
+          {/* Zone 3: Primary Action + Lock */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void handleLockDashboard()}
+              title="Lock Dashboard"
+              aria-label="Lock Dashboard"
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-900/85 px-2.5 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800 hover:text-white whitespace-nowrap shrink-0 sm:px-3"
+            >
+              <Lock className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
+              <span className="hidden sm:inline">Lock</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSyncing}
+              onClick={() => {
+                setActiveTab('orders');
+                void handleSyncShopify();
+              }}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white shadow-sm shadow-emerald-950/50 transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:gap-2 sm:px-4 sm:text-sm"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${isSyncing ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              <span className="sm:hidden">{isSyncing ? 'Syncing' : 'Sync'}</span>
+              <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Shopify'}</span>
+            </button>
+          </div>
         </header>
 
         {/* Tablet/Medium Sub-bar Tab Switcher (hidden on phones because mobile uses Bottom Nav Bar) */}
