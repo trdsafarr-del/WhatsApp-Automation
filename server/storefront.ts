@@ -1,8 +1,5 @@
 import type { Express, Request, Response } from 'express';
-import {
-  buildBakeryStorefrontSchema,
-  buildStorefrontZoneStripData,
-} from '../src/lib/geoSeo.js';
+import { buildBakeryStorefrontSchema } from '../src/lib/geoSeo.js';
 import {
   buildProductJsonLd,
   computeSeoAudit,
@@ -564,44 +561,9 @@ function buildStorefrontWidgetScript(origin: string): string {
       geoLd.textContent = JSON.stringify(payload.bakeryGeoSchema);
       document.head.appendChild(geoLd);
     }
-    if (
-      payload.geoZoneStrip &&
-      Array.isArray(payload.geoZoneStrip.hubLinks) &&
-      payload.geoZoneStrip.hubLinks.length > 0 &&
-      !document.getElementById('op-geo-zone-strip') &&
-      window.location.pathname.indexOf('/apps/') !== 0 &&
-      window.location.pathname.indexOf('/a/') !== 0
-    ) {
-      var strip = document.createElement('div');
-      strip.id = 'op-geo-zone-strip';
-      strip.style.cssText =
-        'background:rgba(255,255,255,0.72);border-top:1px solid rgba(18,18,18,0.1);padding:12px 16px;text-align:center;font-family:inherit;font-size:12.5px;color:#1f2937;';
-      var hubHtml = payload.geoZoneStrip.hubLinks
-        .map(function (h) {
-          return (
-            '<a href="' +
-            escapeHtml(h.href) +
-            '" style="color:#121212;font-weight:500;text-decoration:none;margin:0 7px;white-space:nowrap;">' +
-            escapeHtml(h.name) +
-            '</a>'
-          );
-        })
-        .join(' · ');
-      strip.innerHTML =
-        '<div style="max-width:1280px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;">' +
-        '<a href="' +
-        escapeHtml(payload.geoZoneStrip.directoryHref || '/apps/cakes') +
-        '" style="color:#0f5132;font-weight:600;text-decoration:none;">' +
-        escapeHtml(payload.geoZoneStrip.directoryLabel || 'Faridabad 5 km Cake Delivery Zones') +
-        ':</a> ' +
-        hubHtml +
-        '</div>';
-      var footerEl = document.querySelector('footer, .shopify-section-group-footer-group');
-      if (footerEl && footerEl.parentNode) {
-        footerEl.parentNode.insertBefore(strip, footerEl);
-      } else if (document.body) {
-        document.body.appendChild(strip);
-      }
+    var staleStrip = document.getElementById('op-geo-zone-strip');
+    if (staleStrip && staleStrip.parentNode) {
+      staleStrip.parentNode.removeChild(staleStrip);
     }
     var config = payload.storefrontConfig || {};
     if (config.pincodeGateEnabled === false) return;
@@ -1035,12 +997,6 @@ export function registerStorefrontRoutes(app: Express) {
       geoConfig.enabled && geoConfig.injectStorefrontGeoSchema !== false
         ? buildBakeryStorefrontSchema(geoConfig)
         : undefined;
-    const geoZoneStrip =
-      geoConfig.enabled &&
-      geoConfig.injectStorefrontGeoSchema !== false &&
-      geoConfig.showStorefrontZoneFooter !== false
-        ? buildStorefrontZoneStripData(geoConfig)
-        : undefined;
 
     res.json({
       ok: true,
@@ -1048,7 +1004,6 @@ export function registerStorefrontRoutes(app: Express) {
       delhivery,
       storefrontConfig,
       bakeryGeoSchema,
-      geoZoneStrip,
       products: evaluated,
     });
   });

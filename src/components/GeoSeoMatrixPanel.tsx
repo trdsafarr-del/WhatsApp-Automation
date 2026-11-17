@@ -553,17 +553,6 @@ export function GeoSeoMatrixPanel({
           <label className="inline-flex items-center gap-2">
             <input
               type="checkbox"
-              checked={draft.showStorefrontZoneFooter !== false}
-              onChange={(e) =>
-                setDraft({ ...draft, showStorefrontZoneFooter: e.target.checked })
-              }
-              className="h-4 w-4 accent-emerald-500"
-            />
-            <span>Show Faridabad 5 km Zone Strip Above Footer</span>
-          </label>
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="checkbox"
               checked={draft.includeTier3Matrix}
               onChange={(e) => setDraft({ ...draft, includeTier3Matrix: e.target.checked })}
               className="h-4 w-4 accent-emerald-500"

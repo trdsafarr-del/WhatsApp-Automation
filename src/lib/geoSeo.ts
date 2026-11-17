@@ -298,7 +298,7 @@ export const DEFAULT_GEO_SEO_CONFIG: GeoSeoConfig = {
   includeTier3Matrix: true,
   injectStorefrontGeoSchema: true,
   shopifyProxyPrefix: '/apps/cakes',
-  showStorefrontZoneFooter: true,
+  showStorefrontZoneFooter: false,
   hubs: DEFAULT_GEO_HUBS,
   localities: DEFAULT_FARIDABAD_LOCALITIES,
   categories: DEFAULT_GEO_CATEGORIES,

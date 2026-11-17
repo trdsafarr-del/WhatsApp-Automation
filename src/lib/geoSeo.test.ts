@@ -189,6 +189,7 @@ test('Shopify App Proxy prefix, Liquid fragments, proxy XML sitemaps, and HMAC s
     'https://broomiesbakery.in/apps/cakes/custom-cakes-in-sector-31-faridabad'
   );
 
+  assert.equal(DEFAULT_GEO_SEO_CONFIG.showStorefrontZoneFooter, false);
   const strip = buildStorefrontZoneStripData(DEFAULT_GEO_SEO_CONFIG);
   assert.equal(strip.directoryHref, '/apps/cakes');
   assert.equal(strip.hubLinks.length, 4);

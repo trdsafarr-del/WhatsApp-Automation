@@ -533,10 +533,7 @@ export function registerGeoSeoRoutes(app: Express) {
         typeof body.shopifyProxyPrefix === 'string' && body.shopifyProxyPrefix.trim()
           ? normalizeShopifyProxyPrefix(body.shopifyProxyPrefix)
           : normalizeShopifyProxyPrefix(cur.shopifyProxyPrefix),
-      showStorefrontZoneFooter:
-        typeof body.showStorefrontZoneFooter === 'boolean'
-          ? body.showStorefrontZoneFooter
-          : cur.showStorefrontZoneFooter ?? true,
+      showStorefrontZoneFooter: false,
       hubs: Array.isArray(body.hubs) && body.hubs.length > 0 ? body.hubs : cur.hubs,
       localities:
         Array.isArray(body.localities) && body.localities.length > 0
