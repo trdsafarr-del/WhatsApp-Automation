@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import {
   BarChart3,
   BookOpen,
@@ -37,16 +36,10 @@ import {
   dashboardFetch,
   saveDashboardToken,
 } from './lib/dashboardAuth';
-import {
-  isAuthorizedRtdbAdmin,
-  rtdbAuth,
-  rtdbProjectMeta,
-} from './lib/rtdb';
+import { rtdbProjectMeta } from './lib/rtdb';
 import {
   createRtdbSyncTracker,
   isRtdbPermissionDenied,
-  signInRtdbWithGoogle,
-  signOutRtdb,
   subscribeToRtdbCloudData,
   syncDeltaToRtdb,
   type RtdbCloudSnapshot,
@@ -216,14 +209,12 @@ export default function App() {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
   const [upstashQuotaExceeded, setUpstashQuotaExceeded] = useState(false);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
-  const [firebaseAuthReady, setFirebaseAuthReady] = useState(false);
-  const [googleAuthBusy, setGoogleAuthBusy] = useState(false);
   const [rtdbSyncState, setRtdbSyncState] = useState<
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle');
   const [rtdbError, setRtdbError] = useState<string | null>(null);
   const [rtdbPermissionDenied, setRtdbPermissionDenied] = useState(false);
+  const [rtdbReconnectTick, setRtdbReconnectTick] = useState(0);
   const [cloudReadyTick, setCloudReadyTick] = useState(0);
   const [cloudSummary, setCloudSummary] = useState({
     loaded: false,
@@ -380,78 +371,24 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(rtdbAuth, (user) => {
-      if (user && !isAuthorizedRtdbAdmin(user)) {
-        setFirebaseUser(null);
-        setFirebaseAuthReady(true);
-        syncTrackerRef.current = createRtdbSyncTracker();
-        cloudSnapshotRef.current = null;
-        lastRestoredKeyRef.current = '';
-        setCloudReadyTick(0);
-        setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
-        setRtdbSyncState('error');
-        setRtdbPermissionDenied(false);
-        setRtdbError('Please sign in with a verified Google account to sync Firebase Realtime Database.');
-        void signOutRtdb();
-        return;
-      }
-
-      setFirebaseUser(user);
-      setFirebaseAuthReady(true);
-      if (!user) {
-        syncTrackerRef.current = createRtdbSyncTracker();
-        cloudSnapshotRef.current = null;
-        lastRestoredKeyRef.current = '';
-        setCloudReadyTick(0);
-        setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
-        setRtdbSyncState('idle');
-        setRtdbError(null);
-        setRtdbPermissionDenied(false);
-      }
-    });
-    return () => unsub();
-  }, []);
-
-  const handleGoogleSignIn = async () => {
-    setGoogleAuthBusy(true);
+  const handleReconnectRtdb = () => {
     setRtdbError(null);
     setRtdbPermissionDenied(false);
-    try {
-      await signInRtdbWithGoogle();
-    } catch (err) {
-      const code = (err as { code?: string })?.code || '';
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        // User closed popup intentionally
-      } else if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
-        setRtdbError(
-          `Add "${host}" in Firebase Console (${rtdbProjectMeta.projectId}) -> Authentication -> Settings -> Authorized domains, then click RTDB Sync again.`
-        );
-      } else if (code === 'auth/operation-not-allowed') {
-        setRtdbError(
-          `Enable Google Sign-In in Firebase Console (${rtdbProjectMeta.projectId}) -> Authentication -> Sign-in method -> Google -> Enable, then click RTDB Sync again.`
-        );
-      } else {
-        setRtdbError(err instanceof Error ? err.message : 'Google Sign-In failed.');
-      }
-    } finally {
-      setGoogleAuthBusy(false);
-    }
+    setRtdbSyncState('syncing');
+    setRtdbReconnectTick((n) => n + 1);
   };
 
-  const handleGoogleSignOut = async () => {
-    setGoogleAuthBusy(true);
-    try {
-      await signOutRtdb();
-    } finally {
-      setGoogleAuthBusy(false);
-    }
-  };
-
-  // Subscribe to Firebase Realtime Database (/orderpulse) once dashboard is unlocked and authorized admin signed in
+  // Auto-subscribe to Firebase Realtime Database (/orderpulse) immediately once dashboard is unlocked (zero Google login needed)
   useEffect(() => {
-    if (authState !== 'unlocked' || !firebaseAuthReady || !isAuthorizedRtdbAdmin(firebaseUser)) {
+    if (authState !== 'unlocked') {
+      syncTrackerRef.current = createRtdbSyncTracker();
+      cloudSnapshotRef.current = null;
+      lastRestoredKeyRef.current = '';
+      setCloudReadyTick(0);
+      setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
+      setRtdbSyncState('idle');
+      setRtdbError(null);
+      setRtdbPermissionDenied(false);
       return;
     }
 
@@ -594,14 +531,12 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, [authState, firebaseAuthReady, firebaseUser]);
+  }, [authState, rtdbReconnectTick]);
 
   // Delta-sync ONLY changed orders/products/config from active server to Firebase Realtime Database
   useEffect(() => {
     if (
       authState !== 'unlocked' ||
-      !firebaseAuthReady ||
-      !isAuthorizedRtdbAdmin(firebaseUser) ||
       isLoading ||
       cloudReadyTick === 0 ||
       rtdbPermissionDenied
@@ -636,7 +571,7 @@ export default function App() {
           setRtdbPermissionDenied(permDenied);
           setRtdbError(
             permDenied
-              ? `Realtime Database (${rtdbProjectMeta.projectId}) is in locked mode. Open RTDB Rules, paste the admin rule from the Guide tab, and click Publish.`
+              ? `Realtime Database (${rtdbProjectMeta.projectId}) rules need updating. Open RTDB Rules, paste the zero-login rule from Guide, and click Publish.`
               : msg
           );
         });
@@ -645,8 +580,6 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [
     authState,
-    firebaseAuthReady,
-    firebaseUser,
     isLoading,
     cloudReadyTick,
     rtdbPermissionDenied,
@@ -1095,17 +1028,19 @@ export default function App() {
       </p>
       <p className="mt-2.5 text-[11px] text-slate-500">
         Storage:{' '}
-        {firebaseUser
-          ? rtdbSyncState === 'error'
-            ? 'Firebase RTDB Rules Needed'
-            : 'Firebase RTDB Live'
-          : upstashQuotaExceeded
-            ? 'Upstash Limit Reached'
-            : cloudSyncEnabled
-              ? 'Cloud DB Synced'
-              : whatsapp.isServerless
-                ? 'Temporary Serverless (/tmp)'
-                : 'Persistent Server Disk'}
+        {rtdbSyncState === 'synced'
+          ? 'Firebase RTDB Live (Auto)'
+          : rtdbSyncState === 'syncing'
+            ? 'Firebase RTDB Connecting...'
+            : rtdbSyncState === 'error'
+              ? 'Firebase RTDB Rules Needed'
+              : upstashQuotaExceeded
+                ? 'Upstash Limit Reached'
+                : cloudSyncEnabled
+                  ? 'Cloud DB Synced'
+                  : whatsapp.isServerless
+                    ? 'Temporary Serverless (/tmp)'
+                    : 'Persistent Server Disk'}
       </p>
     </div>
   );
@@ -1531,30 +1466,29 @@ export default function App() {
             </nav>
           )}
 
-          {/* Zone 3: Firebase Realtime Database Sync + Lock + Primary Action */}
+          {/* Zone 3: Firebase Realtime Database Auto-Sync Status + Lock + Primary Action */}
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              disabled={googleAuthBusy}
               onClick={() => {
-                if (firebaseUser) {
-                  setActiveTab('setup');
+                if (rtdbSyncState === 'error') {
+                  handleReconnectRtdb();
                 } else {
-                  void handleGoogleSignIn();
+                  setActiveTab('setup');
                 }
               }}
               title={
-                firebaseUser
-                  ? `Firebase Realtime DB Synced (${firebaseUser.email || 'Connected'}) — click to manage`
-                  : `Sign in with Google to sync via Firebase Realtime Database (${rtdbProjectMeta.projectId})`
+                rtdbSyncState === 'error'
+                  ? `Firebase RTDB (${rtdbProjectMeta.projectId}) needs rules — click to retry`
+                  : `Firebase Realtime DB Auto-Sync (${rtdbProjectMeta.projectId}) — no login needed`
               }
-              aria-label={firebaseUser ? 'Manage Firebase Realtime Sync' : 'Connect Firebase Realtime Sync'}
+              aria-label="Firebase Realtime Database Sync Status"
               className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:px-3 ${
-                firebaseUser
-                  ? rtdbSyncState === 'error'
-                    ? 'border-rose-500/40 bg-rose-950/50 text-rose-200 hover:bg-rose-900/50'
-                    : 'border-emerald-500/40 bg-emerald-950/50 text-emerald-200 hover:bg-emerald-900/50'
-                  : 'border-slate-700/80 bg-slate-900/85 text-slate-200 hover:border-emerald-500/50 hover:bg-slate-800 hover:text-white'
+                rtdbSyncState === 'error'
+                  ? 'border-rose-500/40 bg-rose-950/50 text-rose-200 hover:bg-rose-900/50'
+                  : rtdbSyncState === 'synced'
+                    ? 'border-emerald-500/40 bg-emerald-950/50 text-emerald-200 hover:bg-emerald-900/50'
+                    : 'border-slate-700/80 bg-slate-900/85 text-slate-200 hover:border-emerald-500/50 hover:bg-slate-800 hover:text-white'
               }`}
             >
               {rtdbSyncState === 'error' ? (
@@ -1562,19 +1496,19 @@ export default function App() {
               ) : (
                 <Cloud
                   className={`h-3.5 w-3.5 ${
-                    firebaseUser ? 'text-emerald-400' : 'text-sky-400'
+                    rtdbSyncState === 'synced' ? 'text-emerald-400' : 'text-sky-400'
                   }`}
                   aria-hidden="true"
                 />
               )}
               <span className="hidden md:inline">
-                {googleAuthBusy
-                  ? 'Connecting...'
-                  : firebaseUser
-                    ? rtdbSyncState === 'syncing'
-                      ? 'Syncing...'
-                      : 'RTDB Live'
-                    : 'RTDB Sync'}
+                {rtdbSyncState === 'syncing'
+                  ? 'RTDB Syncing...'
+                  : rtdbSyncState === 'synced'
+                    ? 'RTDB Live'
+                    : rtdbSyncState === 'error'
+                      ? 'Retry RTDB'
+                      : 'RTDB Auto'}
               </span>
             </button>
             <button
@@ -1664,6 +1598,13 @@ export default function App() {
                       >
                         Copy Rules in Guide
                       </button>
+                      <button
+                        type="button"
+                        onClick={handleReconnectRtdb}
+                        className="rounded-lg border border-sky-400/40 bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-sky-200 hover:bg-slate-800 whitespace-nowrap"
+                      >
+                        Retry Sync
+                      </button>
                     </>
                   )}
                   <button
@@ -1677,34 +1618,17 @@ export default function App() {
               </div>
             )}
 
-            {!isLoading && upstashQuotaExceeded && !firebaseUser && (
-              <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/12 px-4 py-3 text-xs text-amber-100 backdrop-blur-md sm:flex-row sm:items-center">
-                <p className="leading-relaxed">
-                  <span className="font-semibold text-amber-200">Upstash Redis 10 GB Bandwidth Exhausted:</span>{' '}
-                  Connect <span className="font-semibold text-white">Firebase Realtime Database ({rtdbProjectMeta.projectId})</span> now so your Shopify credentials, orders, and catalog restore instantly with per-key delta sync.
-                </p>
-                <button
-                  type="button"
-                  disabled={googleAuthBusy}
-                  onClick={() => void handleGoogleSignIn()}
-                  className="shrink-0 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
-                >
-                  {googleAuthBusy ? 'Connecting...' : 'Connect RTDB Sync'}
-                </button>
-              </div>
-            )}
-
             {!isLoading &&
-              firebaseUser &&
+              rtdbSyncState === 'synced' &&
               cloudSummary.loaded &&
               !cloudSummary.hasShopify &&
               !isShopifyLinked && (
                 <div className="flex flex-col justify-between gap-3 rounded-xl border border-sky-500/35 bg-sky-950/35 px-4 py-3 text-xs text-sky-100 backdrop-blur-md sm:flex-row sm:items-center">
                   <p className="leading-relaxed">
                     <span className="font-semibold text-sky-200">
-                      Firebase Realtime DB Connected (Cloud Backup Empty Yet):
+                      Firebase Realtime DB Live (Cloud Backup Empty Yet):
                     </span>{' '}
-                    Click <span className="font-semibold text-white">RTDB Sync</span> once on your active AI Studio / Railway dashboard to upload your existing Shopify store &amp; orders, or save your Shopify credentials once below.
+                    Open your active AI Studio / Railway dashboard once (it auto-uploads your Shopify store &amp; orders with zero login), or save your Shopify credentials below.
                   </p>
                   <button
                     type="button"
@@ -1716,19 +1640,18 @@ export default function App() {
                 </div>
               )}
 
-            {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && !firebaseUser && !upstashQuotaExceeded && (
+            {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && rtdbSyncState !== 'synced' && !upstashQuotaExceeded && (
               <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200 backdrop-blur-md sm:flex-row sm:items-center">
                 <p className="leading-relaxed">
-                  <span className="font-semibold text-amber-100">Fresh Vercel Deploy Detected:</span> Sign in with <span className="font-semibold text-white">Firebase Realtime DB</span> to restore your saved Shopify store &amp; orders instantly, or add <span className="font-mono text-amber-100">SHOPIFY_*</span> Env Vars in Vercel Settings.
+                  <span className="font-semibold text-amber-100">Fresh Vercel Deploy Detected:</span> Publish the zero-login Firebase RTDB rule in <span className="font-semibold text-white">Guide</span> to auto-restore your Shopify store &amp; orders without signing in, or add <span className="font-mono text-amber-100">SHOPIFY_*</span> Env Vars in Vercel Settings.
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
-                    disabled={googleAuthBusy}
-                    onClick={() => void handleGoogleSignIn()}
-                    className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
+                    onClick={handleReconnectRtdb}
+                    className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 whitespace-nowrap"
                   >
-                    Connect RTDB Sync
+                    Retry RTDB Sync
                   </button>
                   <button
                     type="button"
@@ -1861,12 +1784,9 @@ export default function App() {
                 cloudSyncEnabled={cloudSyncEnabled}
                 upstashQuotaExceeded={upstashQuotaExceeded}
                 whatsapp={whatsapp}
-                firebaseUser={firebaseUser}
                 rtdbSyncState={rtdbSyncState}
                 cloudSummary={cloudSummary}
-                googleAuthBusy={googleAuthBusy}
-                onGoogleSignIn={handleGoogleSignIn}
-                onGoogleSignOut={handleGoogleSignOut}
+                onReconnectRtdb={handleReconnectRtdb}
               />
             )}
           </div>

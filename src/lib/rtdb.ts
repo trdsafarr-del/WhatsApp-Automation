@@ -15,12 +15,6 @@ export const rtdbFirebaseConfig = {
   measurementId: 'G-VYDHT09Z5L',
 } as const;
 
-export function isAuthorizedRtdbAdmin(
-  user: { email?: string | null; emailVerified?: boolean } | null | undefined
-): boolean {
-  return Boolean(user && user.emailVerified === true && user.email && user.email.trim().length > 0);
-}
-
 export const rtdbProjectMeta = {
   projectId: rtdbFirebaseConfig.projectId,
   databaseURL: rtdbFirebaseConfig.databaseURL,
@@ -33,16 +27,14 @@ export const rtdbProjectMeta = {
     'https://console.firebase.google.com/project/shopify-9351f/authentication/settings',
 } as const;
 
-const VERIFIED_GOOGLE_USER_RULE = 'auth != null && auth.token.email_verified === true';
-
 export const RECOMMENDED_RTDB_RULES_JSON = JSON.stringify(
   {
     rules: {
       '.read': false,
       '.write': false,
       orderpulse: {
-        '.read': VERIFIED_GOOGLE_USER_RULE,
-        '.write': VERIFIED_GOOGLE_USER_RULE,
+        '.read': true,
+        '.write': true,
       },
       orderpulse_server: {
         '.read': false,

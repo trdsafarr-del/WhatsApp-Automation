@@ -7,7 +7,6 @@ import {
 } from './firestorePayload';
 import { hasConfiguredShopify } from './orderRules';
 import {
-  isAuthorizedRtdbAdmin,
   rtdb,
   rtdbAuth,
   rtdbGoogleProvider,
@@ -59,10 +58,6 @@ export function createRtdbSyncTracker(): RtdbSyncTracker {
 
 export async function signInRtdbWithGoogle(): Promise<User> {
   const cred = await signInWithPopup(rtdbAuth, rtdbGoogleProvider);
-  if (!isAuthorizedRtdbAdmin(cred.user)) {
-    await signOut(rtdbAuth);
-    throw new Error('Please sign in with a verified Google account to access Realtime Database.');
-  }
   return cred.user;
 }
 

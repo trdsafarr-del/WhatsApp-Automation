@@ -5,10 +5,7 @@ import {
   stripUndefinedDeep,
   toSafeFirestoreDocId,
 } from './firestorePayload';
-import {
-  RECOMMENDED_RTDB_RULES_JSON,
-  isAuthorizedRtdbAdmin,
-} from './rtdb';
+import { RECOMMENDED_RTDB_RULES_JSON } from './rtdb';
 
 function isRtdbPermissionDeniedMessage(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
@@ -47,35 +44,12 @@ test('RTDB permission denied matcher detects locked-mode errors cleanly', () => 
   assert.equal(isRtdbPermissionDeniedMessage(new Error('network timeout')), false);
 });
 
-test('isAuthorizedRtdbAdmin allows any verified Gmail account and blocks unverified/null users', () => {
-  assert.equal(
-    isAuthorizedRtdbAdmin({ email: 'trdsafarr@gmail.com', emailVerified: true }),
-    true
-  );
-  assert.equal(
-    isAuthorizedRtdbAdmin({ email: 'rollinpinbakes@gmail.com', emailVerified: true }),
-    true
-  );
-  assert.equal(
-    isAuthorizedRtdbAdmin({ email: 'team@gmail.com', emailVerified: true }),
-    true
-  );
-  // Unverified email or null user MUST be rejected
-  assert.equal(
-    isAuthorizedRtdbAdmin({ email: 'rollinpinbakes@gmail.com', emailVerified: false }),
-    false
-  );
-  assert.equal(isAuthorizedRtdbAdmin({ email: '', emailVerified: true }), false);
-  assert.equal(isAuthorizedRtdbAdmin(null), false);
-  assert.equal(isAuthorizedRtdbAdmin(undefined), false);
-});
-
-test('RECOMMENDED_RTDB_RULES_JSON blocks unauthenticated root access and allows any verified Google login on /orderpulse', () => {
+test('RECOMMENDED_RTDB_RULES_JSON enables zero-login /orderpulse sync while locking root and /orderpulse_server', () => {
   const parsed = JSON.parse(RECOMMENDED_RTDB_RULES_JSON) as {
     rules: {
       '.read': boolean;
       '.write': boolean;
-      orderpulse: { '.read': string; '.write': string };
+      orderpulse: { '.read': boolean; '.write': boolean };
       orderpulse_server: { '.read': boolean; '.write': boolean };
     };
   };
@@ -83,9 +57,6 @@ test('RECOMMENDED_RTDB_RULES_JSON blocks unauthenticated root access and allows 
   assert.equal(parsed.rules['.write'], false);
   assert.equal(parsed.rules.orderpulse_server['.read'], false);
   assert.equal(parsed.rules.orderpulse_server['.write'], false);
-  assert.equal(
-    parsed.rules.orderpulse['.read'],
-    'auth != null && auth.token.email_verified === true'
-  );
-  assert.equal(parsed.rules.orderpulse['.read'], parsed.rules.orderpulse['.write']);
+  assert.equal(parsed.rules.orderpulse['.read'], true);
+  assert.equal(parsed.rules.orderpulse['.write'], true);
 });

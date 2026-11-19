@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import type { User as FirebaseUser } from 'firebase/auth';
 import {
   Check,
   Cloud,
@@ -8,7 +7,7 @@ import {
   Eye,
   EyeOff,
   GitBranch,
-  LogOut,
+  RefreshCw,
   Server,
   ShieldCheck,
   ShoppingBag,
@@ -22,7 +21,6 @@ interface SetupGuideViewProps {
   cloudSyncEnabled: boolean;
   upstashQuotaExceeded?: boolean;
   whatsapp: WhatsAppState;
-  firebaseUser?: FirebaseUser | null;
   rtdbSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
   cloudSummary?: {
     loaded: boolean;
@@ -30,9 +28,7 @@ interface SetupGuideViewProps {
     orders: number;
     products: number;
   };
-  googleAuthBusy?: boolean;
-  onGoogleSignIn?: () => void;
-  onGoogleSignOut?: () => void;
+  onReconnectRtdb?: () => void;
 }
 
 type GuideTab = 'sync' | 'shopify' | 'railway' | 'oracle';
@@ -116,12 +112,9 @@ export function SetupGuideView({
   cloudSyncEnabled,
   upstashQuotaExceeded = false,
   whatsapp,
-  firebaseUser = null,
   rtdbSyncState = 'idle',
   cloudSummary,
-  googleAuthBusy = false,
-  onGoogleSignIn,
-  onGoogleSignOut,
+  onReconnectRtdb,
 }: SetupGuideViewProps) {
   const [activeTab, setActiveTab] = useState<GuideTab>('sync');
 
@@ -247,27 +240,14 @@ export function SetupGuideView({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {firebaseUser ? (
-                <button
-                  type="button"
-                  disabled={googleAuthBusy}
-                  onClick={() => onGoogleSignOut?.()}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
-                >
-                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-                  Sign Out Google
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={googleAuthBusy}
-                  onClick={() => onGoogleSignIn?.()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
-                >
-                  <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
-                  {googleAuthBusy ? 'Connecting...' : 'Sign in with Google'}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => onReconnectRtdb?.()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 whitespace-nowrap"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${rtdbSyncState === 'syncing' ? 'animate-spin' : ''}`} aria-hidden="true" />
+                {rtdbSyncState === 'syncing' ? 'Syncing...' : 'Reconnect RTDB'}
+              </button>
             </div>
           </div>
 
@@ -285,23 +265,23 @@ export function SetupGuideView({
                 </div>
                 <span
                   className={`rounded-md px-2 py-0.5 font-mono text-[11px] font-semibold ${
-                    firebaseUser
-                      ? rtdbSyncState === 'error'
-                        ? 'bg-rose-500/20 text-rose-200'
-                        : 'bg-emerald-500/20 text-emerald-200'
-                      : 'bg-slate-800 text-slate-300'
+                    rtdbSyncState === 'error'
+                      ? 'bg-rose-500/20 text-rose-200'
+                      : rtdbSyncState === 'synced'
+                        ? 'bg-emerald-500/20 text-emerald-200'
+                        : 'bg-slate-800 text-slate-300'
                   }`}
                 >
-                  {firebaseUser
-                    ? rtdbSyncState === 'syncing'
-                      ? 'Syncing...'
-                      : rtdbSyncState === 'error'
-                        ? 'Rules Needed'
-                        : `Connected (${firebaseUser.email})`
-                    : 'Not Signed In'}
+                  {rtdbSyncState === 'syncing'
+                    ? 'Connecting...'
+                    : rtdbSyncState === 'error'
+                      ? 'Rules Needed'
+                      : rtdbSyncState === 'synced'
+                        ? 'Auto-Synced (No Login)'
+                        : 'Ready'}
                 </span>
               </div>
-              {firebaseUser && cloudSummary?.loaded && (
+              {cloudSummary?.loaded && (
                 <p className="mt-2 font-mono text-[11px] text-emerald-200/90">
                   Cloud Backup in RTDB: Shopify {cloudSummary.hasShopify ? 'Saved' : 'Empty'} · {cloudSummary.orders} orders · {cloudSummary.products} products
                 </p>
@@ -313,43 +293,22 @@ export function SetupGuideView({
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-600/20 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-600/30"
                 >
-                  1. Open RTDB Rules
-                  <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                </a>
-                <a
-                  href={rtdbProjectMeta.authProvidersConsoleUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
-                >
-                  2. Enable Google Sign-In
-                  <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                </a>
-                <a
-                  href={rtdbProjectMeta.authDomainsConsoleUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
-                >
-                  3. Add Authorized Domains
+                  1. Open RTDB Rules in Firebase Console
                   <ExternalLink className="h-3 w-3" aria-hidden="true" />
                 </a>
               </div>
               <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-slate-300">
                 <li>
-                  <span className="font-semibold text-white">Publish Verified-Gmail RTDB Rules:</span> Open <span className="font-mono text-emerald-300">Realtime Database → Rules</span> above, paste the exact JSON rule below (allows any verified Gmail login on <span className="font-mono text-white">/orderpulse</span> while blocking unauthenticated access at root), and click <span className="font-semibold text-white">Publish</span>.
+                  <span className="font-semibold text-white">Paste Zero-Login RTDB Rules Once:</span> Open <span className="font-mono text-emerald-300">Realtime Database → Rules</span> above, paste the exact JSON below, and click <span className="font-semibold text-white">Publish</span>.
                 </li>
                 <li>
-                  <span className="font-semibold text-white">Enable Google Auth &amp; Domains:</span> Turn on <span className="font-semibold text-white">Google</span> under <span className="font-mono text-emerald-300">Authentication → Sign-in method</span>, and add <span className="font-mono text-white">faridabad.broomiesbakery.in</span> under <span className="font-mono text-emerald-300">Authentication → Settings → Authorized domains</span>.
-                </li>
-                <li>
-                  <span className="font-semibold text-white">Sync Once &amp; Restore Anywhere:</span> Click <span className="font-semibold text-emerald-300">RTDB Sync</span> on AI Studio (where your existing orders &amp; Shopify config live), then click <span className="font-semibold text-emerald-300">RTDB Sync</span> on <span className="font-mono text-white">faridabad.broomiesbakery.in</span> — everything restores live.
+                  <span className="font-semibold text-white">No Google Login Needed:</span> As soon as you unlock the dashboard with your passcode, OrderPulse automatically connects and syncs orders, products, and Shopify config across AI Studio, Railway, and <span className="font-mono text-white">faridabad.broomiesbakery.in</span>.
                 </li>
               </ol>
             </div>
 
             <CopyField
-              label="Step 1: Paste in Firebase Console -> Realtime Database -> Rules -> Publish (Any Verified Gmail)"
+              label="Step 1: Paste in Firebase Console -> Realtime Database -> Rules -> Publish (Zero-Login Auto-Sync)"
               value={RECOMMENDED_RTDB_RULES_JSON}
             />
 
@@ -363,23 +322,23 @@ export function SetupGuideView({
               <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4 text-xs leading-relaxed text-amber-200">
                 <p className="font-semibold text-amber-100">Shopify credentials are not saved on this deployment yet.</p>
                 <p className="mt-1">
-                  Click <span className="font-semibold text-white">Sign in with Google</span> above to auto-restore from Firebase Realtime Database, OR paste <span className="font-mono text-white">SHOPIFY_STORE_DOMAIN</span>, <span className="font-mono text-white">SHOPIFY_CLIENT_ID</span>, and <span className="font-mono text-white">SHOPIFY_CLIENT_SECRET</span> in Vercel Project Settings → Environment Variables and redeploy.
+                  Publish the RTDB rule above and click <span className="font-semibold text-white">Reconnect RTDB</span> to auto-restore from Firebase Realtime Database without signing in, OR paste <span className="font-mono text-white">SHOPIFY_STORE_DOMAIN</span>, <span className="font-mono text-white">SHOPIFY_CLIENT_ID</span>, and <span className="font-mono text-white">SHOPIFY_CLIENT_SECRET</span> in Vercel Project Settings → Environment Variables and redeploy.
                 </p>
               </div>
             )}
 
             <CopyField
-              label="Optional 24/7 Server-Side RTDB Env Vars (for Vercel / Railway zero-login backend sync)"
+              label="Optional 24/7 Server-Side RTDB Env Vars (for Vercel / Railway backend sync with locked rules)"
               value={`FIREBASE_RTDB_URL=${rtdbProjectMeta.databaseURL}\nFIREBASE_RTDB_SECRET=paste_database_secret_from_firebase_project_settings_service_accounts`}
             />
 
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-300">
               <p className="font-semibold text-white">
                 Current Storage Status:{' '}
-                {firebaseUser
-                  ? 'Firebase Realtime Database (Per-Key Delta Sync)'
+                {rtdbSyncState === 'synced'
+                  ? 'Firebase Realtime Database (Auto-Sync · No Login)'
                   : upstashQuotaExceeded
-                    ? 'Upstash Redis Bandwidth Exhausted (Switch to Firebase RTDB above)'
+                    ? 'Upstash Redis Bandwidth Exhausted (Publish RTDB Rule Above)'
                     : cloudSyncEnabled
                       ? 'Server Cloud DB Active'
                       : whatsapp.isServerless
