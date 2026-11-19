@@ -5,6 +5,11 @@ import {
   stripUndefinedDeep,
   toSafeFirestoreDocId,
 } from './firestorePayload';
+import {
+  AUTHORIZED_ADMIN_EMAIL,
+  RECOMMENDED_RTDB_RULES_JSON,
+  isAuthorizedRtdbAdmin,
+} from './rtdb';
 
 function isRtdbPermissionDeniedMessage(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
@@ -41,4 +46,49 @@ test('RTDB permission denied matcher detects locked-mode errors cleanly', () => 
   assert.equal(isRtdbPermissionDeniedMessage(new Error('PERMISSION_DENIED: Permission denied')), true);
   assert.equal(isRtdbPermissionDeniedMessage('Client does not have permission denied at /orderpulse'), true);
   assert.equal(isRtdbPermissionDeniedMessage(new Error('network timeout')), false);
+});
+
+test('isAuthorizedRtdbAdmin allows ONLY verified trdsafarr@gmail.com and blocks all other Gmail accounts', () => {
+  assert.equal(
+    isAuthorizedRtdbAdmin({ email: AUTHORIZED_ADMIN_EMAIL, emailVerified: true }),
+    true
+  );
+  assert.equal(
+    isAuthorizedRtdbAdmin({ email: 'TRDSAFARR@GMAIL.COM', emailVerified: true }),
+    true
+  );
+  // Any other Gmail account MUST be rejected
+  assert.equal(
+    isAuthorizedRtdbAdmin({ email: 'randomuser@gmail.com', emailVerified: true }),
+    false
+  );
+  assert.equal(
+    isAuthorizedRtdbAdmin({ email: 'trdsafarr@gmail.com.evil.com', emailVerified: true }),
+    false
+  );
+  // Unverified admin email or null user MUST be rejected
+  assert.equal(
+    isAuthorizedRtdbAdmin({ email: AUTHORIZED_ADMIN_EMAIL, emailVerified: false }),
+    false
+  );
+  assert.equal(isAuthorizedRtdbAdmin(null), false);
+  assert.equal(isAuthorizedRtdbAdmin(undefined), false);
+});
+
+test('RECOMMENDED_RTDB_RULES_JSON enforces explicit root default-deny and single-admin email lock', () => {
+  const parsed = JSON.parse(RECOMMENDED_RTDB_RULES_JSON) as {
+    rules: {
+      '.read': boolean;
+      '.write': boolean;
+      orderpulse: { '.read': string; '.write': string };
+      orderpulse_server: { '.read': boolean; '.write': boolean };
+    };
+  };
+  assert.equal(parsed.rules['.read'], false);
+  assert.equal(parsed.rules['.write'], false);
+  assert.equal(parsed.rules.orderpulse_server['.read'], false);
+  assert.equal(parsed.rules.orderpulse_server['.write'], false);
+  assert.ok(parsed.rules.orderpulse['.read'].includes("auth.token.email === 'trdsafarr@gmail.com'"));
+  assert.ok(parsed.rules.orderpulse['.read'].includes('auth.token.email_verified === true'));
+  assert.equal(parsed.rules.orderpulse['.read'], parsed.rules.orderpulse['.write']);
 });

@@ -49,6 +49,9 @@ interface OrdersViewProps {
   onResendPoll: (orderId: string) => Promise<void>;
   onSendTracking: (orderId: string) => Promise<void>;
   onSaveRemark: (orderId: string, remark: string) => Promise<RemarkSaveResult>;
+  onCancelInShopify?: (
+    orderId: string
+  ) => Promise<{ ok: boolean; alreadyCancelled?: boolean; error?: string }>;
   onSyncShopify: () => Promise<void>;
   onOpenSettings: () => void;
   busyOrderId: string | null;
@@ -189,6 +192,7 @@ export function OrdersView({
   onResendPoll,
   onSendTracking,
   onSaveRemark,
+  onCancelInShopify,
   onSyncShopify,
   onOpenSettings,
   busyOrderId,
@@ -386,6 +390,23 @@ export function OrdersView({
     }, 5000);
   };
 
+  const handleCancelInShopifyClick = async (order: OrderRecord) => {
+    if (!onCancelInShopify) return;
+    const result = await onCancelInShopify(order.id);
+    const msg = result.ok
+      ? result.alreadyCancelled
+        ? `Order ${order.orderNumber} is already cancelled in Shopify.`
+        : `Order ${order.orderNumber} cancelled in Shopify (inventory restocked).`
+      : `Could not cancel ${order.orderNumber} in Shopify: ${result.error || 'unknown error'}`;
+    setRemarkFeedback({
+      type: result.ok ? 'success' : 'warning',
+      text: msg,
+    });
+    window.setTimeout(() => {
+      setRemarkFeedback((prev) => (prev?.text === msg ? null : prev));
+    }, 6000);
+  };
+
   const renderInspectorPanel = (order: OrderRecord, isMobileSheet = false) => (
     <>
       {hasHighRtoTag(order.shopifyTags) && (
@@ -525,6 +546,46 @@ export function OrdersView({
                 {order.shopifyTags || 'None'}
               </span>
             </div>
+
+            {(order.pollStatus === 'cancelled_by_user' || order.shopifyCancelledAt) && (
+              <div className="flex flex-col gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-medium text-slate-400">Shopify Order Status</span>
+                  {order.shopifyCancelledAt ? (
+                    <span
+                      data-testid={
+                        isMobileSheet ? 'mobile-shopify-cancel-status' : 'shopify-cancel-status'
+                      }
+                      className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-rose-300"
+                    >
+                      <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      Cancelled in Shopify
+                    </span>
+                  ) : (
+                    <span
+                      data-testid={
+                        isMobileSheet ? 'mobile-shopify-cancel-status' : 'shopify-cancel-status'
+                      }
+                      className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-amber-300"
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      Not Cancelled in Shopify Yet
+                    </span>
+                  )}
+                </div>
+                {!order.shopifyCancelledAt && onCancelInShopify && (
+                  <button
+                    type="button"
+                    disabled={busyOrderId === order.id}
+                    onClick={() => void handleCancelInShopifyClick(order)}
+                    className="inline-flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-lg border border-rose-500/45 bg-rose-600/90 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-rose-500 disabled:opacity-50"
+                  >
+                    <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                    {busyOrderId === order.id ? 'Cancelling in Shopify...' : 'Cancel in Shopify Now'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-4">

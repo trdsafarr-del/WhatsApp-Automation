@@ -2,16 +2,19 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import {
   computeOrderMetrics,
   extractShopifyTrackingInfo,
+  mergeShopifyTags,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
   shouldPreserveRecentLocalNote,
 } from '../src/lib/orderRules.js';
 import type { AppSettings, OrderRecord } from '../src/lib/types.js';
 import {
+  cancelShopifyOrder,
   hasLiveShopifyCredentials,
   parseShopifyRawOrder,
   testShopifyConnection,
   updateShopifyOrderNote,
+  updateShopifyOrderTags,
   verifyShopifyWebhookHmac,
   type ShopifyRawOrder,
 } from '../server/shopify.js';
@@ -321,6 +324,7 @@ app.post('/api/shopify/sync', async (req: Request, res: Response) => {
     ok: true,
     importedCount: result.importedCount,
     dispatchedCount: result.dispatchedCount,
+    cancelledInShopifyCount: result.cancelledInShopifyCount,
     orders,
     metrics: computeOrderMetrics(orders),
   });
@@ -485,6 +489,76 @@ app.post('/api/orders/:id/vote', async (req: Request, res: Response) => {
   res.json({
     ok: true,
     order: updated,
+    orders: allOrders,
+    metrics: computeOrderMetrics(allOrders),
+  });
+});
+
+app.post('/api/orders/:id/cancel-shopify', async (req: Request, res: Response) => {
+  await store.ensureHydrated();
+  const order = store.getOrderById(String(req.params.id));
+  if (!order) {
+    res.status(404).json({ error: 'Order not found' });
+    return;
+  }
+
+  const settings = store.getSettings();
+  const refund = Boolean(req.body?.refund);
+  const cancelRes = await cancelShopifyOrder(settings, order.shopifyOrderId, {
+    restock: true,
+    refund,
+    notifyCustomer: false,
+    staffNote: 'Cancelled in Shopify from OrderPulse dashboard',
+  });
+
+  if (!cancelRes.cancelled) {
+    store.appendOrderEvent(order.id, {
+      actor: 'shopify',
+      message: `Manual Shopify cancellation failed for ${order.orderNumber}: ${cancelRes.error || 'unknown error'}`,
+    });
+    await store.flushRemote();
+    const allOrders = store.getOrders();
+    res.status(400).json({
+      ok: false,
+      cancelledInShopify: false,
+      error: cancelRes.error || 'Shopify rejected order cancellation.',
+      orders: allOrders,
+      metrics: computeOrderMetrics(allOrders),
+    });
+    return;
+  }
+
+  const cancelTag = settings.cancelTag || 'cancelled by user';
+  const nextTags = mergeShopifyTags(order.shopifyTags, cancelTag, [
+    settings.confirmTag || 'confirm',
+    settings.waitingTag || 'waiting for confirmation',
+  ]);
+  if (nextTags !== order.shopifyTags) {
+    await updateShopifyOrderTags(settings, order.shopifyOrderId, nextTags, false);
+    order.shopifyTags = nextTags;
+  }
+
+  order.pollStatus = 'cancelled_by_user';
+  order.shopifyCancelledAt = order.shopifyCancelledAt || new Date().toISOString();
+  order.respondedAt = order.respondedAt || new Date().toISOString();
+  order.responseChannel = order.responseChannel || 'manual';
+  order.shopifySynced = true;
+  store.upsertOrder(order);
+
+  store.appendOrderEvent(order.id, {
+    actor: 'shopify',
+    message: cancelRes.alreadyCancelled
+      ? `Shopify order ${order.orderNumber} verified already cancelled in Shopify`
+      : `Shopify order ${order.orderNumber} cancelled in Shopify (inventory restocked)`,
+  });
+
+  await store.flushRemote();
+  const allOrders = store.getOrders();
+  res.json({
+    ok: true,
+    cancelledInShopify: true,
+    alreadyCancelled: Boolean(cancelRes.alreadyCancelled),
+    order: store.getOrderById(order.id),
     orders: allOrders,
     metrics: computeOrderMetrics(allOrders),
   });

@@ -1096,6 +1096,9 @@ class WhatsAppManager {
     order.respondedAt = new Date().toISOString();
     order.responseChannel = channel;
     order.shopifySynced = shopifyResult.synced || !hasLiveShopify;
+    if (shouldCancelInShopify && shopifyResult.cancelledInShopify && !order.shopifyCancelledAt) {
+      order.shopifyCancelledAt = new Date().toISOString();
+    }
     if (preferredReplyJid) {
       order.whatsappTargetJid = preferredReplyJid;
     }
@@ -1119,6 +1122,17 @@ class WhatsAppManager {
           ? `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}" via Admin API`
           : `Shopify order ${order.orderNumber} tagged with "${resolution.tagToAdd}"`,
     });
+
+    if (shouldCancelInShopify && hasLiveShopify && shopifyResult.synced) {
+      store.appendOrderEvent(order.id, {
+        actor: 'shopify',
+        message: shopifyResult.cancelledInShopify
+          ? shopifyResult.alreadyCancelled
+            ? `Shopify order ${order.orderNumber} was already cancelled in Shopify`
+            : `Shopify order ${order.orderNumber} cancelled in Shopify (inventory restocked)`
+          : `Shopify order cancellation failed for ${order.orderNumber}: ${shopifyResult.cancelError || 'unknown error'}`,
+      });
+    }
 
     if (
       (channel === 'whatsapp_poll' || channel === 'whatsapp_text') &&

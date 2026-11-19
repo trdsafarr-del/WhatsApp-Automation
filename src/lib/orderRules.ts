@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   whatsappMode: 'baileys_qr',
   defaultCountryCode: '91',
   autoSendPollOnNewOrder: true,
-  autoCancelInShopify: false,
+  autoCancelInShopify: true,
   autoSendTrackingMessage: true,
   pollMessageTemplate:
     'Hi {{customer_name}}, thank you for your order {{order_number}} ({{total_price}}) at {{shop_name}} for {{items_summary}}. Please tap an option below to confirm or cancel your order:',
@@ -1606,6 +1606,7 @@ export function mergeProgressedOrderRecords(
     fulfillmentStatus: winner.fulfillmentStatus || loser.fulfillmentStatus || null,
     shipmentStatus: winner.shipmentStatus || loser.shipmentStatus || null,
     fulfilledAt: winner.fulfilledAt || loser.fulfilledAt || null,
+    shopifyCancelledAt: winner.shopifyCancelledAt || loser.shopifyCancelledAt || null,
     trackingUrl: winner.trackingUrl || loser.trackingUrl || '',
     trackingNumber: winner.trackingNumber || loser.trackingNumber || '',
     trackingCompany: winner.trackingCompany || loser.trackingCompany || '',
@@ -3045,4 +3046,39 @@ export function shouldBackupWhatsAppAuth(params: {
   const minIntervalMs = params.minIntervalMs ?? 15 * 60 * 1000;
   if (!params.lastBackupAtMs || params.lastBackupAtMs <= 0) return true;
   return nowMs - params.lastBackupAtMs >= minIntervalMs;
+}
+
+/**
+ * Checks whether an open, unfulfilled, unpaid (COD) order that was already tagged as
+ * `cancelled by user` should be automatically cancelled in Shopify during sync reconciliation.
+ * Never auto-cancels already-cancelled, fulfilled, or prepaid (`paid`) orders during background sync.
+ */
+export function shouldAutoCancelOpenShopifyOrder(
+  order: Pick<
+    OrderRecord,
+    'pollStatus' | 'shopifyTags' | 'shopifyCancelledAt' | 'fulfillmentStatus' | 'financialStatus'
+  >,
+  settings: Pick<AppSettings, 'autoCancelInShopify' | 'cancelTag'>
+): boolean {
+  if (!settings.autoCancelInShopify) return false;
+  if (order.pollStatus !== 'cancelled_by_user') return false;
+  if (order.shopifyCancelledAt) return false;
+
+  const fulfillment = (order.fulfillmentStatus || '').trim().toLowerCase();
+  if (fulfillment) return false;
+
+  const financial = (order.financialStatus || '').trim().toLowerCase();
+  if (financial === 'paid' || financial === 'partially_paid' || financial === 'refunded') {
+    return false;
+  }
+
+  const cancelTag = (settings.cancelTag || 'cancelled by user').trim().toLowerCase();
+  if (!cancelTag) return false;
+
+  const tags = (order.shopifyTags || '')
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+
+  return tags.includes(cancelTag);
 }

@@ -37,7 +37,12 @@ import {
   dashboardFetch,
   saveDashboardToken,
 } from './lib/dashboardAuth';
-import { rtdbAuth, rtdbProjectMeta } from './lib/rtdb';
+import {
+  AUTHORIZED_ADMIN_EMAIL,
+  isAuthorizedRtdbAdmin,
+  rtdbAuth,
+  rtdbProjectMeta,
+} from './lib/rtdb';
 import {
   createRtdbSyncTracker,
   isRtdbPermissionDenied,
@@ -378,6 +383,24 @@ export default function App() {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(rtdbAuth, (user) => {
+      if (user && !isAuthorizedRtdbAdmin(user)) {
+        const rejectedEmail = user.email || 'unknown account';
+        setFirebaseUser(null);
+        setFirebaseAuthReady(true);
+        syncTrackerRef.current = createRtdbSyncTracker();
+        cloudSnapshotRef.current = null;
+        lastRestoredKeyRef.current = '';
+        setCloudReadyTick(0);
+        setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
+        setRtdbSyncState('error');
+        setRtdbPermissionDenied(false);
+        setRtdbError(
+          `Access denied for "${rejectedEmail}". Only verified admin account ${AUTHORIZED_ADMIN_EMAIL} is allowed to access this database. Unauthorized account signed out.`
+        );
+        void signOutRtdb();
+        return;
+      }
+
       setFirebaseUser(user);
       setFirebaseAuthReady(true);
       if (!user) {
@@ -387,7 +410,6 @@ export default function App() {
         setCloudReadyTick(0);
         setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
         setRtdbSyncState('idle');
-        setRtdbError(null);
         setRtdbPermissionDenied(false);
       }
     });
@@ -430,9 +452,9 @@ export default function App() {
     }
   };
 
-  // Subscribe to Firebase Realtime Database (/orderpulse) once dashboard is unlocked and admin signed in
+  // Subscribe to Firebase Realtime Database (/orderpulse) once dashboard is unlocked and authorized admin signed in
   useEffect(() => {
-    if (authState !== 'unlocked' || !firebaseAuthReady || !firebaseUser?.emailVerified) {
+    if (authState !== 'unlocked' || !firebaseAuthReady || !isAuthorizedRtdbAdmin(firebaseUser)) {
       return;
     }
 
@@ -582,7 +604,7 @@ export default function App() {
     if (
       authState !== 'unlocked' ||
       !firebaseAuthReady ||
-      !firebaseUser?.emailVerified ||
+      !isAuthorizedRtdbAdmin(firebaseUser) ||
       isLoading ||
       cloudReadyTick === 0 ||
       rtdbPermissionDenied
@@ -770,6 +792,39 @@ export default function App() {
     }
   };
 
+  const handleCancelOrderInShopify = async (
+    orderId: string
+  ): Promise<{ ok: boolean; alreadyCancelled?: boolean; error?: string }> => {
+    setBusyOrderId(orderId);
+    try {
+      const res = await dashboardFetch(
+        `/api/orders/${encodeURIComponent(orderId)}/cancel-shopify`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refund: false }),
+        }
+      );
+      const data = (await res.json()) as {
+        ok?: boolean;
+        alreadyCancelled?: boolean;
+        error?: string;
+        orders?: OrderRecord[];
+        metrics?: OrderMetrics;
+      };
+      if (data.orders) setOrders(data.orders);
+      if (data.metrics) setMetrics(data.metrics);
+      if (!res.ok || !data.ok) {
+        return { ok: false, error: data.error || 'Shopify rejected order cancellation.' };
+      }
+      return { ok: true, alreadyCancelled: data.alreadyCancelled };
+    } catch {
+      return { ok: false, error: 'Network error while cancelling order in Shopify.' };
+    } finally {
+      setBusyOrderId(null);
+    }
+  };
+
   const handleSyncShopify = async () => {
     setIsSyncing(true);
     setSyncMessage(null);
@@ -786,6 +841,7 @@ export default function App() {
       const data = (await res.json()) as {
         ok?: boolean;
         importedCount?: number;
+        cancelledInShopifyCount?: number;
         orders?: OrderRecord[];
         metrics?: OrderMetrics;
         error?: string;
@@ -795,7 +851,13 @@ export default function App() {
       } else {
         if (data.orders) setOrders(data.orders);
         if (data.metrics) setMetrics(data.metrics);
-        setSyncMessage(`Synced Shopify orders (${data.importedCount ?? 0} new orders imported).`);
+        const cancelNote =
+          data.cancelledInShopifyCount && data.cancelledInShopifyCount > 0
+            ? ` · ${data.cancelledInShopifyCount} cancelled in Shopify`
+            : '';
+        setSyncMessage(
+          `Synced Shopify orders (${data.importedCount ?? 0} new orders imported${cancelNote}).`
+        );
       }
     } catch {
       setSyncMessage('Network error syncing Shopify orders.');
@@ -1729,6 +1791,7 @@ export default function App() {
                 onResendPoll={handleResendPoll}
                 onSendTracking={handleSendTracking}
                 onSaveRemark={handleSaveOrderRemark}
+                onCancelInShopify={handleCancelOrderInShopify}
                 onSyncShopify={handleSyncShopify}
                 onOpenSettings={() => setActiveTab('settings')}
                 busyOrderId={busyOrderId}

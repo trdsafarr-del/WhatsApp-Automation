@@ -35,6 +35,7 @@ export interface OrderRecord {
   fulfillmentStatus?: string | null;
   shipmentStatus?: string | null;
   fulfilledAt?: string | null;
+  shopifyCancelledAt?: string | null;
   paymentMethod?: string;
   deliverySummary?: string;
   destinationPincode?: string;

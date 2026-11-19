@@ -6,7 +6,13 @@ import {
   toSafeFirestoreDocId,
 } from './firestorePayload';
 import { hasConfiguredShopify } from './orderRules';
-import { rtdb, rtdbAuth, rtdbGoogleProvider } from './rtdb';
+import {
+  AUTHORIZED_ADMIN_EMAIL,
+  isAuthorizedRtdbAdmin,
+  rtdb,
+  rtdbAuth,
+  rtdbGoogleProvider,
+} from './rtdb';
 import type {
   AppSettings,
   GeoSeoConfig,
@@ -54,6 +60,13 @@ export function createRtdbSyncTracker(): RtdbSyncTracker {
 
 export async function signInRtdbWithGoogle(): Promise<User> {
   const cred = await signInWithPopup(rtdbAuth, rtdbGoogleProvider);
+  if (!isAuthorizedRtdbAdmin(cred.user)) {
+    const rejectedEmail = cred.user?.email || 'unknown account';
+    await signOut(rtdbAuth);
+    throw new Error(
+      `Access denied for "${rejectedEmail}". Only verified admin account ${AUTHORIZED_ADMIN_EMAIL} is allowed to access this database.`
+    );
+  }
   return cred.user;
 }
 

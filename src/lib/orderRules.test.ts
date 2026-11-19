@@ -53,6 +53,7 @@ import {
   resolvePollVoteAction,
   selectPriorityAuthFiles,
   shiftMonthKey,
+  shouldAutoCancelOpenShopifyOrder,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
   shouldBackupWhatsAppAuth,
@@ -1696,4 +1697,95 @@ test('Upstash Redis bandwidth guards skip unchanged full DB pulls and throttle f
     shouldBackupWhatsAppAuth({ lastBackupAtMs: t0, nowMs: t0 + 16 * 60_000 }),
     true
   );
+});
+
+test('shouldAutoCancelOpenShopifyOrder cancels only open unfulfilled unpaid COD orders tagged cancelled by user', () => {
+  assert.equal(DEFAULT_SETTINGS.autoCancelInShopify, true);
+
+  const openCodCancelled = {
+    pollStatus: 'cancelled_by_user' as const,
+    shopifyTags: 'cancelled by user, cod, Magic, MEDIUM RTO Risk',
+    shopifyCancelledAt: null,
+    fulfillmentStatus: null,
+    financialStatus: 'pending',
+  };
+
+  assert.equal(shouldAutoCancelOpenShopifyOrder(openCodCancelled, DEFAULT_SETTINGS), true);
+
+  // Disabled setting -> skip
+  assert.equal(
+    shouldAutoCancelOpenShopifyOrder(openCodCancelled, {
+      ...DEFAULT_SETTINGS,
+      autoCancelInShopify: false,
+    }),
+    false
+  );
+
+  // Already cancelled in Shopify -> skip
+  assert.equal(
+    shouldAutoCancelOpenShopifyOrder(
+      { ...openCodCancelled, shopifyCancelledAt: '2026-11-18T10:00:00.000Z' },
+      DEFAULT_SETTINGS
+    ),
+    false
+  );
+
+  // Already fulfilled -> skip
+  assert.equal(
+    shouldAutoCancelOpenShopifyOrder(
+      { ...openCodCancelled, fulfillmentStatus: 'fulfilled' },
+      DEFAULT_SETTINGS
+    ),
+    false
+  );
+
+  // Prepaid (paid) -> never auto-cancel in background sync without explicit admin action
+  assert.equal(
+    shouldAutoCancelOpenShopifyOrder(
+      { ...openCodCancelled, financialStatus: 'paid' },
+      DEFAULT_SETTINGS
+    ),
+    false
+  );
+
+  // Confirmed order -> skip
+  assert.equal(
+    shouldAutoCancelOpenShopifyOrder(
+      { ...openCodCancelled, pollStatus: 'confirmed', shopifyTags: 'confirm, cod' },
+      DEFAULT_SETTINGS
+    ),
+    false
+  );
+
+  // mergeProgressedOrderRecords preserves shopifyCancelledAt across merges
+  const staleCancelled: OrderRecord = {
+    id: 'ord-1348',
+    shopifyOrderId: '1348',
+    orderNumber: '#1348',
+    customerName: 'Misiriya Idris',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '525.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cake',
+    financialStatus: 'pending',
+    fulfillmentStatus: null,
+    shopifyCancelledAt: null,
+    shopifyTags: 'cancelled by user, cod',
+    pollStatus: 'cancelled_by_user',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: '2026-11-18T08:00:00.000Z',
+    responseChannel: 'whatsapp_poll',
+    shopifySynced: true,
+    createdAt: '2026-11-18T07:00:00.000Z',
+    events: [],
+  };
+  const syncedCancelled: OrderRecord = {
+    ...staleCancelled,
+    shopifyCancelledAt: '2026-11-18T08:05:00.000Z',
+  };
+  const merged = mergeProgressedOrderRecords(staleCancelled, syncedCancelled);
+  assert.equal(merged.shopifyCancelledAt, '2026-11-18T08:05:00.000Z');
 });

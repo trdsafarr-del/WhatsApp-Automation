@@ -2,6 +2,7 @@ import {
   extractShopifyTrackingInfo,
   inferInitialPollStatus,
   isOrderOnOrAfterStartDate,
+  shouldAutoCancelOpenShopifyOrder,
   shouldAutoDispatchPoll,
   shouldAutoSendTracking,
   shouldPreserveRecentLocalNote,
@@ -9,6 +10,7 @@ import {
 } from '../src/lib/orderRules.js';
 import { hasDelhiveryCredentials, syncDelhiveryOrdersNow } from './delhivery.js';
 import {
+  cancelShopifyOrder,
   fetchShopifyOrders,
   hasLiveShopifyCredentials,
   parseShopifyRawOrder,
@@ -21,6 +23,7 @@ let syncInFlight: Promise<{
   importedCount: number;
   dispatchedCount: number;
   trackingSentCount: number;
+  cancelledInShopifyCount: number;
   error?: string;
 }> | null = null;
 let lastAutoSyncAtMs = 0;
@@ -29,6 +32,7 @@ let lastAutoDelhiverySyncAtMs = 0;
 /**
  * Syncs latest orders from Shopify Admin API into the persistent store,
  * refreshes external Shopify tags & fulfillment tracking on existing orders,
+ * reconciles open COD orders tagged `cancelled by user` in Shopify when enabled,
  * automatically dispatches WhatsApp Polls for newly arrived eligible orders,
  * and sends tracking link WhatsApp messages when tracking is added.
  */
@@ -39,6 +43,7 @@ export async function syncShopifyOrdersNow(
   importedCount: number;
   dispatchedCount: number;
   trackingSentCount: number;
+  cancelledInShopifyCount: number;
   error?: string;
 }> {
   if (syncInFlight) {
@@ -47,7 +52,13 @@ export async function syncShopifyOrdersNow(
 
   const now = Date.now();
   if (source === 'auto' && now - lastAutoSyncAtMs < 25_000) {
-    return { ok: true, importedCount: 0, dispatchedCount: 0, trackingSentCount: 0 };
+    return {
+      ok: true,
+      importedCount: 0,
+      dispatchedCount: 0,
+      trackingSentCount: 0,
+      cancelledInShopifyCount: 0,
+    };
   }
 
   syncInFlight = (async () => {
@@ -60,6 +71,7 @@ export async function syncShopifyOrdersNow(
           importedCount: 0,
           dispatchedCount: 0,
           trackingSentCount: 0,
+          cancelledInShopifyCount: 0,
           error: 'Configure your .myshopify.com domain and credentials first.',
         };
       }
@@ -75,6 +87,7 @@ export async function syncShopifyOrdersNow(
           importedCount: 0,
           dispatchedCount: 0,
           trackingSentCount: 0,
+          cancelledInShopifyCount: 0,
           error: fetched.error,
         };
       }
@@ -82,6 +95,7 @@ export async function syncShopifyOrdersNow(
       let importedCount = 0;
       let dispatchedCount = 0;
       let trackingSentCount = 0;
+      let cancelledInShopifyCount = 0;
 
       for (const raw of fetched.orders) {
         const orderCreatedAt = raw.created_at || new Date().toISOString();
@@ -92,9 +106,12 @@ export async function syncShopifyOrdersNow(
         const parsed = parseShopifyRawOrder(raw, settings);
         const tracking = extractShopifyTrackingInfo(raw);
 
+        let activeOrder = existing;
+
         if (!existing) {
           store.upsertOrder(parsed);
           importedCount += 1;
+          activeOrder = parsed;
 
           if (shouldAutoDispatchPoll(parsed, settings)) {
             await whatsappManager.dispatchOrderPoll(parsed);
@@ -117,11 +134,22 @@ export async function syncShopifyOrdersNow(
 
           const preserveLocalDecision = shouldPreserveRecentLocalTags(existing);
 
-          // Keep Shopify tags, contact, delivery, and tracking metadata synced without clobbering fresh local updates
+          // Keep Shopify tags, contact, delivery, cancellation, and tracking metadata synced without clobbering fresh local updates
           let changed = false;
           if (!preserveLocalDecision && raw.tags !== undefined && existing.shopifyTags !== raw.tags) {
             existing.shopifyTags = raw.tags;
             changed = true;
+          }
+          if (parsed.shopifyCancelledAt && existing.shopifyCancelledAt !== parsed.shopifyCancelledAt) {
+            existing.shopifyCancelledAt = parsed.shopifyCancelledAt;
+            changed = true;
+          } else if (!preserveLocalDecision && !parsed.shopifyCancelledAt && existing.shopifyCancelledAt) {
+            // Keep existing timestamp only if cancellation just happened locally; otherwise reflect Shopify truth
+            const cancelledMs = Date.parse(existing.shopifyCancelledAt);
+            if (!Number.isFinite(cancelledMs) || Date.now() - cancelledMs > 120_000) {
+              existing.shopifyCancelledAt = null;
+              changed = true;
+            }
           }
           if (!preserveLocalDecision) {
             const externalStatus = inferInitialPollStatus(raw, settings);
@@ -212,6 +240,32 @@ export async function syncShopifyOrdersNow(
             trackingSentCount += 1;
           }
         }
+
+        // Auto-reconcile open unfulfilled COD orders tagged "cancelled by user" in Shopify
+        if (activeOrder && shouldAutoCancelOpenShopifyOrder(activeOrder, settings)) {
+          const cancelRes = await cancelShopifyOrder(settings, activeOrder.shopifyOrderId, {
+            restock: true,
+            refund: false,
+            notifyCustomer: false,
+            staffNote: 'Auto-cancelled by OrderPulse (tagged cancelled by user)',
+          });
+          if (cancelRes.cancelled) {
+            activeOrder.shopifyCancelledAt = new Date().toISOString();
+            store.upsertOrder(activeOrder);
+            store.appendOrderEvent(activeOrder.id, {
+              actor: 'shopify',
+              message: cancelRes.alreadyCancelled
+                ? `Shopify order ${activeOrder.orderNumber} verified already cancelled in Shopify`
+                : `Shopify order ${activeOrder.orderNumber} auto-cancelled in Shopify (inventory restocked)`,
+            });
+            cancelledInShopifyCount += 1;
+          } else if (cancelRes.error) {
+            store.appendOrderEvent(activeOrder.id, {
+              actor: 'shopify',
+              message: `Shopify auto-cancel failed for ${activeOrder.orderNumber}: ${cancelRes.error}`,
+            });
+          }
+        }
       }
 
       if (whatsappManager.isConnected()) {
@@ -232,7 +286,13 @@ export async function syncShopifyOrdersNow(
         }
       }
 
-      return { ok: true, importedCount, dispatchedCount, trackingSentCount };
+      return {
+        ok: true,
+        importedCount,
+        dispatchedCount,
+        trackingSentCount,
+        cancelledInShopifyCount,
+      };
     } finally {
       syncInFlight = null;
     }

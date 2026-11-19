@@ -220,6 +220,7 @@ export function parseShopifyRawOrder(
     fulfillmentStatus: raw.fulfillment_status || null,
     shipmentStatus: tracking.shipmentStatus || null,
     fulfilledAt: tracking.fulfilledAt || null,
+    shopifyCancelledAt: raw.cancelled_at || null,
     paymentMethod,
     deliverySummary,
     destinationPincode,
@@ -472,12 +473,219 @@ export async function fetchShopifyOrders(
   }
 }
 
+export interface ShopifyCancelOrderResult {
+  cancelled: boolean;
+  alreadyCancelled?: boolean;
+  error?: string;
+}
+
+/**
+ * Cancels an order in Shopify via Admin GraphQL `orderCancel` (2025-01) with automatic
+ * fallback to REST `POST /orders/{id}/cancel.json`. Restocks items by default and never
+ * silently ignores Shopify cancellation errors.
+ */
+export async function cancelShopifyOrder(
+  settings: AppSettings,
+  shopifyOrderId: string,
+  options?: {
+    restock?: boolean;
+    refund?: boolean;
+    notifyCustomer?: boolean;
+    staffNote?: string;
+  }
+): Promise<ShopifyCancelOrderResult> {
+  if (!hasLiveShopifyCredentials(settings)) {
+    return { cancelled: false, error: 'Shopify credentials are not configured.' };
+  }
+
+  const cleanId = String(shopifyOrderId || '').trim();
+  if (!cleanId) {
+    return { cancelled: false, error: 'Missing Shopify order ID.' };
+  }
+
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { cancelled: false, error: auth.error };
+  }
+
+  const restock = options?.restock !== false;
+  const refund = Boolean(options?.refund);
+  const notifyCustomer = Boolean(options?.notifyCustomer);
+  const staffNote =
+    options?.staffNote || 'Cancelled by customer via WhatsApp poll (OrderPulse)';
+
+  const mutation = `
+    mutation OrderPulseCancelOrder(
+      $orderId: ID!
+      $reason: OrderCancelReason!
+      $restock: Boolean!
+      $refund: Boolean!
+      $notifyCustomer: Boolean!
+      $staffNote: String
+    ) {
+      orderCancel(
+        orderId: $orderId
+        reason: $reason
+        restock: $restock
+        refund: $refund
+        notifyCustomer: $notifyCustomer
+        staffNote: $staffNote
+      ) {
+        job {
+          id
+          done
+        }
+        orderCancelUserErrors {
+          field
+          message
+          code
+        }
+      }
+    }
+  `;
+
+  let shouldTryRestFallback = false;
+  let gqlError: string | undefined;
+
+  try {
+    const res = await fetch(`https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': auth.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: mutation,
+        variables: {
+          orderId: `gid://shopify/Order/${cleanId}`,
+          reason: 'CUSTOMER',
+          restock,
+          refund,
+          notifyCustomer,
+          staffNote,
+        },
+      }),
+    });
+
+    if (res.ok) {
+      const json = (await res.json()) as {
+        data?: {
+          orderCancel?: {
+            job?: { id?: string; done?: boolean } | null;
+            orderCancelUserErrors?: Array<{ field?: string[]; message?: string; code?: string }>;
+          };
+        };
+        errors?: Array<{ message?: string }>;
+      };
+
+      if (Array.isArray(json.errors) && json.errors.length > 0) {
+        const msg = json.errors.map((e) => e.message).filter(Boolean).join('; ');
+        gqlError = msg || 'Shopify GraphQL orderCancel error';
+        if (
+          msg.toLowerCase().includes('field') ||
+          msg.toLowerCase().includes('argument') ||
+          msg.toLowerCase().includes('ordercancel')
+        ) {
+          shouldTryRestFallback = true;
+        }
+      } else {
+        const userErrors = json.data?.orderCancel?.orderCancelUserErrors || [];
+        if (userErrors.length === 0) {
+          return { cancelled: true };
+        }
+        const combined = userErrors
+          .map((e) => e.message || e.code)
+          .filter(Boolean)
+          .join('; ');
+        const lower = combined.toLowerCase();
+        if (
+          userErrors.some((e) => (e.code || '').toUpperCase().includes('ALREADY_CANCEL')) ||
+          lower.includes('already cancelled') ||
+          lower.includes('already been cancelled') ||
+          lower.includes('already canceled')
+        ) {
+          return { cancelled: true, alreadyCancelled: true };
+        }
+        gqlError = combined || 'Shopify rejected order cancellation.';
+        // Try REST fallback only for unexpected schema/method issues, not fulfilled/paid business rejections
+        if (!lower.includes('fulfilled') && !lower.includes('refund')) {
+          shouldTryRestFallback = true;
+        }
+      }
+    } else {
+      const text = await res.text();
+      gqlError = `Shopify GraphQL ${res.status}: ${text.slice(0, 180)}`;
+      shouldTryRestFallback = true;
+    }
+  } catch (err) {
+    gqlError = err instanceof Error ? err.message : 'Network error cancelling order via GraphQL';
+    shouldTryRestFallback = true;
+  }
+
+  if (!shouldTryRestFallback) {
+    return { cancelled: false, error: gqlError };
+  }
+
+  // Fallback: REST POST /orders/{id}/cancel.json
+  try {
+    const restRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders/${cleanId}/cancel.json`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': auth.token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reason: 'customer',
+          email: notifyCustomer,
+        }),
+      }
+    );
+
+    if (restRes.ok) {
+      return { cancelled: true };
+    }
+
+    const restText = await restRes.text();
+    const restLower = restText.toLowerCase();
+    if (
+      restLower.includes('already cancelled') ||
+      restLower.includes('already been cancelled') ||
+      restLower.includes('already canceled')
+    ) {
+      return { cancelled: true, alreadyCancelled: true };
+    }
+
+    return {
+      cancelled: false,
+      error: gqlError
+        ? `${gqlError} (REST fallback ${restRes.status}: ${restText.slice(0, 140)})`
+        : `Shopify cancel API ${restRes.status}: ${restText.slice(0, 180)}`,
+    };
+  } catch (err) {
+    return {
+      cancelled: false,
+      error:
+        gqlError ||
+        (err instanceof Error ? err.message : 'Network error cancelling Shopify order'),
+    };
+  }
+}
+
 export async function updateShopifyOrderTags(
   settings: AppSettings,
   shopifyOrderId: string,
   newTags: string,
   shouldCancelOrder: boolean
-): Promise<{ synced: boolean; error?: string }> {
+): Promise<{
+  synced: boolean;
+  cancelledInShopify?: boolean;
+  alreadyCancelled?: boolean;
+  cancelError?: string;
+  error?: string;
+}> {
   if (!hasLiveShopifyCredentials(settings)) {
     return { synced: false };
   }
@@ -515,17 +723,17 @@ export async function updateShopifyOrderTags(
     }
 
     if (shouldCancelOrder) {
-      await fetch(
-        `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/orders/${shopifyOrderId}/cancel.json`,
-        {
-          method: 'POST',
-          headers: {
-            'X-Shopify-Access-Token': auth.token,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ reason: 'customer' }),
-        }
-      );
+      const cancelRes = await cancelShopifyOrder(settings, shopifyOrderId, {
+        restock: true,
+        refund: false,
+        notifyCustomer: false,
+      });
+      return {
+        synced: true,
+        cancelledInShopify: cancelRes.cancelled,
+        alreadyCancelled: cancelRes.alreadyCancelled,
+        cancelError: cancelRes.error,
+      };
     }
 
     return { synced: true };

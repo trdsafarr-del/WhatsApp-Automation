@@ -337,7 +337,7 @@ export function SetupGuideView({
               </div>
               <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-slate-300">
                 <li>
-                  <span className="font-semibold text-white">Publish Admin-Only RTDB Rules:</span> Open <span className="font-mono text-emerald-300">Realtime Database → Rules</span> above, paste the JSON rule below (allows only verified <span className="font-mono text-white">trdsafarr@gmail.com</span>), and click <span className="font-semibold text-white">Publish</span>.
+                  <span className="font-semibold text-white">Publish Strict Admin-Only RTDB Rules (Default Deny):</span> Open <span className="font-mono text-emerald-300">Realtime Database → Rules</span> above, paste the exact JSON rule below (sets root <span className="font-mono text-white">&quot;.read&quot;: false, &quot;.write&quot;: false</span> so NO other Gmail can read/write any path — ONLY verified <span className="font-mono text-white">{rtdbProjectMeta.adminEmail}</span> can access <span className="font-mono text-white">/orderpulse</span>), and click <span className="font-semibold text-white">Publish</span>. The app also auto-signs-out any unauthorized Gmail immediately.
                 </li>
                 <li>
                   <span className="font-semibold text-white">Enable Google Auth &amp; Domains:</span> Turn on <span className="font-semibold text-white">Google</span> under <span className="font-mono text-emerald-300">Authentication → Sign-in method</span>, and add <span className="font-mono text-white">faridabad.broomiesbakery.in</span> under <span className="font-mono text-emerald-300">Authentication → Settings → Authorized domains</span>.
@@ -349,7 +349,7 @@ export function SetupGuideView({
             </div>
 
             <CopyField
-              label="Step 1: Paste in Firebase Console -> Realtime Database -> Rules -> Publish"
+              label="Step 1: Paste in Firebase Console -> Realtime Database -> Rules -> Publish (Strict Single-Admin Lock)"
               value={RECOMMENDED_RTDB_RULES_JSON}
             />
 
