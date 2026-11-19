@@ -96,6 +96,20 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
       settings.delhiveryApiToken || process.env.DELHIVERY_API_TOKEN || '',
     delhiveryPickupPincode:
       settings.delhiveryPickupPincode || process.env.DELHIVERY_PICKUP_PINCODE || '',
+    dailyMetaAdsSpend:
+      Array.isArray(settings.metaAdsRateHistory) && settings.metaAdsRateHistory.length > 0
+        ? [...settings.metaAdsRateHistory]
+            .filter(
+              (entry) =>
+                entry &&
+                typeof entry.effectiveFrom === 'string' &&
+                Number.isFinite(Number(entry.dailySpend))
+            )
+            .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+            .slice(-1)[0]?.dailySpend ??
+          settings.dailyMetaAdsSpend ??
+          DEFAULT_SETTINGS.dailyMetaAdsSpend
+        : settings.dailyMetaAdsSpend ?? DEFAULT_SETTINGS.dailyMetaAdsSpend,
   };
 }
 
@@ -1349,10 +1363,19 @@ class PersistentStore {
   }): { restoredOrders: number; restoredProducts: number; restoredSettings: boolean } {
     let restoredSettings = false;
     if (payload.settings && typeof payload.settings === 'object') {
+      const incomingHasMetaHistory =
+        Array.isArray(payload.settings.metaAdsRateHistory) &&
+        payload.settings.metaAdsRateHistory.length > 0;
       const mergedSettings = hydrateEnvDefaults({
         ...DEFAULT_SETTINGS,
         ...this.state.settings,
         ...payload.settings,
+        dailyMetaAdsSpend: incomingHasMetaHistory
+          ? payload.settings.dailyMetaAdsSpend ?? this.state.settings.dailyMetaAdsSpend
+          : this.state.settings.dailyMetaAdsSpend ?? DEFAULT_SETTINGS.dailyMetaAdsSpend,
+        metaAdsRateHistory: incomingHasMetaHistory
+          ? payload.settings.metaAdsRateHistory
+          : this.state.settings.metaAdsRateHistory ?? DEFAULT_SETTINGS.metaAdsRateHistory,
         shopifyStoreDomain:
           this.state.settings.shopifyStoreDomain || payload.settings.shopifyStoreDomain || '',
         shopifyClientId:
@@ -1385,16 +1408,25 @@ class PersistentStore {
     }
 
     if (payload.whatsappMeta && typeof payload.whatsappMeta === 'object') {
-      this.state.whatsappMeta = {
-        ...this.state.whatsappMeta,
-        phoneNumber: this.state.whatsappMeta.phoneNumber || payload.whatsappMeta.phoneNumber || null,
-        pushName: this.state.whatsappMeta.pushName || payload.whatsappMeta.pushName || null,
-        connectedAt: this.state.whatsappMeta.connectedAt || payload.whatsappMeta.connectedAt || null,
-        lastHeartbeatAt:
-          this.state.whatsappMeta.lastHeartbeatAt || payload.whatsappMeta.lastHeartbeatAt || null,
-        activeHostKind:
-          this.state.whatsappMeta.activeHostKind || payload.whatsappMeta.activeHostKind || null,
-      };
+      const incomingHost = payload.whatsappMeta.activeHostKind || null;
+      const isRemoteProductionHost =
+        Boolean(process.env.VERCEL) ||
+        incomingHost === 'railway' ||
+        incomingHost === 'cloud';
+      if (isRemoteProductionHost) {
+        this.state.whatsappMeta = {
+          ...this.state.whatsappMeta,
+          phoneNumber:
+            this.state.whatsappMeta.phoneNumber || payload.whatsappMeta.phoneNumber || null,
+          pushName: this.state.whatsappMeta.pushName || payload.whatsappMeta.pushName || null,
+          connectedAt:
+            this.state.whatsappMeta.connectedAt || payload.whatsappMeta.connectedAt || null,
+          lastHeartbeatAt:
+            this.state.whatsappMeta.lastHeartbeatAt || payload.whatsappMeta.lastHeartbeatAt || null,
+          activeHostKind:
+            this.state.whatsappMeta.activeHostKind || incomingHost,
+        };
+      }
     }
 
     let restoredOrders = 0;

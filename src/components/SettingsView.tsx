@@ -843,7 +843,7 @@ export function SettingsView({
                   type="number"
                   min={0}
                   step="50"
-                  value={form.dailyMetaAdsSpend ?? 500}
+                  value={form.dailyMetaAdsSpend ?? 1500}
                   onChange={(e) =>
                     updateField('dailyMetaAdsSpend', Number.parseFloat(e.target.value) || 0)
                   }

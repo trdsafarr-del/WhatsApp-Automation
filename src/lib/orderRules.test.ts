@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_META_ADS_RATE_HISTORY,
   DEFAULT_SETTINGS,
   buildDailyReportSummary,
   buildDeployEnvSnippet,
@@ -11,6 +12,7 @@ import {
   calculateUnitEconomicsSimulation,
   computeBillableParcelWeightGrams,
   computeIncrementalRtoLegCost,
+  computeMetaAdDateKeysInRange,
   computeMetaAdDaysInRange,
   computeOrderMetrics,
   detectHostRuntimeKind,
@@ -50,6 +52,7 @@ import {
   normalizePhoneToWhatsAppJid,
   parseDelhiveryBillingCsv,
   readCleanEnvVar,
+  resolveDailyMetaAdsRateForDate,
   resolvePollVoteAction,
   selectPriorityAuthFiles,
   shiftMonthKey,
@@ -1789,3 +1792,143 @@ test('shouldAutoCancelOpenShopifyOrder cancels only open unfulfilled unpaid COD 
   const merged = mergeProgressedOrderRecords(staleCancelled, syncedCancelled);
   assert.equal(merged.shopifyCancelledAt, '2026-11-18T08:05:00.000Z');
 });
+
+test('isOrderRtoReturn classifies Shopify courier return notes like "In Transit For Return" while ignoring pre-dispatch RTO risk notes', () => {
+  const order1330 = {
+    pollStatus: 'confirmed' as const,
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'in_transit',
+    shopifyTags: 'cod, confirm, LOW RTO Risk, Magic, RTO Risk - low',
+    orderNote: 'In Transit For Return',
+    trackingNumber: '61926710001945',
+    trackingUrl: 'https://www.delhivery.com/track/package/61926710001945',
+    trackingSentAt: null,
+    trackingSentValue: null,
+  };
+  assert.equal(isOrderRtoReturn(order1330), true);
+  assert.equal(isOrderInTransit(order1330), false);
+  assert.equal(isOrderDelivered(order1330), false);
+  assert.deepEqual(getDispatchStatusInfo(order1330), {
+    code: 'rto_return',
+    label: 'RTO Return',
+  });
+
+  // Other courier return note variants
+  assert.equal(
+    isOrderRtoReturn({ ...order1330, orderNote: 'RTO Delivered' }),
+    true
+  );
+  assert.equal(
+    isOrderRtoReturn({ ...order1330, orderNote: 'Returned to Origin' }),
+    true
+  );
+  assert.equal(
+    isOrderRtoReturn({ ...order1330, orderNote: '', lastCourierScanRemark: 'RTO In Transit' }),
+    true
+  );
+
+  // Pre-dispatch manual risk note like #1312 ("high rto not picking the call") must NOT be misclassified as RTO Return
+  const order1312 = {
+    pollStatus: 'confirmed' as const,
+    fulfillmentStatus: null,
+    shipmentStatus: null,
+    shopifyTags: 'cod, confirm, HIGH RTO Risk, Magic, RTO Risk - low',
+    orderNote: 'high rto not picking the call',
+    trackingNumber: '',
+    trackingUrl: '',
+    trackingSentAt: null,
+    trackingSentValue: null,
+  };
+  assert.equal(isOrderRtoReturn(order1312), false);
+  assert.equal(isOrderReadyToDispatch(order1312), true);
+  assert.deepEqual(getDispatchStatusInfo(order1312), {
+    code: 'ready',
+    label: 'Dispatch Today',
+  });
+});
+
+test('Tiered date-wise Daily Meta Ads spend calculates ₹500 -> ₹900 -> ₹1500 accurately across range and daily rows', () => {
+  const tieredCosts = {
+    cogsPercent: 35,
+    packagingCostPerOrder: 25,
+    fallbackForwardShippingCost: 75,
+    fallbackRtoShippingCost: 75,
+    fallbackCodFee: 25,
+    prepaidGatewayPercent: 2,
+    marketingCostPerOrder: 0,
+    dailyMetaAdsSpend: 1500,
+    metaAdsRateHistory: DEFAULT_META_ADS_RATE_HISTORY,
+  };
+
+  assert.equal(resolveDailyMetaAdsRateForDate('2026-11-13', tieredCosts), 500);
+  assert.equal(resolveDailyMetaAdsRateForDate('2026-11-15', tieredCosts), 500);
+  assert.equal(resolveDailyMetaAdsRateForDate('2026-11-16', tieredCosts), 900);
+  assert.equal(resolveDailyMetaAdsRateForDate('2026-11-18', tieredCosts), 900);
+  assert.equal(resolveDailyMetaAdsRateForDate('2026-11-19', tieredCosts), 1500);
+  assert.equal(resolveDailyMetaAdsRateForDate('2026-11-25', tieredCosts), 1500);
+
+  const dateKeys = computeMetaAdDateKeysInRange({
+    orders: [],
+    fromDate: '2026-11-01',
+    toDate: '2026-11-30',
+    syncStartDate: '2026-11-13',
+    todayIst: '2026-11-19',
+  });
+  assert.deepEqual(dateKeys, [
+    '2026-11-13',
+    '2026-11-14',
+    '2026-11-15',
+    '2026-11-16',
+    '2026-11-17',
+    '2026-11-18',
+    '2026-11-19',
+  ]);
+
+  const makeDelivered = (id: string, createdAt: string): OrderRecord => ({
+    id,
+    shopifyOrderId: id,
+    orderNumber: `#${id}`,
+    customerName: 'Test Customer',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '1000.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cake',
+    financialStatus: 'paid',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'delivered',
+    paymentMethod: 'Prepaid',
+    delhiveryShippingCost: 80,
+    shopifyTags: 'confirm, prepaid',
+    pollStatus: 'confirmed',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: createdAt,
+    responseChannel: 'whatsapp_poll',
+    shopifySynced: true,
+    createdAt,
+    events: [],
+  });
+
+  const sampleOrders = [
+    makeDelivered('t13', '2026-11-13T10:00:00+05:30'),
+    makeDelivered('t16', '2026-11-16T10:00:00+05:30'),
+    makeDelivered('t19', '2026-11-19T10:00:00+05:30'),
+  ];
+
+  // Nov 13..15 = 3*500 (1500), Nov 16..18 = 3*900 (2700), Nov 19 = 1*1500 (1500) => 5700 total
+  const pnl = buildProfitLossReport(sampleOrders, tieredCosts, 0, dateKeys.length, dateKeys);
+  assert.equal(pnl.metaAdDaysCount, 7);
+  assert.equal(pnl.totalDailyMetaAds, 5700);
+  assert.equal(pnl.dailyMetaAdsRate, 1500);
+  assert.equal(pnl.metaAdsBreakdownLabel, '3d×₹500 + 3d×₹900 + 1d×₹1,500');
+
+  const row13 = pnl.dailyPnlRows.find((r) => r.dateKey === '2026-11-13');
+  const row16 = pnl.dailyPnlRows.find((r) => r.dateKey === '2026-11-16');
+  const row19 = pnl.dailyPnlRows.find((r) => r.dateKey === '2026-11-19');
+  assert.equal(row13?.metaAdsCost, 500);
+  assert.equal(row16?.metaAdsCost, 900);
+  assert.equal(row19?.metaAdsCost, 1500);
+});
+

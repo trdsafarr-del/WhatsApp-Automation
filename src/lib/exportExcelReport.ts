@@ -120,6 +120,7 @@ export interface MonthlyExcelExportParams {
   costAssumptions: CostAssumptions;
   periodAdSpend: number;
   adDaysCount?: number;
+  metaAdDateKeys?: string[];
   periodLabel: string;
 }
 
@@ -133,6 +134,7 @@ export function buildMonthlyExcelWorkbook({
   costAssumptions,
   periodAdSpend,
   adDaysCount,
+  metaAdDateKeys,
   periodLabel,
 }: MonthlyExcelExportParams): { workbook: ExcelJS.Workbook; filename: string } {
   const wb = new ExcelJS.Workbook();
@@ -150,7 +152,13 @@ export function buildMonthlyExcelWorkbook({
     .replace(/[^a-zA-Z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-  const pnl = buildProfitLossReport(orders, costAssumptions, periodAdSpend, adDaysCount);
+  const pnl = buildProfitLossReport(
+    orders,
+    costAssumptions,
+    periodAdSpend,
+    adDaysCount,
+    metaAdDateKeys
+  );
   const daily = buildDailyReportSummary(orders);
   const settleDelay = buildSettlementAndDelaySummary(orders, settings);
   const nowStr = new Date().toLocaleString('en-IN');
@@ -352,9 +360,11 @@ export function buildMonthlyExcelWorkbook({
       value: round2(pnl.totalMarketingCost),
       share: sharePctStr(pnl.totalMarketingCost),
       note:
-        pnl.dailyMetaAdsRate > 0
-          ? `Meta Ads ${pnl.currency} ${pnl.dailyMetaAdsRate}/day × ${pnl.metaAdDaysCount}d = ${pnl.currency} ${pnl.totalDailyMetaAds}${periodAdSpend > 0 ? ` + Extra ${pnl.currency} ${periodAdSpend}` : ''}`
-          : `Includes Monthly Ad Spend ${pnl.currency} ${periodAdSpend}`,
+        pnl.metaAdsBreakdownLabel
+          ? `Meta Ads ${pnl.metaAdsBreakdownLabel} = ${pnl.currency} ${pnl.totalDailyMetaAds}${periodAdSpend > 0 ? ` + Extra ${pnl.currency} ${periodAdSpend}` : ''}`
+          : pnl.dailyMetaAdsRate > 0
+            ? `Meta Ads ${pnl.currency} ${pnl.dailyMetaAdsRate}/day × ${pnl.metaAdDaysCount}d = ${pnl.currency} ${pnl.totalDailyMetaAds}${periodAdSpend > 0 ? ` + Extra ${pnl.currency} ${periodAdSpend}` : ''}`
+            : `Includes Monthly Ad Spend ${pnl.currency} ${periodAdSpend}`,
       text: COLORS.amberText,
     },
     {

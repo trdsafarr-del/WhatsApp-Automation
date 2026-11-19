@@ -8,10 +8,12 @@ import {
   FileDown,
   FileSpreadsheet,
   IndianRupee,
+  Plus,
   RefreshCw,
   Save,
   Settings2,
   ShieldCheck,
+  Trash2,
   TrendingDown,
   TrendingUp,
   Truck,
@@ -20,10 +22,13 @@ import {
 import {
   buildProfitLossReport,
   calculateUnitEconomicsSimulation,
+  DEFAULT_META_ADS_RATE_HISTORY,
+  getIstDateKey,
+  normalizeMetaAdsRateHistory,
   type CostAssumptions,
   type PnlOutcomeCategory,
 } from '../lib/orderRules';
-import type { AppSettings, OrderRecord } from '../lib/types';
+import type { AppSettings, MetaAdsRateEntry, OrderRecord } from '../lib/types';
 
 interface ProfitLossPanelProps {
   orders: OrderRecord[];
@@ -33,11 +38,13 @@ interface ProfitLossPanelProps {
   periodAdSpend: number;
   adDaysCount?: number;
   autoAdDays?: number;
+  metaAdDateKeys?: string[];
   isAdDaysOverridden?: boolean;
   costDirty: boolean;
   isSavingCosts: boolean;
   costNotice: string | null;
   onUpdateCostField: (key: keyof CostAssumptions, rawVal: string) => void;
+  onUpdateMetaAdsRateHistory?: (nextHistory: MetaAdsRateEntry[]) => void;
   onUpdatePeriodAdSpend: (rawVal: string) => void;
   onUpdateAdDays?: (days: number) => void;
   onResetAdDays?: () => void;
@@ -76,11 +83,13 @@ export function ProfitLossPanel({
   periodAdSpend,
   adDaysCount,
   autoAdDays,
+  metaAdDateKeys,
   isAdDaysOverridden,
   costDirty,
   isSavingCosts,
   costNotice,
   onUpdateCostField,
+  onUpdateMetaAdsRateHistory,
   onUpdatePeriodAdSpend,
   onUpdateAdDays,
   onResetAdDays,
@@ -116,8 +125,18 @@ export function ProfitLossPanel({
   });
 
   const pnl = useMemo(
-    () => buildProfitLossReport(orders, costForm, periodAdSpend, adDaysCount),
-    [orders, costForm, periodAdSpend, adDaysCount]
+    () => buildProfitLossReport(orders, costForm, periodAdSpend, adDaysCount, metaAdDateKeys),
+    [orders, costForm, periodAdSpend, adDaysCount, metaAdDateKeys]
+  );
+
+  const activeMetaHistory = useMemo(
+    () =>
+      normalizeMetaAdsRateHistory(
+        costForm.metaAdsRateHistory && costForm.metaAdsRateHistory.length > 0
+          ? costForm.metaAdsRateHistory
+          : DEFAULT_META_ADS_RATE_HISTORY
+      ),
+    [costForm.metaAdsRateHistory]
   );
 
   const simResult = useMemo(() => calculateUnitEconomicsSimulation(simInput), [simInput]);
@@ -247,9 +266,11 @@ export function ProfitLossPanel({
     },
     {
       label:
-        pnl.dailyMetaAdsRate > 0
-          ? `Meta Ads & Marketing (${pnl.metaAdDaysCount}d × ₹${pnl.dailyMetaAdsRate}/d)`
-          : 'Marketing / Ad Spend',
+        pnl.metaAdsBreakdownLabel
+          ? `Meta Ads & Marketing (${pnl.metaAdsBreakdownLabel})`
+          : pnl.dailyMetaAdsRate > 0
+            ? `Meta Ads & Marketing (${pnl.metaAdDaysCount}d × ₹${pnl.dailyMetaAdsRate}/d)`
+            : 'Marketing / Ad Spend',
       amount: pnl.totalMarketingCost,
       colorClass: 'bg-orange-400',
       textClass: 'text-orange-300',
@@ -601,8 +622,9 @@ export function ProfitLossPanel({
               <span className="text-orange-300">
                 Meta Ads{' '}
                 <strong>
-                  {formatInr(pnl.dailyMetaAdsRate, pnl.currency)}/d × {pnl.metaAdDaysCount}d ={' '}
-                  {formatInr(pnl.totalDailyMetaAds, pnl.currency)}
+                  {pnl.metaAdsBreakdownLabel
+                    ? `${pnl.metaAdsBreakdownLabel} = ${formatInr(pnl.totalDailyMetaAds, pnl.currency)}`
+                    : `${formatInr(pnl.dailyMetaAdsRate, pnl.currency)}/d × ${pnl.metaAdDaysCount}d = ${formatInr(pnl.totalDailyMetaAds, pnl.currency)}`}
                 </strong>
               </span>
               <span>
@@ -654,12 +676,12 @@ export function ProfitLossPanel({
               </label>
 
               <label className="block">
-                <span className="text-[11px] font-medium text-orange-300">Meta Ads ₹/Day</span>
+                <span className="text-[11px] font-medium text-orange-300">Current Meta Ads ₹/Day</span>
                 <input
                   type="number"
                   min={0}
                   step="50"
-                  value={costForm.dailyMetaAdsSpend ?? 500}
+                  value={costForm.dailyMetaAdsSpend ?? 1500}
                   onChange={(e) => onUpdateCostField('dailyMetaAdsSpend', e.target.value)}
                   className="mt-1 w-full rounded-lg border border-orange-500/40 bg-slate-950/80 px-2.5 py-1.5 font-mono text-xs text-white focus:border-orange-400 focus:outline-none tabular-nums"
                 />
@@ -722,14 +744,102 @@ export function ProfitLossPanel({
               </label>
             </div>
 
-            {pnl.dailyMetaAdsRate > 0 && (
+            {onUpdateMetaAdsRateHistory && (
+              <div className="rounded-lg border border-orange-500/25 bg-slate-950/60 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-orange-200">
+                      Date-Wise Meta Ads Daily Spend History
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Past days stay locked at their old budget (₹500 → ₹900) while new dates use ₹1,500/day automatically.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const todayKey = getIstDateKey(new Date()) || '2026-11-19';
+                      const nextDate = activeMetaHistory.some((r) => r.effectiveFrom === todayKey)
+                        ? `${todayKey.slice(0, 8)}${String(
+                            Math.min(28, Number.parseInt(todayKey.slice(8, 10), 10) + 1)
+                          ).padStart(2, '0')}`
+                        : todayKey;
+                      onUpdateMetaAdsRateHistory([
+                        ...activeMetaHistory,
+                        { effectiveFrom: nextDate, dailySpend: costForm.dailyMetaAdsSpend ?? 1500 },
+                      ]);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-orange-500/35 bg-orange-500/15 px-2.5 py-1 text-[11px] font-medium text-orange-200 hover:bg-orange-500/25"
+                  >
+                    <Plus className="h-3 w-3" aria-hidden="true" />
+                    Add Rate Change
+                  </button>
+                </div>
+
+                <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {activeMetaHistory.map((tier, idx) => (
+                    <div
+                      key={`${tier.effectiveFrom}-${idx}`}
+                      className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/80 px-2.5 py-1.5"
+                    >
+                      <input
+                        type="date"
+                        aria-label={`Meta Ads tier ${idx + 1} start date`}
+                        value={tier.effectiveFrom}
+                        onChange={(e) => {
+                          const next = activeMetaHistory.map((item, i) =>
+                            i === idx ? { ...item, effectiveFrom: e.target.value } : item
+                          );
+                          onUpdateMetaAdsRateHistory(next);
+                        }}
+                        className="w-32 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 font-mono text-[11px] text-slate-200 focus:border-orange-400 focus:outline-none"
+                      />
+                      <span className="text-[11px] text-slate-500">₹</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="50"
+                        aria-label={`Meta Ads tier ${idx + 1} daily spend`}
+                        value={tier.dailySpend}
+                        onChange={(e) => {
+                          const parsed = Number.parseFloat(e.target.value);
+                          const next = activeMetaHistory.map((item, i) =>
+                            i === idx
+                              ? { ...item, dailySpend: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0 }
+                              : item
+                          );
+                          onUpdateMetaAdsRateHistory(next);
+                        }}
+                        className="w-20 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-orange-200 focus:border-orange-400 focus:outline-none tabular-nums"
+                      />
+                      {activeMetaHistory.length > 1 && (
+                        <button
+                          type="button"
+                          aria-label={`Remove Meta Ads tier ${tier.effectiveFrom}`}
+                          onClick={() => {
+                            const next = activeMetaHistory.filter((_, i) => i !== idx);
+                            onUpdateMetaAdsRateHistory(next);
+                          }}
+                          className="ml-auto rounded p-1 text-slate-500 hover:bg-rose-500/15 hover:text-rose-300"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {pnl.totalDailyMetaAds > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-orange-500/25 bg-orange-500/8 px-3 py-2 text-xs">
                 <span className="text-orange-200">
-                  Daily Meta Ads Spend deducted from Profit &amp; Daily Chart:
+                  Daily Meta Ads Spend deducted from Profit &amp; Daily Chart ({pnl.metaAdDaysCount}d):
                 </span>
                 <span className="font-mono font-semibold text-orange-300 tabular-nums">
-                  {formatInr(pnl.dailyMetaAdsRate, pnl.currency)}/day × {pnl.metaAdDaysCount}d ={' '}
-                  {formatInr(pnl.totalDailyMetaAds, pnl.currency)}
+                  {pnl.metaAdsBreakdownLabel
+                    ? `${pnl.metaAdsBreakdownLabel} = ${formatInr(pnl.totalDailyMetaAds, pnl.currency)}`
+                    : `${formatInr(pnl.dailyMetaAdsRate, pnl.currency)}/day × ${pnl.metaAdDaysCount}d = ${formatInr(pnl.totalDailyMetaAds, pnl.currency)}`}
                   {periodAdSpend > 0 ? ` + ${formatInr(periodAdSpend, pnl.currency)} extra` : ''}
                 </span>
               </div>

@@ -202,24 +202,32 @@ class WhatsAppManager {
 
   getState(): WhatsAppState {
     const meta = store.getWhatsAppMeta();
+    const hostKind = detectHostRuntimeKind();
     const localRegistered = this.hasSavedAuth() && this.isAuthRegistered();
-    const remoteSessionActive = Boolean(meta.connectedAt && meta.phoneNumber);
+    const isDifferentCloudHost =
+      Boolean(meta.activeHostKind) &&
+      meta.activeHostKind !== hostKind &&
+      (meta.activeHostKind === 'railway' || meta.activeHostKind === 'cloud');
+    const remoteSessionActive =
+      Boolean(meta.connectedAt && meta.phoneNumber) &&
+      (Boolean(process.env.VERCEL) || isDifferentCloudHost);
     return {
       status: this.status,
       mode: meta.mode,
-      phoneNumber: meta.phoneNumber,
-      pushName: meta.pushName,
+      phoneNumber: localRegistered || remoteSessionActive ? meta.phoneNumber : null,
+      pushName: localRegistered || remoteSessionActive ? meta.pushName : null,
       qrDataUrl: this.qrDataUrl,
       qrRaw: this.qrRaw,
       pairingCode: this.pairingCode,
       isServerless: Boolean(process.env.VERCEL),
-      connectedAt: meta.connectedAt,
-      lastHeartbeatAt: this.lastHeartbeatAt || meta.lastHeartbeatAt || null,
+      connectedAt: localRegistered || remoteSessionActive ? meta.connectedAt : null,
+      lastHeartbeatAt:
+        this.lastHeartbeatAt || (localRegistered || remoteSessionActive ? meta.lastHeartbeatAt : null) || null,
       reconnectCount: this.reconnectCount,
       sessionPersisted: localRegistered || remoteSessionActive,
       remoteSessionActive,
       activeHostKind: meta.activeHostKind || null,
-      hostKind: detectHostRuntimeKind(),
+      hostKind,
       lastError: this.lastError,
     };
   }
@@ -259,17 +267,17 @@ class WhatsAppManager {
       await this.closeSocketOnly();
 
       // Clean stale unregistered pairing files when user explicitly requests a fresh QR
-      if (options?.fresh || (this.hasSavedAuth() && !this.isAuthRegistered() && !this.pairingCode)) {
-        // Only wipe if not currently mid-handshake (`reconnectCount` > 0 or 515 keeps creds)
-        if (options?.fresh) {
-          this.clearAuthFiles();
-        }
+      if (options?.fresh) {
+        this.reconnectCount = 0;
+        this.clearAuthFiles();
+        void store.clearRemoteAuth();
       }
 
       if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       }
-      if (!this.hasSavedAuth() && store.isCloudSyncEnabled()) {
+      // Never pull stale cloud auth back in when the user explicitly asked for a fresh QR login
+      if (!options?.fresh && !this.hasSavedAuth() && store.isCloudSyncEnabled()) {
         await store.restoreAuthFiles(AUTH_DIR);
       }
 
@@ -294,6 +302,7 @@ class WhatsAppManager {
         DisconnectReason,
         decryptPollVote,
         fetchLatestBaileysVersion,
+        fetchLatestWaWebVersion,
         getAggregateVotesInPollMessage,
         jidNormalizedUser,
         makeCacheableSignalKeyStore,
@@ -306,15 +315,31 @@ class WhatsAppManager {
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
       let version: [number, number, number] | undefined;
       try {
-        const fetched = await Promise.race([
-          fetchLatestBaileysVersion(),
+        // Prefer live WhatsApp Web version directly from web.whatsapp.com (avoids stale Baileys manifest causing QR handshake failures)
+        const waWeb = await Promise.race([
+          fetchLatestWaWebVersion({}),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Version check timeout')), 4000)
+            setTimeout(() => reject(new Error('WA Web version timeout')), 4000)
           ),
         ]);
-        version = fetched.version;
+        if (Array.isArray(waWeb?.version) && waWeb.version.length === 3) {
+          version = waWeb.version;
+        }
       } catch {
-        // Fallback to Baileys default version if version check endpoint is unreachable
+        // Fall through to Baileys manifest fallback
+      }
+      if (!version) {
+        try {
+          const fetched = await Promise.race([
+            fetchLatestBaileysVersion(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Version check timeout')), 4000)
+            ),
+          ]);
+          version = fetched.version;
+        } catch {
+          // Fallback to Baileys default version if version check endpoints are unreachable
+        }
       }
 
       const sock = makeWASocket({
@@ -324,13 +349,11 @@ class WhatsAppManager {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        printQRInTerminal: false,
         markOnlineOnConnect: false,
         syncFullHistory: false,
         browser: Browsers.macOS('Chrome'),
         connectTimeoutMs: 45_000,
         keepAliveIntervalMs: 30_000,
-        qrTimeout: 60_000,
         getMessage: async (key) => {
           if (!key.id) return undefined;
           const cached = store.getPollMessage(key.id) as WAMessage | undefined;
@@ -341,6 +364,7 @@ class WhatsAppManager {
       this.sock = sock;
 
       sock.ev.on('creds.update', () => {
+        if (this.sock !== sock) return;
         this.credsSaveQueue = this.credsSaveQueue
           .then(() => saveCreds())
           .then(() => {
@@ -352,14 +376,16 @@ class WhatsAppManager {
       });
 
       sock.ev.on('connection.update', async (update) => {
+        if (this.sock !== sock) return;
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
           this.qrRaw = qr;
           this.qrDataUrl = await QRCode.toDataURL(qr, {
-            width: 320,
-            margin: 2,
-            color: { dark: '#0f172a', light: '#ffffff' },
+            width: 380,
+            margin: 4,
+            errorCorrectionLevel: 'L',
+            color: { dark: '#000000', light: '#ffffff' },
           });
           this.status = 'qr_ready';
           this.lastError = null;
@@ -606,6 +632,8 @@ class WhatsAppManager {
     try {
       const code = await this.sock.requestPairingCode(digits);
       this.pairingCode = code;
+      this.qrDataUrl = null;
+      this.qrRaw = null;
       this.status = 'qr_ready';
       this.lastError = null;
     } catch (err) {

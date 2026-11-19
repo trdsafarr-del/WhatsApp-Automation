@@ -1,4 +1,16 @@
-import type { AppSettings, OrderMetrics, OrderRecord, PollStatus } from './types.js';
+import type {
+  AppSettings,
+  MetaAdsRateEntry,
+  OrderMetrics,
+  OrderRecord,
+  PollStatus,
+} from './types.js';
+
+export const DEFAULT_META_ADS_RATE_HISTORY: MetaAdsRateEntry[] = [
+  { effectiveFrom: '2026-11-13', dailySpend: 500 },
+  { effectiveFrom: '2026-11-16', dailySpend: 900 },
+  { effectiveFrom: '2026-11-19', dailySpend: 1500 },
+];
 
 export const DEFAULT_SETTINGS: AppSettings = {
   shopName: 'Broomies Bakery',
@@ -37,7 +49,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fallbackCodFee: 25,
   prepaidGatewayPercent: 2,
   marketingCostPerOrder: 0,
-  dailyMetaAdsSpend: 500,
+  dailyMetaAdsSpend: 1500,
+  metaAdsRateHistory: DEFAULT_META_ADS_RATE_HISTORY,
   deliverySlaDays: 4,
   pickupSlaHours: 48,
 };
@@ -881,11 +894,41 @@ export function isOrderDispatched(
   );
 }
 
+function hasRtoReturnNoteSignal(rawText?: string | null): boolean {
+  if (!rawText) return false;
+  const text = rawText.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!text) return false;
+
+  // Exclude pre-dispatch risk notes like "high rto not picking the call" or "LOW RTO Risk"
+  if (/\b(?:high|low|medium|moderate)\s+rto\b/.test(text) || /\brto\s*[-:]?\s*risk\b/.test(text)) {
+    return false;
+  }
+
+  return (
+    text === 'rto' ||
+    text === 'returned' ||
+    text === 'rto return' ||
+    /\bin[\s-]*transit\s+for\s+return\b/.test(text) ||
+    /\breturn(?:ed)?\s+to\s+(?:origin|shipper|seller|warehouse|sender)\b/.test(text) ||
+    /\brto\s+(?:initiated|in[\s-]*transit|delivered|returned|dispatch(?:ed)?|manifested|marked|booked|pending|complete(?:d)?|received|return)\b/.test(
+      text
+    ) ||
+    /\breturn\s+(?:initiated|in[\s-]*transit|delivered|picked(?:\s*up)?|completed|received)\b/.test(
+      text
+    ) ||
+    /\b(?:shipment|order|parcel|package)\s+returned\b/.test(text) ||
+    /\bundelivered[\s:-]+return\b/.test(text)
+  );
+}
+
 /**
- * Checks whether an order has actually entered RTO / Return (excluding pre-dispatch RTO Risk tags).
+ * Checks whether an order has actually entered RTO / Return (excluding pre-dispatch RTO Risk tags/notes).
  */
 export function isOrderRtoReturn(
-  order: Pick<OrderRecord, 'fulfillmentStatus' | 'shipmentStatus' | 'shopifyTags'>
+  order: Pick<OrderRecord, 'fulfillmentStatus' | 'shipmentStatus' | 'shopifyTags'> & {
+    orderNote?: string | null;
+    lastCourierScanRemark?: string | null;
+  }
 ): boolean {
   const ship = (order.shipmentStatus || '').trim().toLowerCase();
   if (
@@ -904,6 +947,13 @@ export function isOrderRtoReturn(
     return true;
   }
 
+  if (
+    hasRtoReturnNoteSignal(order.orderNote) ||
+    hasRtoReturnNoteSignal(order.lastCourierScanRemark)
+  ) {
+    return true;
+  }
+
   const tags = parseNormalizedTags(order.shopifyTags);
   return tags.some((tag) => {
     if (tag.includes('risk')) return false;
@@ -913,6 +963,7 @@ export function isOrderRtoReturn(
       tag.startsWith('rto_') ||
       tag.startsWith('rto-') ||
       tag.includes('return to origin') ||
+      tag.includes('in transit for return') ||
       tag === 'returned' ||
       tag === 'return' ||
       tag.includes('order returned') ||
@@ -926,7 +977,10 @@ export function isOrderRtoReturn(
  * Checks whether an order has been delivered to the customer (and is not an RTO return).
  */
 export function isOrderDelivered(
-  order: Pick<OrderRecord, 'fulfillmentStatus' | 'shipmentStatus' | 'shopifyTags'>
+  order: Pick<OrderRecord, 'fulfillmentStatus' | 'shipmentStatus' | 'shopifyTags'> & {
+    orderNote?: string | null;
+    lastCourierScanRemark?: string | null;
+  }
 ): boolean {
   if (isOrderRtoReturn(order)) return false;
 
@@ -996,7 +1050,7 @@ export function isOrderTrackingAdded(
     | 'trackingUrl'
     | 'trackingSentAt'
     | 'trackingSentValue'
-  >
+  > & { orderNote?: string | null; lastCourierScanRemark?: string | null }
 ): boolean {
   if (isOrderRtoReturn(order) || isOrderDelivered(order)) return false;
   if (hasPickedUpOrTransitSignal(order)) return false;
@@ -1017,7 +1071,7 @@ export function isOrderInTransit(
     | 'trackingUrl'
     | 'trackingSentAt'
     | 'trackingSentValue'
-  >
+  > & { orderNote?: string | null; lastCourierScanRemark?: string | null }
 ): boolean {
   if (isOrderRtoReturn(order) || isOrderDelivered(order)) return false;
   return hasPickedUpOrTransitSignal(order);
@@ -1096,7 +1150,7 @@ export function isOrderReadyToDispatch(
     | 'trackingUrl'
     | 'trackingSentAt'
     | 'trackingSentValue'
-  >
+  > & { orderNote?: string | null; lastCourierScanRemark?: string | null }
 ): boolean {
   return (
     order.pollStatus === 'confirmed' &&
@@ -1146,7 +1200,7 @@ export function getDispatchStatusInfo(
     | 'trackingUrl'
     | 'trackingSentAt'
     | 'trackingSentValue'
-  >
+  > & { orderNote?: string | null; lastCourierScanRemark?: string | null }
 ): { code: DispatchStatusCode; label: string } {
   if (isOrderRtoReturn(order)) {
     return { code: 'rto_return', label: 'RTO Return' };
@@ -1881,6 +1935,7 @@ export interface DailyPnlRow {
   cancelledOrders: number;
   realizedRevenue: number;
   expectedTransitRevenue: number;
+  metaAdsCost?: number;
   totalCosts: number;
   rtoLoss: number;
   netRealizedProfit: number;
@@ -1909,6 +1964,7 @@ export interface ProfitLossReportSummary {
   dailyMetaAdsRate: number;
   metaAdDaysCount: number;
   totalDailyMetaAds: number;
+  metaAdsBreakdownLabel: string;
   totalRealizedCosts: number;
   netRealizedProfit: number;
   projectedTransitProfit: number;
@@ -1930,25 +1986,74 @@ export type CostAssumptions = Pick<
   | 'prepaidGatewayPercent'
   | 'marketingCostPerOrder'
   | 'dailyMetaAdsSpend'
+  | 'metaAdsRateHistory'
 >;
 
 /**
- * Calculates how many active Meta Ads billing days fall inside the selected date filter,
- * capping future dates at Today (IST) and clipping prior to store syncStartDate when applicable.
+ * Normalizes, deduplicates by date, and sorts Meta Ads rate history entries chronologically.
  */
-export function computeMetaAdDaysInRange(params: {
+export function normalizeMetaAdsRateHistory(
+  entries?: MetaAdsRateEntry[] | null
+): MetaAdsRateEntry[] {
+  if (!Array.isArray(entries) || entries.length === 0) return [];
+  const byDate = new Map<string, number>();
+  for (const entry of entries) {
+    if (!entry || typeof entry.effectiveFrom !== 'string') continue;
+    const cleanDate = entry.effectiveFrom.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) continue;
+    const spend = Number(entry.dailySpend);
+    if (!Number.isFinite(spend) || spend < 0) continue;
+    byDate.set(cleanDate, Math.round(spend * 100) / 100);
+  }
+  return Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([effectiveFrom, dailySpend]) => ({ effectiveFrom, dailySpend }));
+}
+
+/**
+ * Resolves the active daily Meta Ads spend for a given IST calendar date (YYYY-MM-DD),
+ * supporting historical stepped budgets (e.g. ₹500 -> ₹900 -> ₹1500 from 2026-11-19).
+ */
+export function resolveDailyMetaAdsRateForDate(
+  dateKey: string,
+  costSettings: Pick<CostAssumptions, 'dailyMetaAdsSpend' | 'metaAdsRateHistory'>
+): number {
+  const fallbackRate = Math.max(0, Number(costSettings.dailyMetaAdsSpend) || 0);
+  const history = normalizeMetaAdsRateHistory(costSettings.metaAdsRateHistory);
+  if (history.length === 0) return fallbackRate;
+
+  const cleanDate = (dateKey || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+    return history[history.length - 1]?.dailySpend ?? fallbackRate;
+  }
+
+  let matched: number | null = null;
+  for (const tier of history) {
+    if (tier.effectiveFrom <= cleanDate) {
+      matched = tier.dailySpend;
+    } else {
+      break;
+    }
+  }
+  return matched !== null ? matched : history[0].dailySpend;
+}
+
+/**
+ * Returns every IST calendar date (YYYY-MM-DD) inside the active Meta Ads billing window.
+ */
+export function computeMetaAdDateKeysInRange(params: {
   orders: OrderRecord[];
   fromDate?: string;
   toDate?: string;
   syncStartDate?: string;
   todayIst?: string;
-}): number {
-  const today = params.todayIst || getIstDateKey(new Date()) || '2026-11-15';
+}): string[] {
+  const today = params.todayIst || getIstDateKey(new Date()) || '2026-11-19';
   const from = (params.fromDate || '').trim();
   const to = (params.toDate || '').trim();
   const syncStart = (params.syncStartDate || '').trim();
 
-  if (from && to && from === to) return 1;
+  if (from && to && from === to) return [from];
 
   const orderDates = params.orders
     .map((o) => getIstDateKey(o.createdAt))
@@ -1976,9 +2081,43 @@ export function computeMetaAdDaysInRange(params: {
   const startMs = Date.parse(`${effStart}T00:00:00+05:30`);
   const endMs = Date.parse(`${effEnd}T00:00:00+05:30`);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
-    return orderDates.length > 0 ? new Set(orderDates).size : 1;
+    const uniqueOrderDates = Array.from(new Set(orderDates)).sort();
+    return uniqueOrderDates.length > 0 ? uniqueOrderDates : [today];
   }
-  return Math.max(1, Math.round((endMs - startMs) / 86_400_000) + 1);
+
+  const dayCount = Math.min(366, Math.max(1, Math.round((endMs - startMs) / 86_400_000) + 1));
+  const keys: string[] = [];
+  for (let i = 0; i < dayCount; i += 1) {
+    const key = getIstDateKey(new Date(startMs + i * 86_400_000));
+    if (key) keys.push(key);
+  }
+  return keys.length > 0 ? keys : [today];
+}
+
+/**
+ * Calculates how many active Meta Ads billing days fall inside the selected date filter,
+ * capping future dates at Today (IST) and clipping prior to store syncStartDate when applicable.
+ */
+export function computeMetaAdDaysInRange(params: {
+  orders: OrderRecord[];
+  fromDate?: string;
+  toDate?: string;
+  syncStartDate?: string;
+  todayIst?: string;
+}): number {
+  return computeMetaAdDateKeysInRange(params).length;
+}
+
+function formatMetaAdsBreakdownLabel(
+  tierSegments: Array<{ days: number; rate: number }>,
+  currency = 'INR'
+): string {
+  const prefix = currency === 'INR' ? '₹' : `${currency} `;
+  const nonZero = tierSegments.filter((s) => s.days > 0 && s.rate > 0);
+  if (nonZero.length === 0) return '';
+  return nonZero
+    .map((s) => `${s.days}d×${prefix}${Math.round(s.rate).toLocaleString('en-IN')}`)
+    .join(' + ');
 }
 
 function round2(n: number): number {
@@ -2189,10 +2328,15 @@ export function buildProfitLossReport(
   orders: OrderRecord[],
   costSettings: CostAssumptions,
   periodAdSpendExtra = 0,
-  adDaysOverride?: number
+  adDaysOverride?: number,
+  metaAdDateKeys?: string[]
 ): ProfitLossReportSummary {
   const extraAds = Math.max(0, Number(periodAdSpendExtra) || 0);
-  const dailyMetaAdsRate = Math.max(0, Number(costSettings.dailyMetaAdsSpend) || 0);
+  const normalizedHistory = normalizeMetaAdsRateHistory(costSettings.metaAdsRateHistory);
+  const dailyMetaAdsRate =
+    normalizedHistory.length > 0
+      ? normalizedHistory[normalizedHistory.length - 1].dailySpend
+      : Math.max(0, Number(costSettings.dailyMetaAdsSpend) || 0);
   const orderRows = orders.map((o) => calculateOrderPnl(o, costSettings));
 
   let currency = 'INR';
@@ -2243,6 +2387,7 @@ export function buildProfitLossReport(
         cancelledOrders: 0,
         realizedRevenue: 0,
         expectedTransitRevenue: 0,
+        metaAdsCost: 0,
         totalCosts: 0,
         rtoLoss: 0,
         netRealizedProfit: 0,
@@ -2296,20 +2441,73 @@ export function buildProfitLossReport(
     }
   }
 
-  // Deduct fixed Daily Meta Ads spend from each active day's Daily P&L row
-  if (dailyMetaAdsRate > 0) {
-    for (const day of dailyMap.values()) {
-      day.totalCosts += dailyMetaAdsRate;
-      day.netRealizedProfit -= dailyMetaAdsRate;
-      day.projectedNetProfit -= dailyMetaAdsRate;
+  // Deduct each active day's date-effective Daily Meta Ads spend from its Daily P&L row
+  for (const day of dailyMap.values()) {
+    const dayRate = resolveDailyMetaAdsRateForDate(day.dateKey, costSettings);
+    day.metaAdsCost = round2(dayRate);
+    if (dayRate > 0) {
+      day.totalCosts += dayRate;
+      day.netRealizedProfit -= dayRate;
+      day.projectedNetProfit -= dayRate;
     }
   }
 
-  const metaAdDaysCount =
-    typeof adDaysOverride === 'number' && Number.isFinite(adDaysOverride) && adDaysOverride >= 0
-      ? Math.round(adDaysOverride)
-      : dailyMap.size;
-  const totalDailyMetaAds = round2(dailyMetaAdsRate * metaAdDaysCount);
+  // Compute total Daily Meta Ads across the active billing window using exact date-wise rates
+  const cleanDateKeys = Array.isArray(metaAdDateKeys)
+    ? Array.from(new Set(metaAdDateKeys.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))).sort()
+    : [];
+  const hasExplicitOverride =
+    typeof adDaysOverride === 'number' && Number.isFinite(adDaysOverride) && adDaysOverride >= 0;
+
+  let metaAdDaysCount = 0;
+  let totalDailyMetaAds = 0;
+  const tierSegments: Array<{ days: number; rate: number }> = [];
+
+  const accumulateDateKeys = (keys: string[]) => {
+    for (const dKey of keys) {
+      const rate = resolveDailyMetaAdsRateForDate(dKey, costSettings);
+      totalDailyMetaAds += rate;
+      const last = tierSegments[tierSegments.length - 1];
+      if (last && last.rate === rate) {
+        last.days += 1;
+      } else {
+        tierSegments.push({ days: 1, rate });
+      }
+    }
+    metaAdDaysCount = keys.length;
+  };
+
+  if (cleanDateKeys.length > 0 && (!hasExplicitOverride || Math.round(adDaysOverride!) === cleanDateKeys.length)) {
+    accumulateDateKeys(cleanDateKeys);
+  } else if (hasExplicitOverride) {
+    const targetDays = Math.round(adDaysOverride!);
+    if (cleanDateKeys.length > 0 && targetDays <= cleanDateKeys.length && targetDays > 0) {
+      accumulateDateKeys(cleanDateKeys.slice(cleanDateKeys.length - targetDays));
+    } else if (cleanDateKeys.length > 0 && targetDays > cleanDateKeys.length) {
+      accumulateDateKeys(cleanDateKeys);
+      const extraDays = targetDays - cleanDateKeys.length;
+      totalDailyMetaAds += extraDays * dailyMetaAdsRate;
+      const last = tierSegments[tierSegments.length - 1];
+      if (last && last.rate === dailyMetaAdsRate) {
+        last.days += extraDays;
+      } else {
+        tierSegments.push({ days: extraDays, rate: dailyMetaAdsRate });
+      }
+      metaAdDaysCount = targetDays;
+    } else {
+      metaAdDaysCount = targetDays;
+      totalDailyMetaAds = dailyMetaAdsRate * targetDays;
+      if (targetDays > 0 && dailyMetaAdsRate > 0) {
+        tierSegments.push({ days: targetDays, rate: dailyMetaAdsRate });
+      }
+    }
+  } else {
+    const mapKeys = Array.from(dailyMap.keys()).sort();
+    accumulateDateKeys(mapKeys);
+  }
+
+  totalDailyMetaAds = round2(totalDailyMetaAds);
+  const metaAdsBreakdownLabel = formatMetaAdsBreakdownLabel(tierSegments, currency);
 
   const totalRealizedCosts = round2(
     totalCogs +
@@ -2341,6 +2539,7 @@ export function buildProfitLossReport(
       ...d,
       realizedRevenue: round2(d.realizedRevenue),
       expectedTransitRevenue: round2(d.expectedTransitRevenue),
+      metaAdsCost: round2(d.metaAdsCost || 0),
       totalCosts: round2(d.totalCosts),
       rtoLoss: round2(d.rtoLoss),
       netRealizedProfit: round2(d.netRealizedProfit),
@@ -2369,6 +2568,7 @@ export function buildProfitLossReport(
     dailyMetaAdsRate,
     metaAdDaysCount,
     totalDailyMetaAds,
+    metaAdsBreakdownLabel,
     totalRealizedCosts,
     netRealizedProfit,
     projectedTransitProfit: round2(projectedTransitProfit),

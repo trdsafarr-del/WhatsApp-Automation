@@ -233,15 +233,26 @@ export function WhatsAppQrView({
                       )}
                     </>
                   ) : !whatsapp.isServerless ? (
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void onConnect('baileys_qr', false)}
-                      className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                      Restore Saved Session
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void onConnect('baileys_qr', false)}
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                        Restore Saved Session
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void onConnect('baileys_qr', true)}
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
+                      >
+                        <QrCode className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                        Scan Fresh QR
+                      </button>
+                    </>
                   ) : null}
 
                   {!whatsapp.isServerless && (
@@ -324,7 +335,7 @@ export function WhatsAppQrView({
                             Open WhatsApp → Settings → Linked Devices → Link a Device
                           </p>
                           <p className="text-xs text-slate-400">
-                            After scanning, wait 3–5 seconds while the secure session completes.
+                            Scan immediately — QR auto-rotates every ~20s. If camera scan fails, switch to the 8-Digit Phone Code tab above.
                           </p>
                         </div>
                       </div>
@@ -333,7 +344,11 @@ export function WhatsAppQrView({
                         <div className="mx-auto flex h-40 w-40 flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-4 sm:h-44 sm:w-44">
                           <Smartphone className="h-8 w-8 text-slate-500" aria-hidden="true" />
                           <p className="mt-2 text-xs font-medium text-slate-400">
-                            {isConnecting ? 'Completing WhatsApp handshake...' : 'QR Session Idle'}
+                            {isConnecting
+                              ? 'Completing WhatsApp handshake...'
+                              : whatsapp.isServerless
+                                ? 'Pair on Railway / Persistent Host'
+                                : 'QR Session Idle'}
                           </p>
                         </div>
                       </div>
@@ -342,16 +357,18 @@ export function WhatsAppQrView({
                     <div className="flex flex-wrap items-center justify-center gap-3">
                       <button
                         type="button"
-                        disabled={isBusy}
+                        disabled={isBusy || Boolean(whatsapp.isServerless)}
                         onClick={() => void onConnect('baileys_qr', true)}
-                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:w-auto"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap shrink-0 sm:w-auto"
                       >
                         <QrCode className="h-4 w-4" aria-hidden="true" />
-                        {isBusy
-                          ? 'Generating...'
-                          : isQrReady
-                            ? 'Reset & Fresh QR'
-                            : 'Generate WhatsApp QR'}
+                        {whatsapp.isServerless
+                          ? 'Use Railway / Node Host to Scan QR'
+                          : isBusy
+                            ? 'Generating...'
+                            : isQrReady
+                              ? 'Reset & Fresh QR'
+                              : 'Generate WhatsApp QR'}
                       </button>
                     </div>
                   </div>
@@ -378,9 +395,9 @@ export function WhatsAppQrView({
                       />
                       <button
                         type="button"
-                        disabled={isBusy || !pairingPhone.trim()}
+                        disabled={isBusy || !pairingPhone.trim() || Boolean(whatsapp.isServerless)}
                         onClick={() => void onRequestPairingCode(pairingPhone)}
-                        className="min-h-[44px] rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0"
+                        className="min-h-[44px] rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0"
                       >
                         Get Pairing Code
                       </button>

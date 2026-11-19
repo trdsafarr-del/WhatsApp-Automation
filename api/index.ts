@@ -216,6 +216,27 @@ app.post('/api/settings', async (req: Request, res: Response) => {
       Number.isFinite(body.marketingCostPerOrder)
         ? Math.max(0, body.marketingCostPerOrder)
         : cur.marketingCostPerOrder,
+    dailyMetaAdsSpend:
+      typeof body.dailyMetaAdsSpend === 'number' &&
+      Number.isFinite(body.dailyMetaAdsSpend)
+        ? Math.max(0, body.dailyMetaAdsSpend)
+        : cur.dailyMetaAdsSpend ?? 1500,
+    metaAdsRateHistory: Array.isArray(body.metaAdsRateHistory)
+      ? body.metaAdsRateHistory
+          .filter(
+            (e): e is { effectiveFrom: string; dailySpend: number } =>
+              Boolean(e) &&
+              typeof e.effectiveFrom === 'string' &&
+              /^\d{4}-\d{2}-\d{2}$/.test(e.effectiveFrom.trim()) &&
+              typeof e.dailySpend === 'number' &&
+              Number.isFinite(e.dailySpend) &&
+              e.dailySpend >= 0
+          )
+          .map((e) => ({
+            effectiveFrom: e.effectiveFrom.trim(),
+            dailySpend: Math.round(e.dailySpend * 100) / 100,
+          }))
+      : cur.metaAdsRateHistory,
     deliverySlaDays:
       typeof body.deliverySlaDays === 'number' && Number.isFinite(body.deliverySlaDays)
         ? Math.max(1, Math.min(30, body.deliverySlaDays))

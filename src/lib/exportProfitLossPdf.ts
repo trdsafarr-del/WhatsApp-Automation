@@ -39,6 +39,7 @@ export interface ProfitLossPdfExportParams {
   costAssumptions: CostAssumptions;
   periodAdSpend: number;
   adDaysCount?: number;
+  metaAdDateKeys?: string[];
 }
 
 /**
@@ -52,8 +53,15 @@ export function exportProfitLossReportToPdf({
   costAssumptions,
   periodAdSpend,
   adDaysCount,
+  metaAdDateKeys,
 }: ProfitLossPdfExportParams): string {
-  const pnl = buildProfitLossReport(orders, costAssumptions, periodAdSpend, adDaysCount);
+  const pnl = buildProfitLossReport(
+    orders,
+    costAssumptions,
+    periodAdSpend,
+    adDaysCount,
+    metaAdDateKeys
+  );
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'pt',
@@ -227,9 +235,11 @@ export function exportProfitLossReportToPdf({
         'Meta Ads & Marketing Spend',
         formatInrPdf(-pnl.totalMarketingCost, pnl.currency),
         sharePct(pnl.totalMarketingCost),
-        pnl.dailyMetaAdsRate > 0
-          ? `Meta Ads ${formatInrPdf(pnl.dailyMetaAdsRate, pnl.currency)}/day × ${pnl.metaAdDaysCount}d = ${formatInrPdf(pnl.totalDailyMetaAds, pnl.currency)}${periodAdSpend > 0 ? ` + Extra ${formatInrPdf(periodAdSpend, pnl.currency)}` : ''}`
-          : `Per-order ads + Extra spend ${formatInrPdf(periodAdSpend, pnl.currency)}`,
+        pnl.metaAdsBreakdownLabel
+          ? `Meta Ads ${pnl.metaAdsBreakdownLabel.replaceAll('₹', 'Rs.')} = ${formatInrPdf(pnl.totalDailyMetaAds, pnl.currency)}${periodAdSpend > 0 ? ` + Extra ${formatInrPdf(periodAdSpend, pnl.currency)}` : ''}`
+          : pnl.dailyMetaAdsRate > 0
+            ? `Meta Ads ${formatInrPdf(pnl.dailyMetaAdsRate, pnl.currency)}/day × ${pnl.metaAdDaysCount}d = ${formatInrPdf(pnl.totalDailyMetaAds, pnl.currency)}${periodAdSpend > 0 ? ` + Extra ${formatInrPdf(periodAdSpend, pnl.currency)}` : ''}`
+            : `Per-order ads + Extra spend ${formatInrPdf(periodAdSpend, pnl.currency)}`,
       ],
       ['NET REALIZED PROFIT / LOSS', formatInrPdf(pnl.netRealizedProfit, pnl.currency), `${pnl.netMarginPct}%`, `${formatInrPdf(pnl.avgProfitPerDelivered, pnl.currency)} average profit per delivered order`],
     ],

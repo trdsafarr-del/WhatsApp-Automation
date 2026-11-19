@@ -24,7 +24,8 @@ import { ProfitLossPanel } from './ProfitLossPanel';
 import { SettlementDelayPanel } from './SettlementDelayPanel';
 import {
   buildDailyReportSummary,
-  computeMetaAdDaysInRange,
+  computeMetaAdDateKeysInRange,
+  DEFAULT_META_ADS_RATE_HISTORY,
   filterOrdersByIstDateRange,
   formatIstDateDisplay,
   getDispatchStatusInfo,
@@ -37,10 +38,11 @@ import {
   isOrderInTransit,
   isOrderNotConfirmedOnWhatsApp,
   isOrderRtoReturn,
+  normalizeMetaAdsRateHistory,
   shiftMonthKey,
   type CostAssumptions,
 } from '../lib/orderRules';
-import type { AppSettings, OrderRecord } from '../lib/types';
+import type { AppSettings, MetaAdsRateEntry, OrderRecord } from '../lib/types';
 
 interface ReportsViewProps {
   orders: OrderRecord[];
@@ -140,7 +142,22 @@ export function ReportsView({
   const [exportFeedback, setExportFeedback] = useState<string | null>(null);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
-  const [costForm, setCostForm] = useState<CostAssumptions>({
+  const resolveInitialMetaAds = (s: AppSettings) => {
+    const hasCustomHistory =
+      Array.isArray(s.metaAdsRateHistory) && s.metaAdsRateHistory.length > 0;
+    const history = hasCustomHistory ? s.metaAdsRateHistory! : DEFAULT_META_ADS_RATE_HISTORY;
+    const normalized = normalizeMetaAdsRateHistory(history);
+    const latestRate =
+      normalized.length > 0
+        ? normalized[normalized.length - 1].dailySpend
+        : s.dailyMetaAdsSpend ?? 1500;
+    return {
+      dailyMetaAdsSpend: hasCustomHistory ? s.dailyMetaAdsSpend ?? latestRate : latestRate,
+      metaAdsRateHistory: history,
+    };
+  };
+
+  const [costForm, setCostForm] = useState<CostAssumptions>(() => ({
     cogsPercent: settings.cogsPercent ?? 35,
     packagingCostPerOrder: settings.packagingCostPerOrder ?? 25,
     fallbackForwardShippingCost: settings.fallbackForwardShippingCost ?? 75,
@@ -148,8 +165,8 @@ export function ReportsView({
     fallbackCodFee: settings.fallbackCodFee ?? 25,
     prepaidGatewayPercent: settings.prepaidGatewayPercent ?? 2,
     marketingCostPerOrder: settings.marketingCostPerOrder ?? 0,
-    dailyMetaAdsSpend: settings.dailyMetaAdsSpend ?? 500,
-  });
+    ...resolveInitialMetaAds(settings),
+  }));
   const [periodAdSpend, setPeriodAdSpend] = useState<number>(0);
   const [adDaysOverride, setAdDaysOverride] = useState<number | null>(null);
   const [costDirty, setCostDirty] = useState(false);
@@ -166,17 +183,49 @@ export function ReportsView({
         fallbackCodFee: settings.fallbackCodFee ?? 25,
         prepaidGatewayPercent: settings.prepaidGatewayPercent ?? 2,
         marketingCostPerOrder: settings.marketingCostPerOrder ?? 0,
-        dailyMetaAdsSpend: settings.dailyMetaAdsSpend ?? 500,
+        ...resolveInitialMetaAds(settings),
       });
     }
   }, [settings, costDirty]);
 
   const handleUpdateCostField = (key: keyof CostAssumptions, rawVal: string) => {
     const parsed = Number.parseFloat(rawVal);
+    const cleanVal = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    setCostDirty(true);
+    setCostForm((prev) => {
+      if (key === 'dailyMetaAdsSpend') {
+        const baseHistory = normalizeMetaAdsRateHistory(
+          prev.metaAdsRateHistory && prev.metaAdsRateHistory.length > 0
+            ? prev.metaAdsRateHistory
+            : DEFAULT_META_ADS_RATE_HISTORY
+        );
+        const updatedHistory = normalizeMetaAdsRateHistory([
+          ...baseHistory.filter((item) => item.effectiveFrom !== todayIst),
+          { effectiveFrom: todayIst, dailySpend: cleanVal },
+        ]);
+        return {
+          ...prev,
+          dailyMetaAdsSpend: cleanVal,
+          metaAdsRateHistory: updatedHistory,
+        };
+      }
+      return {
+        ...prev,
+        [key]: cleanVal,
+      };
+    });
+  };
+
+  const handleUpdateMetaAdsRateHistory = (nextHistory: MetaAdsRateEntry[]) => {
+    const normalized = normalizeMetaAdsRateHistory(nextHistory);
     setCostDirty(true);
     setCostForm((prev) => ({
       ...prev,
-      [key]: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0,
+      metaAdsRateHistory: nextHistory,
+      dailyMetaAdsSpend:
+        normalized.length > 0
+          ? normalized[normalized.length - 1].dailySpend
+          : prev.dailyMetaAdsSpend,
     }));
   };
 
@@ -260,9 +309,9 @@ export function ReportsView({
     [orders, fromDate, toDate]
   );
 
-  const autoMetaAdDays = useMemo(
+  const autoMetaAdDateKeys = useMemo(
     () =>
-      computeMetaAdDaysInRange({
+      computeMetaAdDateKeysInRange({
         orders: dateFilteredOrders,
         fromDate,
         toDate,
@@ -271,6 +320,7 @@ export function ReportsView({
       }),
     [dateFilteredOrders, fromDate, toDate, settings.syncStartDate, todayIst]
   );
+  const autoMetaAdDays = autoMetaAdDateKeys.length;
   const activeAdDays = adDaysOverride ?? autoMetaAdDays;
 
   const { totals, dailyRows } = useMemo(
@@ -358,6 +408,7 @@ export function ReportsView({
       costAssumptions: costForm,
       periodAdSpend,
       adDaysCount: activeAdDays,
+      metaAdDateKeys: autoMetaAdDateKeys,
     });
     showExportToast(`Profit & Loss PDF downloaded: ${filename}`);
   }
@@ -372,6 +423,7 @@ export function ReportsView({
         costAssumptions: costForm,
         periodAdSpend,
         adDaysCount: activeAdDays,
+        metaAdDateKeys: autoMetaAdDateKeys,
         periodLabel,
       });
       showExportToast(`Colorful Excel Workbook with Charts (.xlsx) downloaded: ${filename}`);
@@ -670,11 +722,13 @@ export function ReportsView({
           periodAdSpend={periodAdSpend}
           adDaysCount={activeAdDays}
           autoAdDays={autoMetaAdDays}
+          metaAdDateKeys={autoMetaAdDateKeys}
           isAdDaysOverridden={adDaysOverride !== null}
           costDirty={costDirty}
           isSavingCosts={isSavingCosts}
           costNotice={costNotice}
           onUpdateCostField={handleUpdateCostField}
+          onUpdateMetaAdsRateHistory={handleUpdateMetaAdsRateHistory}
           onUpdatePeriodAdSpend={handleUpdatePeriodAdSpend}
           onUpdateAdDays={(days) => setAdDaysOverride(days)}
           onResetAdDays={() => setAdDaysOverride(null)}

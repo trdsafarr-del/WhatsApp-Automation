@@ -77,6 +77,11 @@ export interface OrderRecord {
   events: OrderEvent[];
 }
 
+export interface MetaAdsRateEntry {
+  effectiveFrom: string; // YYYY-MM-DD (IST), inclusive
+  dailySpend: number;
+}
+
 export interface AppSettings {
   shopName: string;
   shopifyStoreDomain: string;
@@ -111,6 +116,7 @@ export interface AppSettings {
   prepaidGatewayPercent: number;
   marketingCostPerOrder: number;
   dailyMetaAdsSpend?: number;
+  metaAdsRateHistory?: MetaAdsRateEntry[];
   deliverySlaDays?: number;
   pickupSlaHours?: number;
 }
