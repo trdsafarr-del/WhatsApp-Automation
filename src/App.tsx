@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import {
   BarChart3,
   BookOpen,
+  Cloud,
+  CloudOff,
   Layers,
   LayoutList,
   Lock,
@@ -34,8 +37,26 @@ import {
   dashboardFetch,
   saveDashboardToken,
 } from './lib/dashboardAuth';
+import {
+  auth,
+  getFirestoreUpgradeUrl,
+  isFirestoreQuotaExceededMessage,
+} from './lib/firebase';
+import {
+  createSyncTracker,
+  signInWithGooglePopup,
+  signOutGoogle,
+  subscribeToOwnerCloudData,
+  syncDeltaToFirestore,
+  type CloudBackupSnapshot,
+} from './lib/firestoreSync';
 import { DEFAULT_GEO_SEO_CONFIG } from './lib/geoSeo';
-import { DEFAULT_SETTINGS, getWhatsAppDisplayState, hasHighRtoTag } from './lib/orderRules';
+import {
+  DEFAULT_SETTINGS,
+  getWhatsAppDisplayState,
+  hasConfiguredShopify,
+  hasHighRtoTag,
+} from './lib/orderRules';
 import { DEFAULT_STOREFRONT_CONFIG } from './lib/storefrontRules';
 import type {
   AppSettings,
@@ -177,6 +198,36 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
+  const [upstashQuotaExceeded, setUpstashQuotaExceeded] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [firebaseAuthReady, setFirebaseAuthReady] = useState(false);
+  const [googleAuthBusy, setGoogleAuthBusy] = useState(false);
+  const [firestoreSyncState, setFirestoreSyncState] = useState<
+    'idle' | 'syncing' | 'synced' | 'error'
+  >('idle');
+  const [firestoreError, setFirestoreError] = useState<string | null>(null);
+  const [firestoreQuotaExceeded, setFirestoreQuotaExceeded] = useState(false);
+  const [cloudReadyTick, setCloudReadyTick] = useState(0);
+
+  const syncTrackerRef = useRef(createSyncTracker());
+  const restoringFromCloudRef = useRef(false);
+  const lastRestoredKeyRef = useRef('');
+  const latestStateRef = useRef({
+    orders,
+    products,
+    settings,
+    storefrontConfig,
+    geoSeoConfig,
+    whatsapp,
+  });
+  latestStateRef.current = {
+    orders,
+    products,
+    settings,
+    storefrontConfig,
+    geoSeoConfig,
+    whatsapp,
+  };
 
   const sidebarExpanded = sidebarPinned || sidebarHovered;
 
@@ -221,6 +272,7 @@ export default function App() {
         );
       }
       setCloudSyncEnabled(Boolean(data.cloudSyncEnabled));
+      setUpstashQuotaExceeded(Boolean(data.upstashQuotaExceeded));
       setSettings((prev) =>
         JSON.stringify(prev) === JSON.stringify(data.settings) ? prev : data.settings
       );
@@ -272,6 +324,219 @@ export default function App() {
       // Already locked locally
     }
   };
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      setFirebaseAuthReady(true);
+      if (!user) {
+        syncTrackerRef.current = createSyncTracker();
+        lastRestoredKeyRef.current = '';
+        setCloudReadyTick(0);
+        setFirestoreSyncState('idle');
+        setFirestoreError(null);
+        setFirestoreQuotaExceeded(false);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const handleGoogleSignIn = async () => {
+    setGoogleAuthBusy(true);
+    setFirestoreError(null);
+    try {
+      await signInWithGooglePopup();
+    } catch (err) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        // User closed popup intentionally
+      } else if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+        setFirestoreError(
+          `Add "${host}" in Firebase Console -> Authentication -> Settings -> Authorized domains, then click Google Sync again.`
+        );
+      } else {
+        setFirestoreError(err instanceof Error ? err.message : 'Google Sign-In failed.');
+      }
+    } finally {
+      setGoogleAuthBusy(false);
+    }
+  };
+
+  const handleGoogleSignOut = async () => {
+    setGoogleAuthBusy(true);
+    try {
+      await signOutGoogle();
+    } finally {
+      setGoogleAuthBusy(false);
+    }
+  };
+
+  // Subscribe to per-document Google Firestore backup once dashboard is unlocked and admin signed in with Google
+  useEffect(() => {
+    if (authState !== 'unlocked' || !firebaseAuthReady || !firebaseUser?.emailVerified) {
+      return;
+    }
+
+    syncTrackerRef.current = createSyncTracker();
+    setFirestoreSyncState('syncing');
+    setFirestoreError(null);
+    setFirestoreQuotaExceeded(false);
+
+    let initialSignalled = false;
+
+    const handleCloudSnapshot = (cloud: CloudBackupSnapshot) => {
+      if (!initialSignalled) {
+        initialSignalled = true;
+        setCloudReadyTick((n) => n + 1);
+      }
+
+      const current = latestStateRef.current;
+      const cloudHasShopify = Boolean(cloud.settings && hasConfiguredShopify(cloud.settings));
+      const serverHasShopify = hasConfiguredShopify(current.settings);
+      const cloudHasMoreOrders = cloud.orders.length > current.orders.length;
+      const cloudHasMoreProducts = cloud.products.length > current.products.length;
+      const needsRestore =
+        (cloudHasShopify && !serverHasShopify) || cloudHasMoreOrders || cloudHasMoreProducts;
+
+      const restoreKey = [
+        cloudHasShopify ? '1' : '0',
+        cloud.orders.length,
+        cloud.products.length,
+        cloud.orders[0]?.id || '',
+        cloud.orders[0]?.respondedAt || '',
+      ].join(':');
+
+      if (needsRestore && !restoringFromCloudRef.current && restoreKey !== lastRestoredKeyRef.current) {
+        restoringFromCloudRef.current = true;
+        lastRestoredKeyRef.current = restoreKey;
+        setFirestoreSyncState('syncing');
+
+        void dashboardFetch('/api/sync/restore-from-cloud', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            settings: cloud.settings,
+            orders: cloud.orders,
+            products: cloud.products,
+            storefrontConfig: cloud.storefrontConfig,
+            geoSeoConfig: cloud.geoSeoConfig,
+            whatsappMeta: cloud.whatsappMeta,
+          }),
+        })
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`Restore failed (${res.status})`);
+            const data = (await res.json()) as {
+              orders?: OrderRecord[];
+              metrics?: OrderMetrics;
+              settings?: AppSettings;
+              products?: ProductCatalogItem[];
+              storefrontConfig?: StorefrontConfig;
+              geoSeoConfig?: GeoSeoConfig;
+              whatsapp?: WhatsAppState;
+            };
+            if (Array.isArray(data.orders)) {
+              setOrders(data.orders);
+              setSelectedOrderId((prev) =>
+                prev && data.orders!.some((o) => o.id === prev) ? prev : data.orders![0]?.id || null
+              );
+            }
+            if (data.metrics) setMetrics(data.metrics);
+            if (data.settings) setSettings(data.settings);
+            if (Array.isArray(data.products)) setProducts(data.products);
+            if (data.storefrontConfig) setStorefrontConfig(data.storefrontConfig);
+            if (data.geoSeoConfig) setGeoSeoConfig(data.geoSeoConfig);
+            if (data.whatsapp) setWhatsapp(data.whatsapp);
+            setFirestoreSyncState('synced');
+            setFirestoreError(null);
+          })
+          .catch((err) => {
+            setFirestoreSyncState('error');
+            setFirestoreError(
+              err instanceof Error ? err.message : 'Unable to restore data from Google Firestore.'
+            );
+          })
+          .finally(() => {
+            restoringFromCloudRef.current = false;
+          });
+      } else if (!restoringFromCloudRef.current) {
+        setFirestoreSyncState('synced');
+      }
+    };
+
+    const handleFatalError = (err: Error) => {
+      setFirestoreSyncState('error');
+      setFirestoreError(err.message);
+      setFirestoreQuotaExceeded(isFirestoreQuotaExceededMessage(err.message));
+    };
+
+    const unsubscribe = subscribeToOwnerCloudData(
+      firebaseUser.uid,
+      syncTrackerRef.current,
+      handleCloudSnapshot,
+      handleFatalError
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authState, firebaseAuthReady, firebaseUser]);
+
+  // Delta-sync only changed orders/products/config from active server to Google Firestore
+  useEffect(() => {
+    if (
+      authState !== 'unlocked' ||
+      !firebaseAuthReady ||
+      !firebaseUser?.emailVerified ||
+      isLoading ||
+      cloudReadyTick === 0
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (restoringFromCloudRef.current) return;
+      void syncDeltaToFirestore(
+        firebaseUser.uid,
+        {
+          settings,
+          storefrontConfig,
+          geoSeoConfig,
+          whatsapp: latestStateRef.current.whatsapp,
+          orders,
+          products,
+        },
+        syncTrackerRef.current
+      )
+        .then(({ writtenDocs }) => {
+          if (writtenDocs > 0 || firestoreSyncState !== 'error') {
+            setFirestoreSyncState('synced');
+            setFirestoreError(null);
+            setFirestoreQuotaExceeded(false);
+          }
+        })
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          setFirestoreSyncState('error');
+          setFirestoreError(msg);
+          setFirestoreQuotaExceeded(isFirestoreQuotaExceededMessage(msg));
+        });
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    authState,
+    firebaseAuthReady,
+    firebaseUser,
+    isLoading,
+    cloudReadyTick,
+    orders,
+    products,
+    settings,
+    storefrontConfig,
+    geoSeoConfig,
+    firestoreSyncState,
+  ]);
 
   useEffect(() => {
     if (authState !== 'unlocked') return;
@@ -655,11 +920,17 @@ export default function App() {
       </p>
       <p className="mt-2.5 text-[11px] text-slate-500">
         Storage:{' '}
-        {cloudSyncEnabled
-          ? 'Cloud Redis Synced'
-          : whatsapp.isServerless
-            ? 'Temporary Serverless (/tmp)'
-            : 'Persistent Server Disk'}
+        {firebaseUser
+          ? firestoreSyncState === 'error'
+            ? 'Google Firestore Error'
+            : 'Google Firestore Synced'
+          : upstashQuotaExceeded
+            ? 'Upstash Limit Reached'
+            : cloudSyncEnabled
+              ? 'Cloud Redis Synced'
+              : whatsapp.isServerless
+                ? 'Temporary Serverless (/tmp)'
+                : 'Persistent Server Disk'}
       </p>
     </div>
   );
@@ -1085,8 +1356,52 @@ export default function App() {
             </nav>
           )}
 
-          {/* Zone 3: Primary Action + Lock */}
+          {/* Zone 3: Google Firestore Sync + Lock + Primary Action */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={googleAuthBusy}
+              onClick={() => {
+                if (firebaseUser) {
+                  setActiveTab('setup');
+                } else {
+                  void handleGoogleSignIn();
+                }
+              }}
+              title={
+                firebaseUser
+                  ? `Google Firestore Synced (${firebaseUser.email || 'Connected'}) — click to manage`
+                  : 'Sign in with Google to enable zero-bandwidth-bloat Firestore cloud sync'
+              }
+              aria-label={firebaseUser ? 'Manage Google Firestore Sync' : 'Connect Google Firestore Sync'}
+              className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:px-3 ${
+                firebaseUser
+                  ? firestoreSyncState === 'error'
+                    ? 'border-rose-500/40 bg-rose-950/50 text-rose-200 hover:bg-rose-900/50'
+                    : 'border-emerald-500/40 bg-emerald-950/50 text-emerald-200 hover:bg-emerald-900/50'
+                  : 'border-slate-700/80 bg-slate-900/85 text-slate-200 hover:border-emerald-500/50 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              {firestoreSyncState === 'error' ? (
+                <CloudOff className="h-3.5 w-3.5 text-rose-300" aria-hidden="true" />
+              ) : (
+                <Cloud
+                  className={`h-3.5 w-3.5 ${
+                    firebaseUser ? 'text-emerald-400' : 'text-sky-400'
+                  }`}
+                  aria-hidden="true"
+                />
+              )}
+              <span className="hidden md:inline">
+                {googleAuthBusy
+                  ? 'Connecting...'
+                  : firebaseUser
+                    ? firestoreSyncState === 'syncing'
+                      ? 'Syncing...'
+                      : 'Google Live'
+                    : 'Google Sync'}
+              </span>
+            </button>
             <button
               type="button"
               onClick={() => void handleLockDashboard()}
@@ -1146,18 +1461,79 @@ export default function App() {
 
         <main className="flex-1 p-3.5 pb-24 sm:p-6 sm:pb-24 lg:pb-6">
           <div className="mx-auto max-w-[1600px] space-y-4 sm:space-y-5">
-            {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && (
-              <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200 backdrop-blur-md sm:flex-row sm:items-center">
+            {firestoreError && (
+              <div className="flex flex-col justify-between gap-3 rounded-xl border border-rose-500/35 bg-rose-950/45 px-4 py-3 text-xs text-rose-100 backdrop-blur-md sm:flex-row sm:items-center">
+                <p className="leading-relaxed break-words">
+                  <span className="font-semibold text-rose-200">
+                    {firestoreQuotaExceeded
+                      ? 'Google Firestore Daily Quota Reached:'
+                      : 'Google Firestore Sync Notice:'}
+                  </span>{' '}
+                  {firestoreQuotaExceeded
+                    ? 'Daily free-tier read/write quota was reached. Quota resets tomorrow, or you can review usage in Firebase Console.'
+                    : firestoreError}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  {firestoreQuotaExceeded && (
+                    <a
+                      href={getFirestoreUpgradeUrl()}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 whitespace-nowrap"
+                    >
+                      Open Firebase Console
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setFirestoreError(null)}
+                    className="rounded-lg border border-rose-400/35 bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-slate-800 whitespace-nowrap"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!isLoading && upstashQuotaExceeded && !firebaseUser && (
+              <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/12 px-4 py-3 text-xs text-amber-100 backdrop-blur-md sm:flex-row sm:items-center">
                 <p className="leading-relaxed">
-                  <span className="font-semibold text-amber-100">Fresh Vercel Deploy Detected:</span> Shopify credentials saved in AI Studio stay on that server until you add <span className="font-mono text-amber-100">SHOPIFY_*</span> Env Vars or free Redis (<span className="font-mono text-amber-100">KV_REST_API_URL</span> / <span className="font-mono text-amber-100">UPSTASH_REDIS_REST_URL</span>) in Vercel Project Settings.
+                  <span className="font-semibold text-amber-200">Upstash Redis 10 GB Bandwidth Exhausted:</span>{' '}
+                  Connect <span className="font-semibold text-white">Google Firebase Firestore</span> now so your Shopify credentials, orders, and catalog restore instantly with per-document delta sync.
                 </p>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('setup')}
-                  className="shrink-0 rounded-lg border border-amber-400/40 bg-slate-900/80 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-slate-800 whitespace-nowrap"
+                  disabled={googleAuthBusy}
+                  onClick={() => void handleGoogleSignIn()}
+                  className="shrink-0 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
                 >
-                  Open Setup Guide
+                  {googleAuthBusy ? 'Connecting...' : 'Connect Google Firestore'}
                 </button>
+              </div>
+            )}
+
+            {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && !firebaseUser && !upstashQuotaExceeded && (
+              <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200 backdrop-blur-md sm:flex-row sm:items-center">
+                <p className="leading-relaxed">
+                  <span className="font-semibold text-amber-100">Fresh Vercel Deploy Detected:</span> Sign in with <span className="font-semibold text-white">Google Firestore</span> to restore your saved Shopify store &amp; orders instantly, or add <span className="font-mono text-amber-100">SHOPIFY_*</span> Env Vars in Vercel Settings.
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={googleAuthBusy}
+                    onClick={() => void handleGoogleSignIn()}
+                    className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    Connect Google Sync
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('setup')}
+                    className="rounded-lg border border-amber-400/40 bg-slate-900/80 px-3 py-2 text-xs font-medium text-amber-200 hover:bg-slate-800 whitespace-nowrap"
+                  >
+                    Setup Guide
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1278,7 +1654,13 @@ export default function App() {
               <SetupGuideView
                 settings={settings}
                 cloudSyncEnabled={cloudSyncEnabled}
+                upstashQuotaExceeded={upstashQuotaExceeded}
                 whatsapp={whatsapp}
+                firebaseUser={firebaseUser}
+                firestoreSyncState={firestoreSyncState}
+                googleAuthBusy={googleAuthBusy}
+                onGoogleSignIn={handleGoogleSignIn}
+                onGoogleSignOut={handleGoogleSignOut}
               />
             )}
           </div>

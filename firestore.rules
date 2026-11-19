@@ -1,0 +1,305 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable hardened global helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'trdsafarr@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidStringArray(arr, maxLen) {
+      return arr is list && arr.size() <= maxLen && (arr.size() == 0 || arr[0] is string);
+    }
+
+    // Entity validation blueprints synchronized verbatim with firebase-blueprint.json
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        data.displayName is string && data.displayName.size() <= 120 &&
+        data.role is string && data.role == 'admin' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAppConfig(data) {
+      return data.keys().hasAll([
+          'ownerUid',
+          'shopName',
+          'shopifyStoreDomain',
+          'syncStartDate',
+          'settings',
+          'storefrontConfig',
+          'geoSeoConfig',
+          'whatsappMeta',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerUid',
+          'shopName',
+          'shopifyStoreDomain',
+          'syncStartDate',
+          'settings',
+          'storefrontConfig',
+          'geoSeoConfig',
+          'whatsappMeta',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.ownerUid) &&
+        data.ownerUid == request.auth.uid &&
+        data.shopName is string && data.shopName.size() >= 1 && data.shopName.size() <= 120 &&
+        data.shopifyStoreDomain is string && data.shopifyStoreDomain.size() <= 160 &&
+        data.syncStartDate is string && data.syncStartDate.size() <= 20 && data.syncStartDate.matches('^(\\d{4}-\\d{2}-\\d{2})?$') &&
+        data.settings is map &&
+        data.storefrontConfig is map &&
+        data.geoSeoConfig is map &&
+        data.whatsappMeta is map &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll([
+          'ownerUid',
+          'orderId',
+          'shopifyOrderId',
+          'orderNumber',
+          'customerName',
+          'customerPhone',
+          'pollStatus',
+          'totalPrice',
+          'currency',
+          'orderCreatedAt',
+          'record',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerUid',
+          'orderId',
+          'shopifyOrderId',
+          'orderNumber',
+          'customerName',
+          'customerPhone',
+          'pollStatus',
+          'totalPrice',
+          'currency',
+          'orderCreatedAt',
+          'record',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.ownerUid) &&
+        data.ownerUid == request.auth.uid &&
+        isValidId(data.orderId) &&
+        data.shopifyOrderId is string && data.shopifyOrderId.size() >= 1 && data.shopifyOrderId.size() <= 64 && data.shopifyOrderId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.orderNumber is string && data.orderNumber.size() >= 1 && data.orderNumber.size() <= 40 &&
+        data.customerName is string && data.customerName.size() <= 160 &&
+        data.customerPhone is string && data.customerPhone.size() <= 40 &&
+        data.pollStatus is string && data.pollStatus in ['queued', 'poll_sent', 'confirmed', 'cancelled_by_user', 'failed'] &&
+        data.totalPrice is string && data.totalPrice.size() <= 32 &&
+        data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 12 &&
+        data.orderCreatedAt is string && data.orderCreatedAt.size() <= 64 &&
+        data.record is map &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'ownerUid',
+          'productId',
+          'shopifyProductId',
+          'title',
+          'handle',
+          'pincodeMode',
+          'allowedPincodes',
+          'blockedPincodes',
+          'record',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerUid',
+          'productId',
+          'shopifyProductId',
+          'title',
+          'handle',
+          'pincodeMode',
+          'allowedPincodes',
+          'blockedPincodes',
+          'record',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.ownerUid) &&
+        data.ownerUid == request.auth.uid &&
+        isValidId(data.productId) &&
+        data.shopifyProductId is string && data.shopifyProductId.size() >= 1 && data.shopifyProductId.size() <= 64 && data.shopifyProductId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 240 &&
+        data.handle is string && data.handle.size() <= 200 &&
+        data.pincodeMode is string && data.pincodeMode in ['all_india', 'allow_list', 'block_list'] &&
+        isValidStringArray(data.allowedPincodes, 200) &&
+        isValidStringArray(data.blockedPincodes, 200) &&
+        data.record is map &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Collection 1: /admins/{uid}
+    match /admins/{uid} {
+      allow get: if isVerifiedUser() && isValidId(uid) && (request.auth.uid == uid || isBootstrappedAdmin());
+      allow list: if isBootstrappedAdmin() && resource.data.role == 'admin';
+      allow create: if isBootstrappedAdmin() &&
+        isValidId(uid) &&
+        isValidAdminRecord(incoming()) &&
+        incoming().uid == uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isBootstrappedAdmin() &&
+        isValidId(uid) &&
+        isValidAdminRecord(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt']);
+      allow delete: if isBootstrappedAdmin() && isValidId(uid);
+    }
+
+    // Collection 2: /appConfigs/{configId}
+    match /appConfigs/{configId} {
+      allow get: if isVerifiedUser() && isValidId(configId) && isAdmin() && existing().ownerUid == request.auth.uid;
+      allow list: if isBootstrappedAdmin() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(configId) &&
+        isValidAppConfig(incoming()) &&
+        isAdmin() &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(configId) &&
+        isValidAppConfig(incoming()) &&
+        isAdmin() &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'shopName',
+            'shopifyStoreDomain',
+            'syncStartDate',
+            'settings',
+            'storefrontConfig',
+            'geoSeoConfig',
+            'whatsappMeta',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isBootstrappedAdmin() && isValidId(configId) && existing().ownerUid == request.auth.uid;
+    }
+
+    // Collection 3: /orders/{orderId} (Contains private customer PII — strictly verified admin + owner)
+    match /orders/{orderId} {
+      allow get: if isVerifiedUser() && isValidId(orderId) && isAdmin() && existing().ownerUid == request.auth.uid;
+      allow list: if isBootstrappedAdmin() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        incoming().orderId == orderId &&
+        isAdmin() &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        isAdmin() &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().orderId == existing().orderId &&
+        incoming().shopifyOrderId == existing().shopifyOrderId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (existing().pollStatus != 'cancelled_by_user' || isBootstrappedAdmin()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'orderNumber',
+            'customerName',
+            'customerPhone',
+            'pollStatus',
+            'totalPrice',
+            'currency',
+            'orderCreatedAt',
+            'record',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isBootstrappedAdmin() && isValidId(orderId) && existing().ownerUid == request.auth.uid;
+    }
+
+    // Collection 4: /products/{productId}
+    match /products/{productId} {
+      allow get: if isVerifiedUser() && isValidId(productId) && isAdmin() && existing().ownerUid == request.auth.uid;
+      allow list: if isBootstrappedAdmin() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        incoming().productId == productId &&
+        isAdmin() &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        isAdmin() &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().productId == existing().productId &&
+        incoming().shopifyProductId == existing().shopifyProductId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title',
+          'handle',
+          'pincodeMode',
+          'allowedPincodes',
+          'blockedPincodes',
+          'record',
+          'updatedAt'
+        ]);
+      allow delete: if isBootstrappedAdmin() && isValidId(productId) && existing().ownerUid == request.auth.uid;
+    }
+  }
+}

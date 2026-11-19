@@ -70,7 +70,32 @@ app.get('/api/dashboard', async (_req: Request, res: Response) => {
     storefrontConfig: store.getStorefrontConfig(),
     geoSeoConfig: store.getGeoSeoConfig(),
     cloudSyncEnabled: store.isCloudSyncEnabled(),
+    upstashQuotaExceeded: store.isUpstashQuotaExceeded(),
     serverTime: new Date().toISOString(),
+  });
+});
+
+app.post('/api/sync/restore-from-cloud', async (req: Request, res: Response) => {
+  const body = (req.body || {}) as {
+    settings?: Partial<AppSettings>;
+    orders?: OrderRecord[];
+    products?: Parameters<typeof store.restoreFromCloudBackup>[0]['products'];
+    storefrontConfig?: Parameters<typeof store.restoreFromCloudBackup>[0]['storefrontConfig'];
+    geoSeoConfig?: Parameters<typeof store.restoreFromCloudBackup>[0]['geoSeoConfig'];
+    whatsappMeta?: Parameters<typeof store.restoreFromCloudBackup>[0]['whatsappMeta'];
+  };
+  const result = store.restoreFromCloudBackup(body);
+  const orders = store.getOrders();
+  res.json({
+    ok: true,
+    ...result,
+    orders,
+    whatsapp: whatsappManager.getState(),
+    settings: store.getSettings(),
+    metrics: computeOrderMetrics(orders),
+    products: store.getProducts(),
+    storefrontConfig: store.getStorefrontConfig(),
+    geoSeoConfig: store.getGeoSeoConfig(),
   });
 });
 

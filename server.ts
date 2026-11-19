@@ -82,7 +82,40 @@ async function startServer() {
       storefrontConfig: store.getStorefrontConfig(),
       geoSeoConfig: store.getGeoSeoConfig(),
       cloudSyncEnabled: store.isCloudSyncEnabled(),
+      upstashQuotaExceeded: store.isUpstashQuotaExceeded(),
       serverTime: new Date().toISOString(),
+    });
+  });
+
+  // Restore server memory from authenticated Google Firebase Firestore backup (keeps Vercel live even if Redis hits quota)
+  app.post('/api/sync/restore-from-cloud', async (req: Request, res: Response) => {
+    const body = (req.body || {}) as {
+      settings?: Partial<AppSettings>;
+      orders?: unknown[];
+      products?: unknown[];
+      storefrontConfig?: Record<string, unknown>;
+      geoSeoConfig?: Record<string, unknown>;
+      whatsappMeta?: Record<string, unknown>;
+    };
+    const result = store.restoreFromCloudBackup({
+      settings: body.settings,
+      orders: Array.isArray(body.orders) ? (body.orders as Parameters<typeof store.restoreFromCloudBackup>[0]['orders']) : undefined,
+      products: Array.isArray(body.products) ? (body.products as Parameters<typeof store.restoreFromCloudBackup>[0]['products']) : undefined,
+      storefrontConfig: body.storefrontConfig as Parameters<typeof store.restoreFromCloudBackup>[0]['storefrontConfig'],
+      geoSeoConfig: body.geoSeoConfig as Parameters<typeof store.restoreFromCloudBackup>[0]['geoSeoConfig'],
+      whatsappMeta: body.whatsappMeta as Parameters<typeof store.restoreFromCloudBackup>[0]['whatsappMeta'],
+    });
+    const orders = store.getOrders();
+    res.json({
+      ok: true,
+      ...result,
+      orders,
+      whatsapp: whatsappManager.getState(),
+      settings: store.getSettings(),
+      metrics: computeOrderMetrics(orders),
+      products: store.getProducts(),
+      storefrontConfig: store.getStorefrontConfig(),
+      geoSeoConfig: store.getGeoSeoConfig(),
     });
   });
 

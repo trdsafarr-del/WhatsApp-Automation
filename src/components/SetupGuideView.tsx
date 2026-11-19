@@ -1,12 +1,31 @@
 import React, { useState } from 'react';
-import { Check, Cloud, Copy, Eye, EyeOff, GitBranch, Server, ShoppingBag } from 'lucide-react';
+import type { User as FirebaseUser } from 'firebase/auth';
+import {
+  Check,
+  Cloud,
+  Copy,
+  Eye,
+  EyeOff,
+  GitBranch,
+  LogOut,
+  Server,
+  ShieldCheck,
+  ShoppingBag,
+} from 'lucide-react';
+import { firebaseProjectMeta } from '../lib/firebase';
 import { buildDeployEnvSnippet, hasConfiguredShopify } from '../lib/orderRules';
 import type { AppSettings, WhatsAppState } from '../lib/types';
 
 interface SetupGuideViewProps {
   settings: AppSettings;
   cloudSyncEnabled: boolean;
+  upstashQuotaExceeded?: boolean;
   whatsapp: WhatsAppState;
+  firebaseUser?: FirebaseUser | null;
+  firestoreSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
+  googleAuthBusy?: boolean;
+  onGoogleSignIn?: () => void;
+  onGoogleSignOut?: () => void;
 }
 
 type GuideTab = 'sync' | 'shopify' | 'railway' | 'oracle';
@@ -88,7 +107,13 @@ function CopyField({
 export function SetupGuideView({
   settings,
   cloudSyncEnabled,
+  upstashQuotaExceeded = false,
   whatsapp,
+  firebaseUser = null,
+  firestoreSyncState = 'idle',
+  googleAuthBusy = false,
+  onGoogleSignIn,
+  onGoogleSignOut,
 }: SetupGuideViewProps) {
   const [activeTab, setActiveTab] = useState<GuideTab>('sync');
 
@@ -152,7 +177,7 @@ export function SetupGuideView({
             }`}
           >
             <Cloud className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
-            01. Env &amp; Redis Sync
+            01. Google Firestore &amp; Env
           </button>
           <button
             type="button"
@@ -201,26 +226,88 @@ export function SetupGuideView({
 
       {activeTab === 'sync' && (
         <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
-          <div className="flex items-center gap-2.5 border-b border-slate-800 pb-4">
-            <Cloud className="h-5 w-5 text-emerald-400" aria-hidden="true" />
-            <div>
-              <h2 className="text-base font-semibold text-white">
-                Keep Shopify &amp; WhatsApp Synced Across Deployments
-              </h2>
-              <p className="text-xs text-slate-400">
-                Use Upstash Redis + Env Vars so your store, orders, and linked WhatsApp session stay synced across AI Studio, Vercel, and Railway.
-              </p>
+          <div className="flex flex-col justify-between gap-3 border-b border-slate-800 pb-4 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2.5">
+              <Cloud className="h-5 w-5 text-emerald-400" aria-hidden="true" />
+              <div>
+                <h2 className="text-base font-semibold text-white">
+                  Google Firebase Firestore Cloud Sync (Zero Bandwidth Bloat)
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Stores each order, product, and store config as its own Firestore document so only changed records sync — replacing heavy full-blob Redis reads.
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {firebaseUser ? (
+                <button
+                  type="button"
+                  disabled={googleAuthBusy}
+                  onClick={() => onGoogleSignOut?.()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
+                >
+                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                  Sign Out Google
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={googleAuthBusy}
+                  onClick={() => onGoogleSignIn?.()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
+                >
+                  <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
+                  {googleAuthBusy ? 'Connecting...' : 'Sign in with Google'}
+                </button>
+              )}
             </div>
           </div>
 
           <div className="mt-5 space-y-4 text-sm text-slate-300">
-            <p className="leading-relaxed">
-              Settings saved in the dashboard are stored in <span className="font-mono text-xs text-white">data/db.json</span> on the current server&apos;s disk (which is excluded from GitHub for security). When you deploy to <span className="font-mono text-xs text-white">vercel.app</span>, Vercel starts empty unless you add your Environment Variables or Upstash Redis once:
-            </p>
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/25 p-4 text-xs leading-relaxed text-slate-200">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="inline-flex items-center gap-1.5 font-semibold text-emerald-300">
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                  Google Firebase Project: <span className="font-mono text-white">{firebaseProjectMeta.projectId}</span>
+                </p>
+                <span
+                  className={`rounded-md px-2 py-0.5 font-mono text-[11px] font-semibold ${
+                    firebaseUser
+                      ? firestoreSyncState === 'error'
+                        ? 'bg-rose-500/20 text-rose-200'
+                        : 'bg-emerald-500/20 text-emerald-200'
+                      : 'bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  {firebaseUser
+                    ? firestoreSyncState === 'syncing'
+                      ? 'Syncing...'
+                      : firestoreSyncState === 'error'
+                        ? 'Sync Error'
+                        : `Connected (${firebaseUser.email})`
+                    : 'Not Signed In'}
+                </span>
+              </div>
+              <ol className="mt-2.5 list-decimal space-y-1.5 pl-4 text-slate-300">
+                <li>
+                  <span className="font-semibold text-white">Backup Once:</span> Click <span className="font-semibold text-emerald-300">Sign in with Google</span> on your active deployment (AI Studio or Railway) using your admin Google account. Your Shopify credentials, orders, and product catalog delta-sync to Firestore automatically.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">Allow Custom Domain on Vercel:</span> In{' '}
+                  <span className="font-mono text-emerald-300">
+                    Firebase Console → Authentication → Settings → Authorized domains
+                  </span>
+                  , add <span className="font-mono text-white">faridabad.broomiesbakery.in</span> so Google Sign-In popup works on your live domain.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">Instant Auto-Restore on Vercel:</span> Open <span className="font-mono text-white">faridabad.broomiesbakery.in</span>, unlock the dashboard, and sign in with Google once — your Shopify store, orders, and catalog restore automatically even if Upstash Redis is removed or hits quota.
+                </li>
+              </ol>
+            </div>
 
             {shopifyConfigured ? (
               <CopyField
-                label="Copy & Paste into Vercel → Settings → Environment Variables (then Redeploy)"
+                label="Recommended: Also Paste into Vercel → Settings → Environment Variables (keeps Shopify API live on cold requests)"
                 value={rawEnvSnippet}
                 secretMask={maskedEnvSnippet}
               />
@@ -228,23 +315,27 @@ export function SetupGuideView({
               <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4 text-xs leading-relaxed text-amber-200">
                 <p className="font-semibold text-amber-100">Shopify credentials are not saved on this deployment yet.</p>
                 <p className="mt-1">
-                  Go to <span className="font-semibold text-white">Automation &amp; Shopify</span> to paste your Store Domain, Client ID, and Client Secret — OR paste <span className="font-mono text-white">SHOPIFY_STORE_DOMAIN</span>, <span className="font-mono text-white">SHOPIFY_CLIENT_ID</span>, and <span className="font-mono text-white">SHOPIFY_CLIENT_SECRET</span> directly in your Vercel Project Settings → Environment Variables, then redeploy.
+                  Click <span className="font-semibold text-white">Sign in with Google</span> above to auto-restore from Google Firestore, OR paste <span className="font-mono text-white">SHOPIFY_STORE_DOMAIN</span>, <span className="font-mono text-white">SHOPIFY_CLIENT_ID</span>, and <span className="font-mono text-white">SHOPIFY_CLIENT_SECRET</span> in Vercel Project Settings → Environment Variables and redeploy.
                 </p>
               </div>
             )}
 
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-300">
               <p className="font-semibold text-white">
-                Current Sync Status: {cloudSyncEnabled ? 'Cloud Redis Synced' : whatsapp.isServerless ? 'Temporary Vercel /tmp Storage' : 'Local Server Disk Only'}
+                Current Storage Status:{' '}
+                {firebaseUser
+                  ? 'Google Firebase Firestore (Per-Document Delta Sync)'
+                  : upstashQuotaExceeded
+                    ? 'Upstash Redis Bandwidth Exhausted (Switch to Google Firestore above)'
+                    : cloudSyncEnabled
+                      ? 'Upstash Redis Active'
+                      : whatsapp.isServerless
+                        ? 'Temporary Vercel /tmp Storage'
+                        : 'Local Server Disk Only'}
               </p>
-              <ul className="mt-2 list-disc space-y-1.5 pl-4">
-                <li>
-                  <span className="font-semibold text-white">Step A (Shopify Forever Linked):</span> Paste the variables above into Vercel → <span className="font-medium text-slate-200">Settings → Environment Variables</span> and click <span className="font-medium text-slate-200">Redeploy</span>. Shopify stays connected across every deploy.
-                </li>
-                <li>
-                  <span className="font-semibold text-white">Step B (Same Live Orders &amp; WhatsApp Everywhere):</span> In Vercel → <span className="font-medium text-slate-200">Storage → Browse Marketplace → Upstash Redis</span> (free tier), connect Redis so <span className="font-mono text-emerald-300">KV_REST_API_URL</span> &amp; <span className="font-mono text-emerald-300">KV_REST_API_TOKEN</span> (or <span className="font-mono text-emerald-300">UPSTASH_REDIS_REST_*</span>) are added automatically. Put the exact same 2 Redis env vars on your 24/7 Node host (Railway / Render).
-                </li>
-              </ul>
+              <p className="mt-1.5 text-slate-400">
+                Tip: If your Upstash free 10 GB monthly limit is finished, you can safely remove <span className="font-mono text-slate-200">UPSTASH_REDIS_REST_URL</span> / <span className="font-mono text-slate-200">KV_REST_API_URL</span> from Vercel and rely on Google Firestore + Vercel <span className="font-mono text-slate-200">SHOPIFY_*</span> env vars.
+              </p>
             </div>
           </div>
         </section>

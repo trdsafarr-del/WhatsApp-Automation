@@ -129,15 +129,43 @@ function dedupeOrderEvents(orders: OrderRecord[]): { cleaned: OrderRecord[]; cha
   return { cleaned, changed };
 }
 
+let upstashQuotaBlockedUntilMs = 0;
+
+function isUpstashCircuitOpen(): boolean {
+  return upstashQuotaBlockedUntilMs > Date.now();
+}
+
+function inspectUpstashErrorResponse(status: number, bodyText = ''): void {
+  const lower = bodyText.toLowerCase();
+  if (
+    status === 429 ||
+    status === 402 ||
+    lower.includes('bandwidth') ||
+    lower.includes('max daily request') ||
+    lower.includes('limit exceeded') ||
+    lower.includes('quota')
+  ) {
+    upstashQuotaBlockedUntilMs = Date.now() + 30 * 60 * 1000;
+  }
+}
+
 async function upstashGet(key: string): Promise<string | null> {
   const cfg = getUpstashConfig();
-  if (!cfg) return null;
+  if (!cfg || isUpstashCircuitOpen()) return null;
   try {
     const res = await fetch(`${cfg.url}/get/${encodeURIComponent(key)}`, {
       headers: { Authorization: `Bearer ${cfg.token}` },
+      signal: AbortSignal.timeout(4000),
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { result?: string | null };
+    if (!res.ok) {
+      inspectUpstashErrorResponse(res.status, await res.text().catch(() => ''));
+      return null;
+    }
+    const data = (await res.json()) as { result?: string | null; error?: string };
+    if (data.error) {
+      inspectUpstashErrorResponse(429, data.error);
+      return null;
+    }
     return typeof data.result === 'string' ? data.result : null;
   } catch {
     return null;
@@ -146,14 +174,22 @@ async function upstashGet(key: string): Promise<string | null> {
 
 async function upstashMGet(keys: string[]): Promise<Array<string | null>> {
   const cfg = getUpstashConfig();
-  if (!cfg || keys.length === 0) return keys.map(() => null);
+  if (!cfg || keys.length === 0 || isUpstashCircuitOpen()) return keys.map(() => null);
   try {
     const encoded = keys.map((k) => encodeURIComponent(k)).join('/');
     const res = await fetch(`${cfg.url}/mget/${encoded}`, {
       headers: { Authorization: `Bearer ${cfg.token}` },
+      signal: AbortSignal.timeout(4000),
     });
-    if (!res.ok) return keys.map(() => null);
-    const data = (await res.json()) as { result?: Array<string | null> };
+    if (!res.ok) {
+      inspectUpstashErrorResponse(res.status, await res.text().catch(() => ''));
+      return keys.map(() => null);
+    }
+    const data = (await res.json()) as { result?: Array<string | null>; error?: string };
+    if (data.error) {
+      inspectUpstashErrorResponse(429, data.error);
+      return keys.map(() => null);
+    }
     return Array.isArray(data.result)
       ? keys.map((_, idx) => (typeof data.result?.[idx] === 'string' ? data.result[idx] : null))
       : keys.map(() => null);
@@ -164,16 +200,20 @@ async function upstashMGet(keys: string[]): Promise<Array<string | null>> {
 
 async function upstashSet(key: string, value: string): Promise<void> {
   const cfg = getUpstashConfig();
-  if (!cfg) return;
+  if (!cfg || isUpstashCircuitOpen()) return;
   try {
-    await fetch(cfg.url, {
+    const res = await fetch(cfg.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(['SET', key, value]),
+      signal: AbortSignal.timeout(4000),
     });
+    if (!res.ok) {
+      inspectUpstashErrorResponse(res.status, await res.text().catch(() => ''));
+    }
   } catch {
     // Keep local disk persistence intact even if remote sync fails momentarily
   }
@@ -181,36 +221,45 @@ async function upstashSet(key: string, value: string): Promise<void> {
 
 async function upstashPipelineSet(pairs: Array<[string, string]>): Promise<void> {
   const cfg = getUpstashConfig();
-  if (!cfg || pairs.length === 0) return;
+  if (!cfg || pairs.length === 0 || isUpstashCircuitOpen()) return;
   try {
-    await fetch(`${cfg.url}/pipeline`, {
+    const res = await fetch(`${cfg.url}/pipeline`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(pairs.map(([key, value]) => ['SET', key, value])),
+      signal: AbortSignal.timeout(4000),
     });
+    if (!res.ok) {
+      inspectUpstashErrorResponse(res.status, await res.text().catch(() => ''));
+    }
   } catch {
-    // Fallback to individual SETs if pipeline endpoint is unavailable
-    for (const [key, value] of pairs) {
-      await upstashSet(key, value);
+    if (!isUpstashCircuitOpen()) {
+      for (const [key, value] of pairs) {
+        await upstashSet(key, value);
+      }
     }
   }
 }
 
 async function upstashDel(key: string): Promise<void> {
   const cfg = getUpstashConfig();
-  if (!cfg) return;
+  if (!cfg || isUpstashCircuitOpen()) return;
   try {
-    await fetch(cfg.url, {
+    const res = await fetch(cfg.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(['DEL', key]),
+      signal: AbortSignal.timeout(4000),
     });
+    if (!res.ok) {
+      inspectUpstashErrorResponse(res.status, await res.text().catch(() => ''));
+    }
   } catch {
     // Ignore remote delete error
   }
@@ -935,6 +984,117 @@ class PersistentStore {
     };
     this.persistState(this.state);
     return this.state.geoSeoConfig;
+  }
+
+  isUpstashQuotaExceeded(): boolean {
+    return isUpstashCircuitOpen();
+  }
+
+  /**
+   * Hydrates a cold or Redis-depleted server (e.g. Vercel) from a verified Google Firebase
+   * Firestore backup sent by the authenticated admin dashboard without regressing newer orders.
+   */
+  restoreFromCloudBackup(payload: {
+    settings?: Partial<AppSettings>;
+    orders?: OrderRecord[];
+    products?: ProductCatalogItem[];
+    storefrontConfig?: Partial<StorefrontConfig>;
+    geoSeoConfig?: Partial<GeoSeoConfig>;
+    whatsappMeta?: Partial<DatabaseState['whatsappMeta']>;
+  }): { restoredOrders: number; restoredProducts: number; restoredSettings: boolean } {
+    let restoredSettings = false;
+    if (payload.settings && typeof payload.settings === 'object') {
+      const mergedSettings = hydrateEnvDefaults({
+        ...DEFAULT_SETTINGS,
+        ...this.state.settings,
+        ...payload.settings,
+        shopifyStoreDomain:
+          this.state.settings.shopifyStoreDomain || payload.settings.shopifyStoreDomain || '',
+        shopifyClientId:
+          this.state.settings.shopifyClientId || payload.settings.shopifyClientId || '',
+        shopifyClientSecret:
+          this.state.settings.shopifyClientSecret || payload.settings.shopifyClientSecret || '',
+        shopifyAccessToken:
+          this.state.settings.shopifyAccessToken || payload.settings.shopifyAccessToken || '',
+        shopifyWebhookSecret:
+          this.state.settings.shopifyWebhookSecret || payload.settings.shopifyWebhookSecret || '',
+        whatsappMode: 'baileys_qr',
+      });
+      this.state.settings = mergedSettings;
+      restoredSettings = hasConfiguredShopify(mergedSettings);
+    }
+
+    if (payload.storefrontConfig && typeof payload.storefrontConfig === 'object') {
+      this.state.storefrontConfig = {
+        ...this.getStorefrontConfig(),
+        ...payload.storefrontConfig,
+      };
+    }
+
+    if (payload.geoSeoConfig && typeof payload.geoSeoConfig === 'object') {
+      this.state.geoSeoConfig = {
+        ...this.getGeoSeoConfig(),
+        ...payload.geoSeoConfig,
+        showStorefrontZoneFooter: false,
+      };
+    }
+
+    if (payload.whatsappMeta && typeof payload.whatsappMeta === 'object') {
+      this.state.whatsappMeta = {
+        ...this.state.whatsappMeta,
+        phoneNumber: this.state.whatsappMeta.phoneNumber || payload.whatsappMeta.phoneNumber || null,
+        pushName: this.state.whatsappMeta.pushName || payload.whatsappMeta.pushName || null,
+        connectedAt: this.state.whatsappMeta.connectedAt || payload.whatsappMeta.connectedAt || null,
+        lastHeartbeatAt:
+          this.state.whatsappMeta.lastHeartbeatAt || payload.whatsappMeta.lastHeartbeatAt || null,
+        activeHostKind:
+          this.state.whatsappMeta.activeHostKind || payload.whatsappMeta.activeHostKind || null,
+      };
+    }
+
+    let restoredOrders = 0;
+    if (Array.isArray(payload.orders) && payload.orders.length > 0) {
+      const mergedMap = new Map<string, OrderRecord>();
+      for (const existingOrder of this.state.orders) {
+        mergedMap.set(existingOrder.shopifyOrderId || existingOrder.id, existingOrder);
+      }
+      for (const incomingOrder of payload.orders) {
+        if (!incomingOrder || typeof incomingOrder !== 'object') continue;
+        if (
+          LEGACY_SEED_ORDER_IDS.has(incomingOrder.id) ||
+          !isOrderOnOrAfterStartDate(incomingOrder.createdAt, this.state.settings.syncStartDate)
+        ) {
+          continue;
+        }
+        const key = incomingOrder.shopifyOrderId || incomingOrder.id;
+        const prev = mergedMap.get(key);
+        mergedMap.set(key, prev ? mergeProgressedOrderRecords(prev, incomingOrder) : incomingOrder);
+        if (!prev) restoredOrders += 1;
+      }
+      this.state.orders = Array.from(mergedMap.values()).sort(
+        (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+      );
+    }
+
+    let restoredProducts = 0;
+    if (Array.isArray(payload.products) && payload.products.length > 0) {
+      const prodMap = new Map<string, ProductCatalogItem>();
+      for (const existingProd of this.getProducts()) {
+        prodMap.set(existingProd.shopifyProductId || existingProd.id, existingProd);
+      }
+      for (const incomingProd of payload.products) {
+        if (!incomingProd || typeof incomingProd !== 'object') continue;
+        const key = incomingProd.shopifyProductId || incomingProd.id;
+        if (!prodMap.has(key)) {
+          prodMap.set(key, incomingProd);
+          restoredProducts += 1;
+        }
+      }
+      this.state.products = Array.from(prodMap.values());
+    }
+
+    this.writeLocalState(this.state);
+    return { restoredOrders, restoredProducts, restoredSettings };
   }
 }
 

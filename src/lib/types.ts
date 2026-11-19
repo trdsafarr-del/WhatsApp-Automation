@@ -270,6 +270,7 @@ export interface DashboardPayload {
   storefrontConfig?: StorefrontConfig;
   geoSeoConfig?: GeoSeoConfig;
   cloudSyncEnabled?: boolean;
+  upstashQuotaExceeded?: boolean;
   serverTime: string;
 }
 

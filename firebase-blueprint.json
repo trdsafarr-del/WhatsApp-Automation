@@ -1,0 +1,306 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Authorized admin profile record granting RBAC access to OrderPulse store data.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the admin."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 200,
+          "description": "Verified email address of the admin."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Display name for audit trails."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "RBAC role value."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin record was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin record was last updated."
+        }
+      },
+      "required": ["uid", "email", "displayName", "role", "createdAt", "updatedAt"]
+    },
+    "AppConfigDoc": {
+      "title": "AppConfigDoc",
+      "description": "Store automation settings, Shopify connection metadata, storefront pincode rules, and Geo-SEO config.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the verified owner who manages this store config."
+        },
+        "shopName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Display brand name of the Shopify bakery store."
+        },
+        "shopifyStoreDomain": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Primary .myshopify.com domain."
+        },
+        "syncStartDate": {
+          "type": "string",
+          "maxLength": 20,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$",
+          "description": "IST YYYY-MM-DD order sync cutoff date."
+        },
+        "settings": {
+          "type": "object",
+          "description": "Native map of AppSettings fields."
+        },
+        "storefrontConfig": {
+          "type": "object",
+          "description": "Native map of storefront pincode widget configuration."
+        },
+        "geoSeoConfig": {
+          "type": "object",
+          "description": "Native map of Geo-SEO city, hubs, categories, and localities configuration."
+        },
+        "whatsappMeta": {
+          "type": "object",
+          "description": "Display metadata for linked WhatsApp Business session."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when config document was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when config document was last updated."
+        }
+      },
+      "required": [
+        "ownerUid",
+        "shopName",
+        "shopifyStoreDomain",
+        "syncStartDate",
+        "settings",
+        "storefrontConfig",
+        "geoSeoConfig",
+        "whatsappMeta",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "OrderDoc": {
+      "title": "OrderDoc",
+      "description": "Individual Shopify order with WhatsApp poll confirmation state, dispatch status, and private customer PII.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the verified admin owning this order document."
+        },
+        "orderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Normalized OrderPulse document ID."
+        },
+        "shopifyOrderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Shopify numeric or string order identifier."
+        },
+        "orderNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Human-readable Shopify order number (e.g. #1345)."
+        },
+        "customerName": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Customer full name (PII)."
+        },
+        "customerPhone": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Customer WhatsApp phone number (PII)."
+        },
+        "pollStatus": {
+          "type": "string",
+          "enum": ["queued", "poll_sent", "confirmed", "cancelled_by_user", "failed"],
+          "description": "WhatsApp order confirmation workflow status."
+        },
+        "totalPrice": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Order monetary amount string."
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12,
+          "description": "ISO currency code."
+        },
+        "orderCreatedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO-8601 timestamp from Shopify order creation."
+        },
+        "record": {
+          "type": "object",
+          "description": "Native map holding full OrderRecord fields and bounded activity events."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when document was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when document was last updated."
+        }
+      },
+      "required": [
+        "ownerUid",
+        "orderId",
+        "shopifyOrderId",
+        "orderNumber",
+        "customerName",
+        "customerPhone",
+        "pollStatus",
+        "totalPrice",
+        "currency",
+        "orderCreatedAt",
+        "record",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ProductDoc": {
+      "title": "ProductDoc",
+      "description": "Individual Shopify product catalog record with pincode serviceability rules and SEO overrides.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the verified admin owning this product document."
+        },
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Normalized product document ID."
+        },
+        "shopifyProductId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Shopify product identifier."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "description": "Product display title."
+        },
+        "handle": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Shopify product URL handle."
+        },
+        "pincodeMode": {
+          "type": "string",
+          "enum": ["all_india", "allow_list", "block_list"],
+          "description": "Pincode delivery eligibility mode."
+        },
+        "allowedPincodes": {
+          "type": "array",
+          "description": "Bounded list of allowed 6-digit pincodes (max 200)."
+        },
+        "blockedPincodes": {
+          "type": "array",
+          "description": "Bounded list of blocked 6-digit pincodes (max 200)."
+        },
+        "record": {
+          "type": "object",
+          "description": "Native map holding full ProductCatalogItem fields."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when document was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when document was last updated."
+        }
+      },
+      "required": [
+        "ownerUid",
+        "productId",
+        "shopifyProductId",
+        "title",
+        "handle",
+        "pincodeMode",
+        "allowedPincodes",
+        "blockedPincodes",
+        "record",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Authorized admin records used for Firestore RBAC verification."
+    },
+    "/appConfigs/{configId}": {
+      "schema": { "$ref": "#/entities/AppConfigDoc" },
+      "description": "Store settings, Shopify config, storefront pincode rules, and Geo-SEO matrix config."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/OrderDoc" },
+      "description": "Per-order documents with WhatsApp confirmation status, tracking, and private customer PII."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/ProductDoc" },
+      "description": "Per-product catalog documents with pincode eligibility and SEO metadata."
+    }
+  }
+}
