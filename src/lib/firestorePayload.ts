@@ -49,7 +49,9 @@ function clampStr(value: unknown, maxLen: number, fallback = ''): string {
  */
 export function stripUndefinedDeep<T>(input: T): T {
   if (Array.isArray(input)) {
-    return input.map((item) => stripUndefinedDeep(item)) as unknown as T;
+    return input
+      .filter((item) => item !== undefined)
+      .map((item) => stripUndefinedDeep(item)) as unknown as T;
   }
   if (input && typeof input === 'object') {
     const out: Record<string, unknown> = {};
@@ -116,7 +118,7 @@ export function buildAppConfigDocPayload(
     whatsappMeta: stripUndefinedDeep({
       mode: params.whatsapp.mode || 'baileys_qr',
       connectedAt: params.whatsapp.connectedAt || null,
-      lastHeartbeatAt: params.whatsapp.lastHeartbeatAt || null,
+      lastHeartbeatAt: null,
       activeHostKind: params.whatsapp.activeHostKind || null,
       phoneNumber: params.whatsapp.phoneNumber || null,
       pushName: params.whatsapp.pushName || null,
@@ -232,6 +234,24 @@ export function buildProductDocPayload(
   };
 }
 
+function canonicalizeForSignature(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForSignature(item));
+  }
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    for (const key of keys) {
+      const v = (value as Record<string, unknown>)[key];
+      if (v !== undefined) {
+        sorted[key] = canonicalizeForSignature(v);
+      }
+    }
+    return sorted;
+  }
+  return value;
+}
+
 export function computeContentSignature(value: unknown): string {
-  return JSON.stringify(value);
+  return JSON.stringify(canonicalizeForSignature(value));
 }

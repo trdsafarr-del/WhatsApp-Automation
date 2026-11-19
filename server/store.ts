@@ -11,6 +11,11 @@ import {
   shouldBackupWhatsAppAuth,
   shouldFetchFullRemoteDb,
 } from '../src/lib/orderRules.js';
+import {
+  computeContentSignature,
+  stripUndefinedDeep,
+  toSafeFirestoreDocId,
+} from '../src/lib/firestorePayload.js';
 import { DEFAULT_GEO_SEO_CONFIG } from '../src/lib/geoSeo.js';
 import {
   DEFAULT_STOREFRONT_CONFIG,
@@ -94,6 +99,19 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
   };
 }
 
+function getRtdbServerConfig(): { url: string; secret: string } | null {
+  const url = readCleanEnvVar(process.env, [
+    'FIREBASE_RTDB_URL',
+    'FIREBASE_DATABASE_URL',
+  ]).replace(/\/+$/, '');
+  const secret = readCleanEnvVar(process.env, [
+    'FIREBASE_RTDB_SECRET',
+    'FIREBASE_DATABASE_SECRET',
+  ]);
+  if (!url || !secret) return null;
+  return { url, secret };
+}
+
 function getUpstashConfig(): { url: string; token: string } | null {
   const url = readCleanEnvVar(process.env, [
     'UPSTASH_REDIS_REST_URL',
@@ -105,6 +123,77 @@ function getUpstashConfig(): { url: string; token: string } | null {
   ]);
   if (!url || !token) return null;
   return { url, token };
+}
+
+async function rtdbRestGet<T = unknown>(nodePath: string): Promise<T | null> {
+  const cfg = getRtdbServerConfig();
+  if (!cfg) return null;
+  const cleanPath = nodePath.replace(/^\/+/, '');
+  try {
+    const res = await fetch(
+      `${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as T | null;
+    return data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function rtdbRestPatch(nodePath: string, body: Record<string, unknown>): Promise<boolean> {
+  const cfg = getRtdbServerConfig();
+  if (!cfg) return false;
+  const cleanPath = nodePath.replace(/^\/+/, '');
+  try {
+    const res = await fetch(
+      `${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(6000),
+      }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function rtdbRestPut(nodePath: string, body: unknown): Promise<boolean> {
+  const cfg = getRtdbServerConfig();
+  if (!cfg) return false;
+  const cleanPath = nodePath.replace(/^\/+/, '');
+  try {
+    const res = await fetch(
+      `${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(6000),
+      }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function rtdbRestDelete(nodePath: string): Promise<void> {
+  const cfg = getRtdbServerConfig();
+  if (!cfg) return;
+  const cleanPath = nodePath.replace(/^\/+/, '');
+  try {
+    await fetch(`${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(4000),
+    });
+  } catch {
+    // Ignore delete errors
+  }
 }
 
 function dedupeOrderEvents(orders: OrderRecord[]): { cleaned: OrderRecord[]; changed: boolean } {
@@ -277,6 +366,9 @@ class PersistentStore {
   private pendingPollFlushTimer: NodeJS.Timeout | null = null;
   private lastAuthBackupAtMs = 0;
   private lastAuthBackupDigest: string | null = null;
+  private rtdbConfigSig: string | null = null;
+  private rtdbOrderSigs = new Map<string, string>();
+  private rtdbProductSigs = new Map<string, string>();
 
   constructor() {
     ensureDataDir();
@@ -285,7 +377,63 @@ class PersistentStore {
   }
 
   isCloudSyncEnabled(): boolean {
-    return getUpstashConfig() !== null;
+    return getRtdbServerConfig() !== null || getUpstashConfig() !== null;
+  }
+
+  private buildRtdbDeltaPatch(rev: string): Record<string, unknown> {
+    const patch: Record<string, unknown> = {};
+    const configNode = stripUndefinedDeep({
+      settings: { ...this.state.settings },
+      storefrontConfig: { ...this.state.storefrontConfig },
+      geoSeoConfig: { ...this.state.geoSeoConfig },
+      whatsappMeta: {
+        mode: this.state.whatsappMeta.mode || 'baileys_qr',
+        connectedAt: this.state.whatsappMeta.connectedAt || null,
+        lastHeartbeatAt: null,
+        activeHostKind: this.state.whatsappMeta.activeHostKind || null,
+        phoneNumber: this.state.whatsappMeta.phoneNumber || null,
+        pushName: this.state.whatsappMeta.pushName || null,
+      },
+    });
+    const configSig = computeContentSignature(configNode);
+    if (configSig !== this.rtdbConfigSig) {
+      patch['config'] = configNode;
+      this.rtdbConfigSig = configSig;
+    }
+
+    for (const order of this.state.orders) {
+      const safeId = toSafeFirestoreDocId(order.id || `ord-${order.shopifyOrderId}`, 'ord');
+      const cleanOrder = stripUndefinedDeep({
+        ...order,
+        id: safeId,
+        events: Array.isArray(order.events) ? order.events.slice(-25) : [],
+      });
+      const sig = computeContentSignature(cleanOrder);
+      if (this.rtdbOrderSigs.get(safeId) !== sig) {
+        patch[`orders/${safeId}`] = cleanOrder;
+        this.rtdbOrderSigs.set(safeId, sig);
+      }
+    }
+
+    for (const product of this.state.products) {
+      const safeId = toSafeFirestoreDocId(product.id || `prod-${product.shopifyProductId}`, 'prod');
+      const cleanProduct = stripUndefinedDeep({
+        ...product,
+        id: safeId,
+        allowedPincodes: Array.isArray(product.allowedPincodes) ? product.allowedPincodes : [],
+        blockedPincodes: Array.isArray(product.blockedPincodes) ? product.blockedPincodes : [],
+      });
+      const sig = computeContentSignature(cleanProduct);
+      if (this.rtdbProductSigs.get(safeId) !== sig) {
+        patch[`products/${safeId}`] = cleanProduct;
+        this.rtdbProductSigs.set(safeId, sig);
+      }
+    }
+
+    if (Object.keys(patch).length > 0) {
+      patch['meta'] = { rev, updatedAt: new Date().toISOString() };
+    }
+    return patch;
   }
 
   private flushPendingDbNow() {
@@ -296,6 +444,20 @@ class PersistentStore {
     if (!this.isCloudSyncEnabled()) return;
     const rev = nextDbRevision();
     this.lastSyncedRev = rev;
+
+    if (getRtdbServerConfig() !== null) {
+      const patch = this.buildRtdbDeltaPatch(rev);
+      if (Object.keys(patch).length === 0) return;
+      this.remoteSyncQueue = this.remoteSyncQueue
+        .then(async () => {
+          await rtdbRestPatch('orderpulse', patch);
+        })
+        .catch(() => {
+          // Keep queue healthy even if a transient network error occurs
+        });
+      return;
+    }
+
     const payload = JSON.stringify(this.state);
     this.remoteSyncQueue = this.remoteSyncQueue
       .then(() =>
@@ -315,6 +477,17 @@ class PersistentStore {
       this.pendingPollFlushTimer = null;
     }
     if (!this.isCloudSyncEnabled()) return;
+    if (getRtdbServerConfig() !== null) {
+      const payload = stripUndefinedDeep(this.pollMessages);
+      this.remoteSyncQueue = this.remoteSyncQueue
+        .then(async () => {
+          await rtdbRestPut('orderpulse_server/polls', payload);
+        })
+        .catch(() => {
+          // Keep queue healthy
+        });
+      return;
+    }
     const payload = JSON.stringify(this.pollMessages);
     this.remoteSyncQueue = this.remoteSyncQueue
       .then(() => upstashSet(REDIS_POLL_KEY, payload))
@@ -352,6 +525,146 @@ class PersistentStore {
     this.hydratePromise = (async () => {
       try {
         await this.flushRemote();
+
+        if (getRtdbServerConfig() !== null) {
+          const [metaNode, heartbeatNode] = await Promise.all([
+            rtdbRestGet<{ rev?: string; updatedAt?: string }>('orderpulse/meta'),
+            rtdbRestGet<{ lastHeartbeatAt?: string | null; activeHostKind?: string | null }>(
+              'orderpulse_server/heartbeat'
+            ),
+          ]);
+
+          if (heartbeatNode && typeof heartbeatNode === 'object') {
+            const curHbMs = this.state.whatsappMeta.lastHeartbeatAt
+              ? Date.parse(this.state.whatsappMeta.lastHeartbeatAt)
+              : 0;
+            const remHbMs = heartbeatNode.lastHeartbeatAt
+              ? Date.parse(heartbeatNode.lastHeartbeatAt)
+              : 0;
+            if (Number.isFinite(remHbMs) && remHbMs > (Number.isFinite(curHbMs) ? curHbMs : 0)) {
+              this.state.whatsappMeta = {
+                ...this.state.whatsappMeta,
+                lastHeartbeatAt: heartbeatNode.lastHeartbeatAt || null,
+                activeHostKind:
+                  heartbeatNode.activeHostKind || this.state.whatsappMeta.activeHostKind || null,
+              };
+            }
+          }
+
+          const remoteRev = typeof metaNode?.rev === 'string' ? metaNode.rev : null;
+          const needDbFetch = shouldFetchFullRemoteDb({
+            localRev: this.lastSyncedRev,
+            remoteRev,
+            force,
+          });
+          const needPollsFetch = !process.env.VERCEL && (force || !this.pollsHydrated);
+
+          if (needDbFetch) {
+            const rootNode = await rtdbRestGet<{
+              config?: {
+                settings?: Partial<AppSettings>;
+                storefrontConfig?: Partial<StorefrontConfig>;
+                geoSeoConfig?: Partial<GeoSeoConfig>;
+                whatsappMeta?: Partial<DatabaseState['whatsappMeta']>;
+              };
+              orders?: Record<string, OrderRecord>;
+              products?: Record<string, ProductCatalogItem>;
+            }>('orderpulse');
+
+            if (rootNode && (rootNode.config || rootNode.orders || rootNode.products)) {
+              const ordersArr =
+                rootNode.orders && typeof rootNode.orders === 'object'
+                  ? Object.values(rootNode.orders).filter(
+                      (o): o is OrderRecord => Boolean(o && typeof o === 'object' && o.orderNumber)
+                    )
+                  : [];
+              const productsArr =
+                rootNode.products && typeof rootNode.products === 'object'
+                  ? Object.values(rootNode.products).filter(
+                      (p): p is ProductCatalogItem => Boolean(p && typeof p === 'object' && p.title)
+                    )
+                  : [];
+
+              this.restoreFromCloudBackup({
+                settings: rootNode.config?.settings,
+                storefrontConfig: rootNode.config?.storefrontConfig,
+                geoSeoConfig: rootNode.config?.geoSeoConfig,
+                whatsappMeta: rootNode.config?.whatsappMeta,
+                orders: ordersArr,
+                products: productsArr,
+              });
+
+              // Seed local signature maps so we don't re-write unchanged nodes back to RTDB
+              if (rootNode.config?.settings && rootNode.config.storefrontConfig && rootNode.config.geoSeoConfig) {
+                this.rtdbConfigSig = computeContentSignature(
+                  stripUndefinedDeep({
+                    settings: { ...rootNode.config.settings },
+                    storefrontConfig: { ...rootNode.config.storefrontConfig },
+                    geoSeoConfig: { ...rootNode.config.geoSeoConfig },
+                    whatsappMeta: {
+                      mode: rootNode.config.whatsappMeta?.mode || 'baileys_qr',
+                      connectedAt: rootNode.config.whatsappMeta?.connectedAt || null,
+                      lastHeartbeatAt: null,
+                      activeHostKind: rootNode.config.whatsappMeta?.activeHostKind || null,
+                      phoneNumber: rootNode.config.whatsappMeta?.phoneNumber || null,
+                      pushName: rootNode.config.whatsappMeta?.pushName || null,
+                    },
+                  })
+                );
+              }
+              this.rtdbOrderSigs.clear();
+              for (const o of ordersArr) {
+                const safeId = toSafeFirestoreDocId(o.id || `ord-${o.shopifyOrderId}`, 'ord');
+                const clean = stripUndefinedDeep({
+                  ...o,
+                  id: safeId,
+                  events: Array.isArray(o.events) ? o.events.slice(-25) : [],
+                });
+                this.rtdbOrderSigs.set(safeId, computeContentSignature(clean));
+              }
+              this.rtdbProductSigs.clear();
+              for (const p of productsArr) {
+                const safeId = toSafeFirestoreDocId(p.id || `prod-${p.shopifyProductId}`, 'prod');
+                const clean = stripUndefinedDeep({
+                  ...p,
+                  id: safeId,
+                  allowedPincodes: Array.isArray(p.allowedPincodes) ? p.allowedPincodes : [],
+                  blockedPincodes: Array.isArray(p.blockedPincodes) ? p.blockedPincodes : [],
+                });
+                this.rtdbProductSigs.set(safeId, computeContentSignature(clean));
+              }
+              this.lastSyncedRev = remoteRev || nextDbRevision();
+            } else if (
+              hasConfiguredShopify(this.state.settings) ||
+              this.state.orders.length > 0 ||
+              this.state.products.length > 0
+            ) {
+              const seedRev = nextDbRevision();
+              const patch = this.buildRtdbDeltaPatch(seedRev);
+              if (Object.keys(patch).length > 0) {
+                await rtdbRestPatch('orderpulse', patch);
+              }
+              this.lastSyncedRev = seedRev;
+            }
+          }
+
+          if (needPollsFetch) {
+            this.pollsHydrated = true;
+            const remotePolls = await rtdbRestGet<Record<string, unknown>>(
+              'orderpulse_server/polls'
+            );
+            if (remotePolls && typeof remotePolls === 'object') {
+              this.pollMessages = remotePolls;
+              this.writeLocalPollCache();
+            } else if (Object.keys(this.pollMessages).length > 0) {
+              await rtdbRestPut('orderpulse_server/polls', stripUndefinedDeep(this.pollMessages));
+            }
+          }
+
+          this.lastHydratedAtMs = Date.now();
+          return;
+        }
+
         const [remoteRev, remoteHeartbeatRaw] = await upstashMGet([
           REDIS_DB_REV_KEY,
           REDIS_HEARTBEAT_KEY,
@@ -702,6 +1015,16 @@ class PersistentStore {
       activeHostKind: meta.activeHostKind,
     };
     if (this.isCloudSyncEnabled()) {
+      if (getRtdbServerConfig() !== null) {
+        this.remoteSyncQueue = this.remoteSyncQueue
+          .then(async () => {
+            await rtdbRestPut('orderpulse_server/heartbeat', meta);
+          })
+          .catch(() => {
+            // Ignore transient heartbeat write errors
+          });
+        return;
+      }
       const payload = JSON.stringify(meta);
       this.remoteSyncQueue = this.remoteSyncQueue
         .then(() => upstashSet(REDIS_HEARTBEAT_KEY, payload))
@@ -760,11 +1083,18 @@ class PersistentStore {
         return;
       }
 
-      const pairs: Array<[string, string]> = [];
-      if (credsContent) pairs.push([REDIS_WA_CREDS_KEY, credsContent]);
-      if (bundleJson) pairs.push([REDIS_WA_AUTH_KEY, bundleJson]);
+      if (getRtdbServerConfig() !== null) {
+        const authPatch: Record<string, unknown> = {};
+        if (credsContent) authPatch['wa_creds'] = credsContent;
+        if (bundleJson) authPatch['wa_auth'] = bundleJson;
+        await rtdbRestPatch('orderpulse_server', authPatch);
+      } else {
+        const pairs: Array<[string, string]> = [];
+        if (credsContent) pairs.push([REDIS_WA_CREDS_KEY, credsContent]);
+        if (bundleJson) pairs.push([REDIS_WA_AUTH_KEY, bundleJson]);
 
-      await upstashPipelineSet(pairs);
+        await upstashPipelineSet(pairs);
+      }
       this.lastAuthBackupAtMs = Date.now();
       this.lastAuthBackupDigest = digest;
     } catch {
@@ -775,10 +1105,16 @@ class PersistentStore {
   async restoreAuthFiles(authDir: string): Promise<boolean> {
     if (!this.isCloudSyncEnabled()) return false;
     try {
-      const [rawBundle, rawCreds] = await Promise.all([
-        upstashGet(REDIS_WA_AUTH_KEY),
-        upstashGet(REDIS_WA_CREDS_KEY),
-      ]);
+      const [rawBundle, rawCreds] =
+        getRtdbServerConfig() !== null
+          ? await Promise.all([
+              rtdbRestGet<string>('orderpulse_server/wa_auth'),
+              rtdbRestGet<string>('orderpulse_server/wa_creds'),
+            ])
+          : await Promise.all([
+              upstashGet(REDIS_WA_AUTH_KEY),
+              upstashGet(REDIS_WA_CREDS_KEY),
+            ]);
       const bundle = rawBundle ? (JSON.parse(rawBundle) as Record<string, string>) : {};
       const credsContent = rawCreds || bundle['creds.json'];
       if (!credsContent) {
@@ -801,6 +1137,14 @@ class PersistentStore {
   async clearRemoteAuth(): Promise<void> {
     this.lastAuthBackupAtMs = 0;
     this.lastAuthBackupDigest = null;
+    if (getRtdbServerConfig() !== null) {
+      await Promise.all([
+        rtdbRestDelete('orderpulse_server/wa_auth'),
+        rtdbRestDelete('orderpulse_server/wa_creds'),
+        rtdbRestDelete('orderpulse_server/heartbeat'),
+      ]);
+      return;
+    }
     await Promise.all([
       upstashDel(REDIS_WA_AUTH_KEY),
       upstashDel(REDIS_WA_CREDS_KEY),
@@ -987,6 +1331,7 @@ class PersistentStore {
   }
 
   isUpstashQuotaExceeded(): boolean {
+    if (getRtdbServerConfig() !== null) return false;
     return isUpstashCircuitOpen();
   }
 

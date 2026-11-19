@@ -463,4 +463,10 @@ test('Firestore payload sanitizers enforce blueprint bounds and deterministic de
   );
   assert.equal(configDoc.shopName, 'Broomies Bakery');
   assert.equal(configDoc.syncStartDate, DEFAULT_SETTINGS.syncStartDate);
+  assert.equal(configDoc.whatsappMeta.lastHeartbeatAt, null);
+
+  // Canonical signature must be identical regardless of Firestore key ordering
+  const sigA = computeContentSignature({ z: 1, a: { d: 4, c: [1, { y: 2, x: 1 }] } });
+  const sigB = computeContentSignature({ a: { c: [1, { x: 1, y: 2 }], d: 4 }, z: 1 });
+  assert.equal(sigA, sigB);
 });

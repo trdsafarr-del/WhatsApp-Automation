@@ -4,6 +4,7 @@ import {
   Check,
   Cloud,
   Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   GitBranch,
@@ -12,7 +13,7 @@ import {
   ShieldCheck,
   ShoppingBag,
 } from 'lucide-react';
-import { firebaseProjectMeta } from '../lib/firebase';
+import { RECOMMENDED_RTDB_RULES_JSON, rtdbProjectMeta } from '../lib/rtdb';
 import { buildDeployEnvSnippet, hasConfiguredShopify } from '../lib/orderRules';
 import type { AppSettings, WhatsAppState } from '../lib/types';
 
@@ -22,7 +23,7 @@ interface SetupGuideViewProps {
   upstashQuotaExceeded?: boolean;
   whatsapp: WhatsAppState;
   firebaseUser?: FirebaseUser | null;
-  firestoreSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
+  rtdbSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
   cloudSummary?: {
     loaded: boolean;
     hasShopify: boolean;
@@ -116,7 +117,7 @@ export function SetupGuideView({
   upstashQuotaExceeded = false,
   whatsapp,
   firebaseUser = null,
-  firestoreSyncState = 'idle',
+  rtdbSyncState = 'idle',
   cloudSummary,
   googleAuthBusy = false,
   onGoogleSignIn,
@@ -184,7 +185,7 @@ export function SetupGuideView({
             }`}
           >
             <Cloud className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
-            01. Google Firestore &amp; Env
+            01. Firebase RTDB &amp; Env
           </button>
           <button
             type="button"
@@ -234,14 +235,14 @@ export function SetupGuideView({
       {activeTab === 'sync' && (
         <section className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-6">
           <div className="flex flex-col justify-between gap-3 border-b border-slate-800 pb-4 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-2.5">
-              <Cloud className="h-5 w-5 text-emerald-400" aria-hidden="true" />
+            <div className="flex items-start gap-2.5 sm:items-center">
+              <Cloud className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400 sm:mt-0" aria-hidden="true" />
               <div>
                 <h2 className="text-base font-semibold text-white">
-                  Google Firebase Firestore Cloud Sync (Zero Bandwidth Bloat)
+                  Firebase Realtime Database Sync (No Daily Read/Write Op Cap)
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Stores each order, product, and store config as its own Firestore document so only changed records sync — replacing heavy full-blob Redis reads.
+                  Syncs changed orders, products, and store config over a single WebSocket via per-key delta patches — free Spark tier includes 10 GB/month downloads and 1 GB storage.
                 </p>
               </div>
             </div>
@@ -273,53 +274,88 @@ export function SetupGuideView({
           <div className="mt-5 space-y-4 text-sm text-slate-300">
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/25 p-4 text-xs leading-relaxed text-slate-200">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="inline-flex items-center gap-1.5 font-semibold text-emerald-300">
-                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-                  Google Firebase Project: <span className="font-mono text-white">{firebaseProjectMeta.projectId}</span>
-                </p>
+                <div>
+                  <p className="inline-flex items-center gap-1.5 font-semibold text-emerald-300">
+                    <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                    Firebase RTDB Project: <span className="font-mono text-white">{rtdbProjectMeta.projectId}</span>
+                  </p>
+                  <p className="mt-0.5 break-all font-mono text-[11px] text-slate-400">
+                    {rtdbProjectMeta.databaseURL}
+                  </p>
+                </div>
                 <span
                   className={`rounded-md px-2 py-0.5 font-mono text-[11px] font-semibold ${
                     firebaseUser
-                      ? firestoreSyncState === 'error'
+                      ? rtdbSyncState === 'error'
                         ? 'bg-rose-500/20 text-rose-200'
                         : 'bg-emerald-500/20 text-emerald-200'
                       : 'bg-slate-800 text-slate-300'
                   }`}
                 >
                   {firebaseUser
-                    ? firestoreSyncState === 'syncing'
+                    ? rtdbSyncState === 'syncing'
                       ? 'Syncing...'
-                      : firestoreSyncState === 'error'
-                        ? 'Sync Error'
+                      : rtdbSyncState === 'error'
+                        ? 'Rules Needed'
                         : `Connected (${firebaseUser.email})`
                     : 'Not Signed In'}
                 </span>
               </div>
               {firebaseUser && cloudSummary?.loaded && (
                 <p className="mt-2 font-mono text-[11px] text-emerald-200/90">
-                  Cloud Backup in Firestore: Shopify {cloudSummary.hasShopify ? 'Saved' : 'Empty'} · {cloudSummary.orders} orders · {cloudSummary.products} products
+                  Cloud Backup in RTDB: Shopify {cloudSummary.hasShopify ? 'Saved' : 'Empty'} · {cloudSummary.orders} orders · {cloudSummary.products} products
                 </p>
               )}
-              <ol className="mt-2.5 list-decimal space-y-1.5 pl-4 text-slate-300">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <a
+                  href={rtdbProjectMeta.rulesConsoleUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-600/20 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-600/30"
+                >
+                  1. Open RTDB Rules
+                  <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                </a>
+                <a
+                  href={rtdbProjectMeta.authProvidersConsoleUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
+                >
+                  2. Enable Google Sign-In
+                  <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                </a>
+                <a
+                  href={rtdbProjectMeta.authDomainsConsoleUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-800"
+                >
+                  3. Add Authorized Domains
+                  <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                </a>
+              </div>
+              <ol className="mt-3 list-decimal space-y-1.5 pl-4 text-slate-300">
                 <li>
-                  <span className="font-semibold text-white">Backup Once:</span> Click <span className="font-semibold text-emerald-300">Sign in with Google</span> on your active deployment (AI Studio or Railway) using your admin Google account. Your Shopify credentials, orders, and product catalog delta-sync to Firestore automatically.
+                  <span className="font-semibold text-white">Publish Admin-Only RTDB Rules:</span> Open <span className="font-mono text-emerald-300">Realtime Database → Rules</span> above, paste the JSON rule below (allows only verified <span className="font-mono text-white">trdsafarr@gmail.com</span>), and click <span className="font-semibold text-white">Publish</span>.
                 </li>
                 <li>
-                  <span className="font-semibold text-white">Allow Custom Domain on Vercel:</span> In{' '}
-                  <span className="font-mono text-emerald-300">
-                    Firebase Console → Authentication → Settings → Authorized domains
-                  </span>
-                  , add <span className="font-mono text-white">faridabad.broomiesbakery.in</span> so Google Sign-In popup works on your live domain.
+                  <span className="font-semibold text-white">Enable Google Auth &amp; Domains:</span> Turn on <span className="font-semibold text-white">Google</span> under <span className="font-mono text-emerald-300">Authentication → Sign-in method</span>, and add <span className="font-mono text-white">faridabad.broomiesbakery.in</span> under <span className="font-mono text-emerald-300">Authentication → Settings → Authorized domains</span>.
                 </li>
                 <li>
-                  <span className="font-semibold text-white">Instant Auto-Restore on Vercel:</span> Open <span className="font-mono text-white">faridabad.broomiesbakery.in</span>, unlock the dashboard, and sign in with Google once — your Shopify store, orders, and catalog restore automatically even if Upstash Redis is removed or hits quota.
+                  <span className="font-semibold text-white">Sync Once &amp; Restore Anywhere:</span> Click <span className="font-semibold text-emerald-300">RTDB Sync</span> on AI Studio (where your existing orders &amp; Shopify config live), then click <span className="font-semibold text-emerald-300">RTDB Sync</span> on <span className="font-mono text-white">faridabad.broomiesbakery.in</span> — everything restores live.
                 </li>
               </ol>
             </div>
 
+            <CopyField
+              label="Step 1: Paste in Firebase Console -> Realtime Database -> Rules -> Publish"
+              value={RECOMMENDED_RTDB_RULES_JSON}
+            />
+
             {shopifyConfigured ? (
               <CopyField
-                label="Recommended: Also Paste into Vercel → Settings → Environment Variables (keeps Shopify API live on cold requests)"
+                label="Recommended: Also Paste into Vercel -> Settings -> Environment Variables (keeps Shopify API live on cold requests)"
                 value={rawEnvSnippet}
                 secretMask={maskedEnvSnippet}
               />
@@ -327,26 +363,31 @@ export function SetupGuideView({
               <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4 text-xs leading-relaxed text-amber-200">
                 <p className="font-semibold text-amber-100">Shopify credentials are not saved on this deployment yet.</p>
                 <p className="mt-1">
-                  Click <span className="font-semibold text-white">Sign in with Google</span> above to auto-restore from Google Firestore, OR paste <span className="font-mono text-white">SHOPIFY_STORE_DOMAIN</span>, <span className="font-mono text-white">SHOPIFY_CLIENT_ID</span>, and <span className="font-mono text-white">SHOPIFY_CLIENT_SECRET</span> in Vercel Project Settings → Environment Variables and redeploy.
+                  Click <span className="font-semibold text-white">Sign in with Google</span> above to auto-restore from Firebase Realtime Database, OR paste <span className="font-mono text-white">SHOPIFY_STORE_DOMAIN</span>, <span className="font-mono text-white">SHOPIFY_CLIENT_ID</span>, and <span className="font-mono text-white">SHOPIFY_CLIENT_SECRET</span> in Vercel Project Settings → Environment Variables and redeploy.
                 </p>
               </div>
             )}
+
+            <CopyField
+              label="Optional 24/7 Server-Side RTDB Env Vars (for Vercel / Railway zero-login backend sync)"
+              value={`FIREBASE_RTDB_URL=${rtdbProjectMeta.databaseURL}\nFIREBASE_RTDB_SECRET=paste_database_secret_from_firebase_project_settings_service_accounts`}
+            />
 
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-300">
               <p className="font-semibold text-white">
                 Current Storage Status:{' '}
                 {firebaseUser
-                  ? 'Google Firebase Firestore (Per-Document Delta Sync)'
+                  ? 'Firebase Realtime Database (Per-Key Delta Sync)'
                   : upstashQuotaExceeded
-                    ? 'Upstash Redis Bandwidth Exhausted (Switch to Google Firestore above)'
+                    ? 'Upstash Redis Bandwidth Exhausted (Switch to Firebase RTDB above)'
                     : cloudSyncEnabled
-                      ? 'Upstash Redis Active'
+                      ? 'Server Cloud DB Active'
                       : whatsapp.isServerless
                         ? 'Temporary Vercel /tmp Storage'
                         : 'Local Server Disk Only'}
               </p>
               <p className="mt-1.5 text-slate-400">
-                Tip: If your Upstash free 10 GB monthly limit is finished, you can safely remove <span className="font-mono text-slate-200">UPSTASH_REDIS_REST_URL</span> / <span className="font-mono text-slate-200">KV_REST_API_URL</span> from Vercel and rely on Google Firestore + Vercel <span className="font-mono text-slate-200">SHOPIFY_*</span> env vars.
+                Tip: If your Upstash free 10 GB monthly limit is finished, you can safely remove <span className="font-mono text-slate-200">UPSTASH_REDIS_REST_URL</span> / <span className="font-mono text-slate-200">KV_REST_API_URL</span> from Vercel and use Firebase Realtime Database (<span className="font-mono text-slate-200">{rtdbProjectMeta.projectId}</span>) + Vercel <span className="font-mono text-slate-200">SHOPIFY_*</span> env vars.
               </p>
             </div>
           </div>

@@ -10,7 +10,14 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { auth, db, googleProvider, handleFirestoreError, OperationType } from './firebase';
+import {
+  auth,
+  db,
+  googleProvider,
+  handleFirestoreError,
+  isFirestoreQuotaExceededMessage,
+  OperationType,
+} from './firebase';
 import {
   buildAppConfigDocPayload,
   buildOrderDocPayload,
@@ -53,6 +60,7 @@ export interface FirestoreSyncTracker {
   initialConfigLoaded: boolean;
   initialOrdersLoaded: boolean;
   initialProductsLoaded: boolean;
+  quotaPaused: boolean;
 }
 
 export function createSyncTracker(): FirestoreSyncTracker {
@@ -66,6 +74,7 @@ export function createSyncTracker(): FirestoreSyncTracker {
     initialConfigLoaded: false,
     initialOrdersLoaded: false,
     initialProductsLoaded: false,
+    quotaPaused: false,
   };
 }
 
@@ -103,8 +112,34 @@ export function subscribeToOwnerCloudData(
     }
   };
 
+  let unsubConfig = () => {};
+  let unsubOrders = () => {};
+  let unsubProducts = () => {};
+  let stopped = false;
+
+  const stopAllListeners = () => {
+    if (stopped) return;
+    stopped = true;
+    unsubConfig();
+    unsubOrders();
+    unsubProducts();
+  };
+
+  const handleListenerError = (error: unknown, op: OperationType, path: string) => {
+    const rawMsg = error instanceof Error ? error.message : String(error);
+    if (isFirestoreQuotaExceededMessage(rawMsg)) {
+      tracker.quotaPaused = true;
+      stopAllListeners();
+    }
+    try {
+      handleFirestoreError(error, op, path);
+    } catch (wrapped) {
+      onFatalError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+    }
+  };
+
   const configPath = 'appConfigs/main';
-  const unsubConfig = onSnapshot(
+  unsubConfig = onSnapshot(
     doc(db, 'appConfigs', 'main'),
     (snap) => {
       tracker.initialConfigLoaded = true;
@@ -129,7 +164,7 @@ export function subscribeToOwnerCloudData(
               whatsapp: {
                 mode: data.whatsappMeta?.mode || 'baileys_qr',
                 connectedAt: data.whatsappMeta?.connectedAt || null,
-                lastHeartbeatAt: data.whatsappMeta?.lastHeartbeatAt || null,
+                lastHeartbeatAt: null,
                 activeHostKind: data.whatsappMeta?.activeHostKind || null,
                 phoneNumber: data.whatsappMeta?.phoneNumber || null,
                 pushName: data.whatsappMeta?.pushName || null,
@@ -144,18 +179,12 @@ export function subscribeToOwnerCloudData(
       }
       emitIfReady();
     },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.GET, configPath);
-      } catch (wrapped) {
-        onFatalError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
-      }
-    }
+    (error) => handleListenerError(error, OperationType.GET, configPath)
   );
 
   const ordersPath = 'orders';
   const ordersQuery = query(collection(db, 'orders'), where('ownerUid', '==', uid));
-  const unsubOrders = onSnapshot(
+  unsubOrders = onSnapshot(
     ordersQuery,
     (snap) => {
       tracker.initialOrdersLoaded = true;
@@ -174,18 +203,12 @@ export function subscribeToOwnerCloudData(
       latest.orders = list;
       emitIfReady();
     },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, ordersPath);
-      } catch (wrapped) {
-        onFatalError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
-      }
-    }
+    (error) => handleListenerError(error, OperationType.LIST, ordersPath)
   );
 
   const productsPath = 'products';
   const productsQuery = query(collection(db, 'products'), where('ownerUid', '==', uid));
-  const unsubProducts = onSnapshot(
+  unsubProducts = onSnapshot(
     productsQuery,
     (snap) => {
       tracker.initialProductsLoaded = true;
@@ -203,19 +226,11 @@ export function subscribeToOwnerCloudData(
       latest.products = list;
       emitIfReady();
     },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, productsPath);
-      } catch (wrapped) {
-        onFatalError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
-      }
-    }
+    (error) => handleListenerError(error, OperationType.LIST, productsPath)
   );
 
   return () => {
-    unsubConfig();
-    unsubOrders();
-    unsubProducts();
+    stopAllListeners();
   };
 }
 
@@ -235,7 +250,12 @@ export async function syncDeltaToFirestore(
   },
   tracker: FirestoreSyncTracker
 ): Promise<{ writtenDocs: number }> {
-  if (!tracker.initialConfigLoaded || !tracker.initialOrdersLoaded || !tracker.initialProductsLoaded) {
+  if (
+    tracker.quotaPaused ||
+    !tracker.initialConfigLoaded ||
+    !tracker.initialOrdersLoaded ||
+    !tracker.initialProductsLoaded
+  ) {
     return { writtenDocs: 0 };
   }
 
@@ -274,6 +294,9 @@ export async function syncDeltaToFirestore(
         tracker.configSignature = nextSig;
         writtenDocs += 1;
       } catch (error) {
+        if (isFirestoreQuotaExceededMessage(error instanceof Error ? error.message : String(error))) {
+          tracker.quotaPaused = true;
+        }
         handleFirestoreError(
           error,
           tracker.configExists ? OperationType.UPDATE : OperationType.CREATE,
@@ -396,6 +419,9 @@ export async function syncDeltaToFirestore(
       }
       writtenDocs += chunk.length;
     } catch (error) {
+      if (isFirestoreQuotaExceededMessage(error instanceof Error ? error.message : String(error))) {
+        tracker.quotaPaused = true;
+      }
       handleFirestoreError(error, OperationType.WRITE, chunk[0]?.path || 'orders');
     }
   }

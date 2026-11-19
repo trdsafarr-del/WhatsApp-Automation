@@ -37,19 +37,16 @@ import {
   dashboardFetch,
   saveDashboardToken,
 } from './lib/dashboardAuth';
+import { rtdbAuth, rtdbProjectMeta } from './lib/rtdb';
 import {
-  auth,
-  getFirestoreUpgradeUrl,
-  isFirestoreQuotaExceededMessage,
-} from './lib/firebase';
-import {
-  createSyncTracker,
-  signInWithGooglePopup,
-  signOutGoogle,
-  subscribeToOwnerCloudData,
-  syncDeltaToFirestore,
-  type CloudBackupSnapshot,
-} from './lib/firestoreSync';
+  createRtdbSyncTracker,
+  isRtdbPermissionDenied,
+  signInRtdbWithGoogle,
+  signOutRtdb,
+  subscribeToRtdbCloudData,
+  syncDeltaToRtdb,
+  type RtdbCloudSnapshot,
+} from './lib/rtdbSync';
 import { DEFAULT_GEO_SEO_CONFIG } from './lib/geoSeo';
 import {
   computeOrderMetrics,
@@ -218,11 +215,11 @@ export default function App() {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [firebaseAuthReady, setFirebaseAuthReady] = useState(false);
   const [googleAuthBusy, setGoogleAuthBusy] = useState(false);
-  const [firestoreSyncState, setFirestoreSyncState] = useState<
+  const [rtdbSyncState, setRtdbSyncState] = useState<
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle');
-  const [firestoreError, setFirestoreError] = useState<string | null>(null);
-  const [firestoreQuotaExceeded, setFirestoreQuotaExceeded] = useState(false);
+  const [rtdbError, setRtdbError] = useState<string | null>(null);
+  const [rtdbPermissionDenied, setRtdbPermissionDenied] = useState(false);
   const [cloudReadyTick, setCloudReadyTick] = useState(0);
   const [cloudSummary, setCloudSummary] = useState({
     loaded: false,
@@ -231,8 +228,8 @@ export default function App() {
     products: 0,
   });
 
-  const syncTrackerRef = useRef(createSyncTracker());
-  const cloudSnapshotRef = useRef<CloudBackupSnapshot | null>(null);
+  const syncTrackerRef = useRef(createRtdbSyncTracker());
+  const cloudSnapshotRef = useRef<RtdbCloudSnapshot | null>(null);
   const restoringFromCloudRef = useRef(false);
   const lastRestoredKeyRef = useRef('');
   const latestStateRef = useRef({
@@ -380,18 +377,18 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
+    const unsub = onAuthStateChanged(rtdbAuth, (user) => {
       setFirebaseUser(user);
       setFirebaseAuthReady(true);
       if (!user) {
-        syncTrackerRef.current = createSyncTracker();
+        syncTrackerRef.current = createRtdbSyncTracker();
         cloudSnapshotRef.current = null;
         lastRestoredKeyRef.current = '';
         setCloudReadyTick(0);
         setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
-        setFirestoreSyncState('idle');
-        setFirestoreError(null);
-        setFirestoreQuotaExceeded(false);
+        setRtdbSyncState('idle');
+        setRtdbError(null);
+        setRtdbPermissionDenied(false);
       }
     });
     return () => unsub();
@@ -399,20 +396,25 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     setGoogleAuthBusy(true);
-    setFirestoreError(null);
+    setRtdbError(null);
+    setRtdbPermissionDenied(false);
     try {
-      await signInWithGooglePopup();
+      await signInRtdbWithGoogle();
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         // User closed popup intentionally
       } else if (code === 'auth/unauthorized-domain') {
         const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
-        setFirestoreError(
-          `Add "${host}" in Firebase Console -> Authentication -> Settings -> Authorized domains, then click Google Sync again.`
+        setRtdbError(
+          `Add "${host}" in Firebase Console (${rtdbProjectMeta.projectId}) -> Authentication -> Settings -> Authorized domains, then click RTDB Sync again.`
+        );
+      } else if (code === 'auth/operation-not-allowed') {
+        setRtdbError(
+          `Enable Google Sign-In in Firebase Console (${rtdbProjectMeta.projectId}) -> Authentication -> Sign-in method -> Google -> Enable, then click RTDB Sync again.`
         );
       } else {
-        setFirestoreError(err instanceof Error ? err.message : 'Google Sign-In failed.');
+        setRtdbError(err instanceof Error ? err.message : 'Google Sign-In failed.');
       }
     } finally {
       setGoogleAuthBusy(false);
@@ -422,26 +424,26 @@ export default function App() {
   const handleGoogleSignOut = async () => {
     setGoogleAuthBusy(true);
     try {
-      await signOutGoogle();
+      await signOutRtdb();
     } finally {
       setGoogleAuthBusy(false);
     }
   };
 
-  // Subscribe to per-document Google Firestore backup once dashboard is unlocked and admin signed in with Google
+  // Subscribe to Firebase Realtime Database (/orderpulse) once dashboard is unlocked and admin signed in
   useEffect(() => {
     if (authState !== 'unlocked' || !firebaseAuthReady || !firebaseUser?.emailVerified) {
       return;
     }
 
-    syncTrackerRef.current = createSyncTracker();
-    setFirestoreSyncState('syncing');
-    setFirestoreError(null);
-    setFirestoreQuotaExceeded(false);
+    syncTrackerRef.current = createRtdbSyncTracker();
+    setRtdbSyncState('syncing');
+    setRtdbError(null);
+    setRtdbPermissionDenied(false);
 
     let initialSignalled = false;
 
-    const handleCloudSnapshot = (cloud: CloudBackupSnapshot) => {
+    const handleCloudSnapshot = (cloud: RtdbCloudSnapshot) => {
       cloudSnapshotRef.current = cloud;
       const cloudHasShopify = Boolean(cloud.settings && hasConfiguredShopify(cloud.settings));
       setCloudSummary({
@@ -463,7 +465,7 @@ export default function App() {
       const needsRestore =
         (cloudHasShopify && !serverHasShopify) || cloudHasMoreOrders || cloudHasMoreProducts;
 
-      // Hydrate React UI immediately from Firestore so cold Vercel serverless deployments show data instantly
+      // Hydrate React UI immediately from RTDB so cold Vercel serverless deployments show data instantly
       if (cloudHasShopify && !serverHasShopify && cloud.settings) {
         setSettings(cloud.settings);
       }
@@ -496,7 +498,7 @@ export default function App() {
       if (needsRestore && !restoringFromCloudRef.current && restoreKey !== lastRestoredKeyRef.current) {
         restoringFromCloudRef.current = true;
         lastRestoredKeyRef.current = restoreKey;
-        setFirestoreSyncState('syncing');
+        setRtdbSyncState('syncing');
 
         void dashboardFetch('/api/sync/restore-from-cloud', {
           method: 'POST',
@@ -533,31 +535,38 @@ export default function App() {
             if (data.storefrontConfig) setStorefrontConfig(data.storefrontConfig);
             if (data.geoSeoConfig) setGeoSeoConfig(data.geoSeoConfig);
             if (data.whatsapp) setWhatsapp(data.whatsapp);
-            setFirestoreSyncState('synced');
-            setFirestoreError(null);
+            setRtdbSyncState('synced');
+            setRtdbError(null);
+            setRtdbPermissionDenied(false);
           })
           .catch((err) => {
-            setFirestoreSyncState('error');
-            setFirestoreError(
-              err instanceof Error ? err.message : 'Unable to restore data from Google Firestore.'
+            setRtdbSyncState('error');
+            setRtdbError(
+              err instanceof Error
+                ? err.message
+                : 'Unable to restore data from Firebase Realtime Database.'
             );
           })
           .finally(() => {
             restoringFromCloudRef.current = false;
           });
       } else if (!restoringFromCloudRef.current) {
-        setFirestoreSyncState('synced');
+        setRtdbSyncState('synced');
       }
     };
 
     const handleFatalError = (err: Error) => {
-      setFirestoreSyncState('error');
-      setFirestoreError(err.message);
-      setFirestoreQuotaExceeded(isFirestoreQuotaExceededMessage(err.message));
+      const permDenied = isRtdbPermissionDenied(err);
+      setRtdbSyncState('error');
+      setRtdbPermissionDenied(permDenied);
+      setRtdbError(
+        permDenied
+          ? `Realtime Database (${rtdbProjectMeta.projectId}) is in locked mode. Open RTDB Rules, paste the admin rule from the Guide tab, and click Publish.`
+          : err.message
+      );
     };
 
-    const unsubscribe = subscribeToOwnerCloudData(
-      firebaseUser.uid,
+    const unsubscribe = subscribeToRtdbCloudData(
       syncTrackerRef.current,
       handleCloudSnapshot,
       handleFatalError
@@ -568,22 +577,22 @@ export default function App() {
     };
   }, [authState, firebaseAuthReady, firebaseUser]);
 
-  // Delta-sync only changed orders/products/config from active server to Google Firestore
+  // Delta-sync ONLY changed orders/products/config from active server to Firebase Realtime Database
   useEffect(() => {
     if (
       authState !== 'unlocked' ||
       !firebaseAuthReady ||
       !firebaseUser?.emailVerified ||
       isLoading ||
-      cloudReadyTick === 0
+      cloudReadyTick === 0 ||
+      rtdbPermissionDenied
     ) {
       return;
     }
 
     const timer = window.setTimeout(() => {
-      if (restoringFromCloudRef.current) return;
-      void syncDeltaToFirestore(
-        firebaseUser.uid,
+      if (restoringFromCloudRef.current || syncTrackerRef.current.permissionBlocked) return;
+      void syncDeltaToRtdb(
         {
           settings,
           storefrontConfig,
@@ -594,20 +603,25 @@ export default function App() {
         },
         syncTrackerRef.current
       )
-        .then(({ writtenDocs }) => {
-          if (writtenDocs > 0 || firestoreSyncState !== 'error') {
-            setFirestoreSyncState('synced');
-            setFirestoreError(null);
-            setFirestoreQuotaExceeded(false);
+        .then(({ writtenPaths }) => {
+          if (writtenPaths > 0) {
+            setRtdbSyncState('synced');
+            setRtdbError(null);
+            setRtdbPermissionDenied(false);
           }
         })
         .catch((err) => {
+          const permDenied = isRtdbPermissionDenied(err);
           const msg = err instanceof Error ? err.message : String(err);
-          setFirestoreSyncState('error');
-          setFirestoreError(msg);
-          setFirestoreQuotaExceeded(isFirestoreQuotaExceededMessage(msg));
+          setRtdbSyncState('error');
+          setRtdbPermissionDenied(permDenied);
+          setRtdbError(
+            permDenied
+              ? `Realtime Database (${rtdbProjectMeta.projectId}) is in locked mode. Open RTDB Rules, paste the admin rule from the Guide tab, and click Publish.`
+              : msg
+          );
         });
-    }, 1200);
+    }, 4000);
 
     return () => window.clearTimeout(timer);
   }, [
@@ -616,12 +630,12 @@ export default function App() {
     firebaseUser,
     isLoading,
     cloudReadyTick,
+    rtdbPermissionDenied,
     orders,
     products,
     settings,
     storefrontConfig,
     geoSeoConfig,
-    firestoreSyncState,
   ]);
 
   useEffect(() => {
@@ -1023,13 +1037,13 @@ export default function App() {
       <p className="mt-2.5 text-[11px] text-slate-500">
         Storage:{' '}
         {firebaseUser
-          ? firestoreSyncState === 'error'
-            ? 'Google Firestore Error'
-            : 'Google Firestore Synced'
+          ? rtdbSyncState === 'error'
+            ? 'Firebase RTDB Rules Needed'
+            : 'Firebase RTDB Live'
           : upstashQuotaExceeded
             ? 'Upstash Limit Reached'
             : cloudSyncEnabled
-              ? 'Cloud Redis Synced'
+              ? 'Cloud DB Synced'
               : whatsapp.isServerless
                 ? 'Temporary Serverless (/tmp)'
                 : 'Persistent Server Disk'}
@@ -1458,7 +1472,7 @@ export default function App() {
             </nav>
           )}
 
-          {/* Zone 3: Google Firestore Sync + Lock + Primary Action */}
+          {/* Zone 3: Firebase Realtime Database Sync + Lock + Primary Action */}
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -1472,19 +1486,19 @@ export default function App() {
               }}
               title={
                 firebaseUser
-                  ? `Google Firestore Synced (${firebaseUser.email || 'Connected'}) — click to manage`
-                  : 'Sign in with Google to enable zero-bandwidth-bloat Firestore cloud sync'
+                  ? `Firebase Realtime DB Synced (${firebaseUser.email || 'Connected'}) — click to manage`
+                  : `Sign in with Google to sync via Firebase Realtime Database (${rtdbProjectMeta.projectId})`
               }
-              aria-label={firebaseUser ? 'Manage Google Firestore Sync' : 'Connect Google Firestore Sync'}
+              aria-label={firebaseUser ? 'Manage Firebase Realtime Sync' : 'Connect Firebase Realtime Sync'}
               className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors whitespace-nowrap shrink-0 sm:px-3 ${
                 firebaseUser
-                  ? firestoreSyncState === 'error'
+                  ? rtdbSyncState === 'error'
                     ? 'border-rose-500/40 bg-rose-950/50 text-rose-200 hover:bg-rose-900/50'
                     : 'border-emerald-500/40 bg-emerald-950/50 text-emerald-200 hover:bg-emerald-900/50'
                   : 'border-slate-700/80 bg-slate-900/85 text-slate-200 hover:border-emerald-500/50 hover:bg-slate-800 hover:text-white'
               }`}
             >
-              {firestoreSyncState === 'error' ? (
+              {rtdbSyncState === 'error' ? (
                 <CloudOff className="h-3.5 w-3.5 text-rose-300" aria-hidden="true" />
               ) : (
                 <Cloud
@@ -1498,10 +1512,10 @@ export default function App() {
                 {googleAuthBusy
                   ? 'Connecting...'
                   : firebaseUser
-                    ? firestoreSyncState === 'syncing'
+                    ? rtdbSyncState === 'syncing'
                       ? 'Syncing...'
-                      : 'Google Live'
-                    : 'Google Sync'}
+                      : 'RTDB Live'
+                    : 'RTDB Sync'}
               </span>
             </button>
             <button
@@ -1563,32 +1577,39 @@ export default function App() {
 
         <main className="flex-1 p-3.5 pb-24 sm:p-6 sm:pb-24 lg:pb-6">
           <div className="mx-auto max-w-[1600px] space-y-4 sm:space-y-5">
-            {firestoreError && (
+            {rtdbError && (
               <div className="flex flex-col justify-between gap-3 rounded-xl border border-rose-500/35 bg-rose-950/45 px-4 py-3 text-xs text-rose-100 backdrop-blur-md sm:flex-row sm:items-center">
                 <p className="leading-relaxed break-words">
                   <span className="font-semibold text-rose-200">
-                    {firestoreQuotaExceeded
-                      ? 'Google Firestore Daily Quota Reached:'
-                      : 'Google Firestore Sync Notice:'}
+                    {rtdbPermissionDenied
+                      ? 'Firebase Realtime Database Rules Required:'
+                      : 'Firebase RTDB Sync Notice:'}
                   </span>{' '}
-                  {firestoreQuotaExceeded
-                    ? 'Daily free-tier read/write quota was reached. Quota resets tomorrow, or you can review usage in Firebase Console.'
-                    : firestoreError}
+                  {rtdbError}
                 </p>
-                <div className="flex shrink-0 items-center gap-2">
-                  {firestoreQuotaExceeded && (
-                    <a
-                      href={getFirestoreUpgradeUrl()}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 whitespace-nowrap"
-                    >
-                      Open Firebase Console
-                    </a>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  {rtdbPermissionDenied && (
+                    <>
+                      <a
+                        href={rtdbProjectMeta.rulesConsoleUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 whitespace-nowrap"
+                      >
+                        Open RTDB Rules
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('setup')}
+                        className="rounded-lg border border-emerald-400/40 bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-slate-800 whitespace-nowrap"
+                      >
+                        Copy Rules in Guide
+                      </button>
+                    </>
                   )}
                   <button
                     type="button"
-                    onClick={() => setFirestoreError(null)}
+                    onClick={() => setRtdbError(null)}
                     className="rounded-lg border border-rose-400/35 bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-slate-800 whitespace-nowrap"
                   >
                     Dismiss
@@ -1601,7 +1622,7 @@ export default function App() {
               <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/12 px-4 py-3 text-xs text-amber-100 backdrop-blur-md sm:flex-row sm:items-center">
                 <p className="leading-relaxed">
                   <span className="font-semibold text-amber-200">Upstash Redis 10 GB Bandwidth Exhausted:</span>{' '}
-                  Connect <span className="font-semibold text-white">Google Firebase Firestore</span> now so your Shopify credentials, orders, and catalog restore instantly with per-document delta sync.
+                  Connect <span className="font-semibold text-white">Firebase Realtime Database ({rtdbProjectMeta.projectId})</span> now so your Shopify credentials, orders, and catalog restore instantly with per-key delta sync.
                 </p>
                 <button
                   type="button"
@@ -1609,7 +1630,7 @@ export default function App() {
                   onClick={() => void handleGoogleSignIn()}
                   className="shrink-0 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
                 >
-                  {googleAuthBusy ? 'Connecting...' : 'Connect Google Firestore'}
+                  {googleAuthBusy ? 'Connecting...' : 'Connect RTDB Sync'}
                 </button>
               </div>
             )}
@@ -1622,9 +1643,9 @@ export default function App() {
                 <div className="flex flex-col justify-between gap-3 rounded-xl border border-sky-500/35 bg-sky-950/35 px-4 py-3 text-xs text-sky-100 backdrop-blur-md sm:flex-row sm:items-center">
                   <p className="leading-relaxed">
                     <span className="font-semibold text-sky-200">
-                      Google Firestore Connected (Cloud Backup Empty Yet):
+                      Firebase Realtime DB Connected (Cloud Backup Empty Yet):
                     </span>{' '}
-                    Click <span className="font-semibold text-white">Google Sync</span> once on your active AI Studio / Railway dashboard to upload your existing Shopify store &amp; orders, or save your Shopify credentials once below.
+                    Click <span className="font-semibold text-white">RTDB Sync</span> once on your active AI Studio / Railway dashboard to upload your existing Shopify store &amp; orders, or save your Shopify credentials once below.
                   </p>
                   <button
                     type="button"
@@ -1639,7 +1660,7 @@ export default function App() {
             {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && !firebaseUser && !upstashQuotaExceeded && (
               <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200 backdrop-blur-md sm:flex-row sm:items-center">
                 <p className="leading-relaxed">
-                  <span className="font-semibold text-amber-100">Fresh Vercel Deploy Detected:</span> Sign in with <span className="font-semibold text-white">Google Firestore</span> to restore your saved Shopify store &amp; orders instantly, or add <span className="font-mono text-amber-100">SHOPIFY_*</span> Env Vars in Vercel Settings.
+                  <span className="font-semibold text-amber-100">Fresh Vercel Deploy Detected:</span> Sign in with <span className="font-semibold text-white">Firebase Realtime DB</span> to restore your saved Shopify store &amp; orders instantly, or add <span className="font-mono text-amber-100">SHOPIFY_*</span> Env Vars in Vercel Settings.
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
                   <button
@@ -1648,7 +1669,7 @@ export default function App() {
                     onClick={() => void handleGoogleSignIn()}
                     className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap"
                   >
-                    Connect Google Sync
+                    Connect RTDB Sync
                   </button>
                   <button
                     type="button"
@@ -1781,7 +1802,7 @@ export default function App() {
                 upstashQuotaExceeded={upstashQuotaExceeded}
                 whatsapp={whatsapp}
                 firebaseUser={firebaseUser}
-                firestoreSyncState={firestoreSyncState}
+                rtdbSyncState={rtdbSyncState}
                 cloudSummary={cloudSummary}
                 googleAuthBusy={googleAuthBusy}
                 onGoogleSignIn={handleGoogleSignIn}
