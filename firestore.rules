@@ -203,7 +203,7 @@ service cloud.firestore {
 
     // Collection 2: /appConfigs/{configId}
     match /appConfigs/{configId} {
-      allow get: if isVerifiedUser() && isValidId(configId) && isAdmin() && existing().ownerUid == request.auth.uid;
+      allow get: if isVerifiedUser() && isValidId(configId) && isAdmin() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isBootstrappedAdmin() && resource.data.ownerUid == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(configId) &&
@@ -235,7 +235,7 @@ service cloud.firestore {
 
     // Collection 3: /orders/{orderId} (Contains private customer PII — strictly verified admin + owner)
     match /orders/{orderId} {
-      allow get: if isVerifiedUser() && isValidId(orderId) && isAdmin() && existing().ownerUid == request.auth.uid;
+      allow get: if isVerifiedUser() && isValidId(orderId) && isAdmin() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isBootstrappedAdmin() && resource.data.ownerUid == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(orderId) &&
@@ -272,7 +272,7 @@ service cloud.firestore {
 
     // Collection 4: /products/{productId}
     match /products/{productId} {
-      allow get: if isVerifiedUser() && isValidId(productId) && isAdmin() && existing().ownerUid == request.auth.uid;
+      allow get: if isVerifiedUser() && isValidId(productId) && isAdmin() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isBootstrappedAdmin() && resource.data.ownerUid == request.auth.uid;
       allow create: if isVerifiedUser() &&
         isValidId(productId) &&

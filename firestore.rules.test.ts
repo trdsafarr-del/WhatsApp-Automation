@@ -50,7 +50,10 @@ function evalOrderRules(params: {
     return existing && existing.ownerUid === auth.uid ? 'ALLOW' : 'PERMISSION_DENIED';
   }
   if (!evalIsValidId(docId)) return 'PERMISSION_DENIED';
-  if (op === 'get' || op === 'delete') {
+  if (op === 'get') {
+    return !existing || existing.ownerUid === auth.uid ? 'ALLOW' : 'PERMISSION_DENIED';
+  }
+  if (op === 'delete') {
     return existing && existing.ownerUid === auth.uid ? 'ALLOW' : 'PERMISSION_DENIED';
   }
 
@@ -162,6 +165,11 @@ test('firestore.rules file implements all blueprint collections, default-deny, a
   assert.ok(!rulesText.includes('allow read: if true;'));
   assert.ok(!rulesText.includes('allow write: if true;'));
 
+  assert.ok(
+    rulesText.includes('(resource == null || existing().ownerUid == request.auth.uid)'),
+    'allow get must guard resource == null so first-time reads before doc creation do not throw NPE'
+  );
+
   for (const collectionPath of Object.keys(blueprint.firestore)) {
     assert.ok(
       rulesText.includes(`match ${collectionPath}`),
@@ -191,6 +199,20 @@ test('Dirty Dozen attack payloads all return PERMISSION_DENIED', () => {
     createdAt: now,
     updatedAt: now,
   };
+
+  // Sanity check: verified admin get on non-existent document succeeds (no NPE), while non-admin is denied
+  assert.equal(
+    evalOrderRules({ op: 'get', auth: ownerAuth, docId: 'ord-1345', existing: null, requestTime: now }),
+    'ALLOW'
+  );
+  assert.equal(
+    evalOrderRules({ op: 'get', auth: attackerAuth, docId: 'ord-1345', existing: null, requestTime: now }),
+    'PERMISSION_DENIED'
+  );
+  assert.equal(
+    evalOrderRules({ op: 'get', auth: spoofedAuth, docId: 'ord-1345', existing: null, requestTime: now }),
+    'PERMISSION_DENIED'
+  );
 
   // Sanity check: valid owner create succeeds
   assert.equal(
