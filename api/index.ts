@@ -287,13 +287,28 @@ app.post('/api/delhivery/import-csv', async (req: Request, res: Response) => {
   });
 });
 
-app.post('/api/shopify/test', async (_req: Request, res: Response) => {
+app.post('/api/shopify/test', async (req: Request, res: Response) => {
   await store.ensureHydrated();
+  const body = (req.body || {}) as { settings?: Partial<AppSettings> };
+  if (!hasLiveShopifyCredentials(store.getSettings()) && body.settings) {
+    store.restoreFromCloudBackup({ settings: body.settings });
+  }
   const result = await testShopifyConnection(store.getSettings());
   res.status(result.ok ? 200 : 400).json(result);
 });
 
-app.post('/api/shopify/sync', async (_req: Request, res: Response) => {
+app.post('/api/shopify/sync', async (req: Request, res: Response) => {
+  await store.ensureHydrated();
+  const body = (req.body || {}) as { settings?: Partial<AppSettings>; orders?: OrderRecord[] };
+  if (
+    (!hasLiveShopifyCredentials(store.getSettings()) && body.settings) ||
+    (store.getOrders().length === 0 && Array.isArray(body.orders) && body.orders.length > 0)
+  ) {
+    store.restoreFromCloudBackup({
+      settings: body.settings,
+      orders: Array.isArray(body.orders) ? body.orders : undefined,
+    });
+  }
   const result = await syncShopifyOrdersNow('manual');
   await store.flushRemote();
   if (!result.ok) {

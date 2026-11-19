@@ -23,6 +23,12 @@ interface SetupGuideViewProps {
   whatsapp: WhatsAppState;
   firebaseUser?: FirebaseUser | null;
   firestoreSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
+  cloudSummary?: {
+    loaded: boolean;
+    hasShopify: boolean;
+    orders: number;
+    products: number;
+  };
   googleAuthBusy?: boolean;
   onGoogleSignIn?: () => void;
   onGoogleSignOut?: () => void;
@@ -111,6 +117,7 @@ export function SetupGuideView({
   whatsapp,
   firebaseUser = null,
   firestoreSyncState = 'idle',
+  cloudSummary,
   googleAuthBusy = false,
   onGoogleSignIn,
   onGoogleSignOut,
@@ -288,6 +295,11 @@ export function SetupGuideView({
                     : 'Not Signed In'}
                 </span>
               </div>
+              {firebaseUser && cloudSummary?.loaded && (
+                <p className="mt-2 font-mono text-[11px] text-emerald-200/90">
+                  Cloud Backup in Firestore: Shopify {cloudSummary.hasShopify ? 'Saved' : 'Empty'} · {cloudSummary.orders} orders · {cloudSummary.products} products
+                </p>
+              )}
               <ol className="mt-2.5 list-decimal space-y-1.5 pl-4 text-slate-300">
                 <li>
                   <span className="font-semibold text-white">Backup Once:</span> Click <span className="font-semibold text-emerald-300">Sign in with Google</span> on your active deployment (AI Studio or Railway) using your admin Google account. Your Shopify credentials, orders, and product catalog delta-sync to Firestore automatically.

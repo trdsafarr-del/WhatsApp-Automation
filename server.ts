@@ -332,14 +332,32 @@ async function startServer() {
   });
 
   // Test live Shopify Admin API connection
-  app.post('/api/shopify/test', async (_req: Request, res: Response) => {
+  app.post('/api/shopify/test', async (req: Request, res: Response) => {
     await store.ensureHydrated();
+    const body = (req.body || {}) as { settings?: Partial<AppSettings> };
+    if (!hasLiveShopifyCredentials(store.getSettings()) && body.settings) {
+      store.restoreFromCloudBackup({ settings: body.settings });
+    }
     const result = await testShopifyConnection(store.getSettings());
     res.status(result.ok ? 200 : 400).json(result);
   });
 
   // Pull recent orders from Shopify Admin API & automatically dispatch polls
-  app.post('/api/shopify/sync', async (_req: Request, res: Response) => {
+  app.post('/api/shopify/sync', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const body = (req.body || {}) as {
+      settings?: Partial<AppSettings>;
+      orders?: Parameters<typeof store.restoreFromCloudBackup>[0]['orders'];
+    };
+    if (
+      (!hasLiveShopifyCredentials(store.getSettings()) && body.settings) ||
+      (store.getOrders().length === 0 && Array.isArray(body.orders) && body.orders.length > 0)
+    ) {
+      store.restoreFromCloudBackup({
+        settings: body.settings,
+        orders: Array.isArray(body.orders) ? body.orders : undefined,
+      });
+    }
     const result = await syncShopifyOrdersNow('manual');
     if (!result.ok) {
       res.status(400).json(result);

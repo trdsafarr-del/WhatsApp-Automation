@@ -52,10 +52,12 @@ import {
 } from './lib/firestoreSync';
 import { DEFAULT_GEO_SEO_CONFIG } from './lib/geoSeo';
 import {
+  computeOrderMetrics,
   DEFAULT_SETTINGS,
   getWhatsAppDisplayState,
   hasConfiguredShopify,
   hasHighRtoTag,
+  mergeProgressedOrderRecords,
 } from './lib/orderRules';
 import { DEFAULT_STOREFRONT_CONFIG } from './lib/storefrontRules';
 import type {
@@ -133,6 +135,20 @@ const NAV_ITEMS: Array<{
   { id: 'setup', label: 'Install & Deploy', shortLabel: 'Guide', section: 'system', icon: BookOpen },
 ];
 
+function mergeOrderLists(primary: OrderRecord[], secondary: OrderRecord[]): OrderRecord[] {
+  const map = new Map<string, OrderRecord>();
+  for (const order of secondary) {
+    map.set(order.id, order);
+  }
+  for (const order of primary) {
+    const existing = map.get(order.id);
+    map.set(order.id, existing ? mergeProgressedOrderRecords(order, existing) : order);
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+  );
+}
+
 const SIDEBAR_SECTIONS: Array<{ id: NavSection; title: string }> = [
   { id: 'operations', title: 'Operations' },
   { id: 'storefront', title: 'Storefront & SEO' },
@@ -208,8 +224,15 @@ export default function App() {
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
   const [firestoreQuotaExceeded, setFirestoreQuotaExceeded] = useState(false);
   const [cloudReadyTick, setCloudReadyTick] = useState(0);
+  const [cloudSummary, setCloudSummary] = useState({
+    loaded: false,
+    hasShopify: false,
+    orders: 0,
+    products: 0,
+  });
 
   const syncTrackerRef = useRef(createSyncTracker());
+  const cloudSnapshotRef = useRef<CloudBackupSnapshot | null>(null);
   const restoringFromCloudRef = useRef(false);
   const lastRestoredKeyRef = useRef('');
   const latestStateRef = useRef({
@@ -251,10 +274,39 @@ export default function App() {
       const res = await dashboardFetch('/api/dashboard');
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = (await res.json()) as DashboardPayload;
-      setOrders(data.orders);
-      setMetrics(data.metrics);
+      const current = latestStateRef.current;
+      const cloud = cloudSnapshotRef.current;
+      const serverHasShopify = hasConfiguredShopify(data.settings);
+      const localOrCloudHasShopify =
+        hasConfiguredShopify(current.settings) ||
+        Boolean(cloud?.settings && hasConfiguredShopify(cloud.settings));
+      const isColdServerlessReply =
+        Boolean(data.whatsapp?.isServerless || data.upstashQuotaExceeded) &&
+        !serverHasShopify &&
+        data.orders.length === 0;
+
+      // Never let a cold/empty Vercel container wipe out Firestore-restored orders, products, or Shopify settings
+      if (isColdServerlessReply && (localOrCloudHasShopify || current.orders.length > 0)) {
+        setWhatsapp(data.whatsapp);
+        setCloudSyncEnabled(Boolean(data.cloudSyncEnabled));
+        setUpstashQuotaExceeded(Boolean(data.upstashQuotaExceeded));
+        setLoadError(null);
+        return;
+      }
+
+      const mergedOrders =
+        data.orders.length > 0 || current.orders.length === 0
+          ? cloud && cloud.orders.length > 0 && data.orders.length < cloud.orders.length
+            ? mergeOrderLists(data.orders, cloud.orders)
+            : data.orders
+          : current.orders;
+
+      setOrders(mergedOrders);
+      setMetrics(
+        mergedOrders === data.orders ? data.metrics : computeOrderMetrics(mergedOrders)
+      );
       setWhatsapp(data.whatsapp);
-      if (Array.isArray(data.products)) {
+      if (Array.isArray(data.products) && (data.products.length > 0 || current.products.length === 0)) {
         setProducts(data.products);
       }
       if (data.storefrontConfig) {
@@ -273,11 +325,13 @@ export default function App() {
       }
       setCloudSyncEnabled(Boolean(data.cloudSyncEnabled));
       setUpstashQuotaExceeded(Boolean(data.upstashQuotaExceeded));
-      setSettings((prev) =>
-        JSON.stringify(prev) === JSON.stringify(data.settings) ? prev : data.settings
-      );
+      if (serverHasShopify || !localOrCloudHasShopify) {
+        setSettings((prev) =>
+          JSON.stringify(prev) === JSON.stringify(data.settings) ? prev : data.settings
+        );
+      }
       setSelectedOrderId((prev) =>
-        prev && data.orders.some((o) => o.id === prev) ? prev : data.orders[0]?.id || null
+        prev && mergedOrders.some((o) => o.id === prev) ? prev : mergedOrders[0]?.id || null
       );
       setLoadError(null);
     } catch (err) {
@@ -331,8 +385,10 @@ export default function App() {
       setFirebaseAuthReady(true);
       if (!user) {
         syncTrackerRef.current = createSyncTracker();
+        cloudSnapshotRef.current = null;
         lastRestoredKeyRef.current = '';
         setCloudReadyTick(0);
+        setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
         setFirestoreSyncState('idle');
         setFirestoreError(null);
         setFirestoreQuotaExceeded(false);
@@ -386,18 +442,48 @@ export default function App() {
     let initialSignalled = false;
 
     const handleCloudSnapshot = (cloud: CloudBackupSnapshot) => {
+      cloudSnapshotRef.current = cloud;
+      const cloudHasShopify = Boolean(cloud.settings && hasConfiguredShopify(cloud.settings));
+      setCloudSummary({
+        loaded: true,
+        hasShopify: cloudHasShopify,
+        orders: cloud.orders.length,
+        products: cloud.products.length,
+      });
+
       if (!initialSignalled) {
         initialSignalled = true;
         setCloudReadyTick((n) => n + 1);
       }
 
       const current = latestStateRef.current;
-      const cloudHasShopify = Boolean(cloud.settings && hasConfiguredShopify(cloud.settings));
       const serverHasShopify = hasConfiguredShopify(current.settings);
       const cloudHasMoreOrders = cloud.orders.length > current.orders.length;
       const cloudHasMoreProducts = cloud.products.length > current.products.length;
       const needsRestore =
         (cloudHasShopify && !serverHasShopify) || cloudHasMoreOrders || cloudHasMoreProducts;
+
+      // Hydrate React UI immediately from Firestore so cold Vercel serverless deployments show data instantly
+      if (cloudHasShopify && !serverHasShopify && cloud.settings) {
+        setSettings(cloud.settings);
+      }
+      if (cloudHasMoreOrders) {
+        const merged = mergeOrderLists(current.orders, cloud.orders);
+        setOrders(merged);
+        setMetrics(computeOrderMetrics(merged));
+        setSelectedOrderId((prev) =>
+          prev && merged.some((o) => o.id === prev) ? prev : merged[0]?.id || null
+        );
+      }
+      if (cloudHasMoreProducts) {
+        setProducts(cloud.products);
+      }
+      if (cloud.storefrontConfig && !serverHasShopify) {
+        setStorefrontConfig(cloud.storefrontConfig);
+      }
+      if (cloud.geoSeoConfig && !serverHasShopify) {
+        setGeoSeoConfig(cloud.geoSeoConfig);
+      }
 
       const restoreKey = [
         cloudHasShopify ? '1' : '0',
@@ -674,7 +760,15 @@ export default function App() {
     setIsSyncing(true);
     setSyncMessage(null);
     try {
-      const res = await dashboardFetch('/api/shopify/sync', { method: 'POST' });
+      const current = latestStateRef.current;
+      const payload = hasConfiguredShopify(current.settings)
+        ? { settings: current.settings, orders: current.orders }
+        : undefined;
+      const res = await dashboardFetch('/api/shopify/sync', {
+        method: 'POST',
+        headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+        body: payload ? JSON.stringify(payload) : undefined,
+      });
       const data = (await res.json()) as {
         ok?: boolean;
         importedCount?: number;
@@ -783,7 +877,15 @@ export default function App() {
   };
 
   const handleTestShopify = async () => {
-    const res = await dashboardFetch('/api/shopify/test', { method: 'POST' });
+    const current = latestStateRef.current;
+    const payload = hasConfiguredShopify(current.settings)
+      ? { settings: current.settings }
+      : undefined;
+    const res = await dashboardFetch('/api/shopify/test', {
+      method: 'POST',
+      headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
     return (await res.json()) as { ok: boolean; shopName?: string; error?: string };
   };
 
@@ -1512,6 +1614,28 @@ export default function App() {
               </div>
             )}
 
+            {!isLoading &&
+              firebaseUser &&
+              cloudSummary.loaded &&
+              !cloudSummary.hasShopify &&
+              !isShopifyLinked && (
+                <div className="flex flex-col justify-between gap-3 rounded-xl border border-sky-500/35 bg-sky-950/35 px-4 py-3 text-xs text-sky-100 backdrop-blur-md sm:flex-row sm:items-center">
+                  <p className="leading-relaxed">
+                    <span className="font-semibold text-sky-200">
+                      Google Firestore Connected (Cloud Backup Empty Yet):
+                    </span>{' '}
+                    Click <span className="font-semibold text-white">Google Sync</span> once on your active AI Studio / Railway dashboard to upload your existing Shopify store &amp; orders, or save your Shopify credentials once below.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('settings')}
+                    className="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 whitespace-nowrap"
+                  >
+                    Configure Shopify
+                  </button>
+                </div>
+              )}
+
             {!isLoading && whatsapp.isServerless && !cloudSyncEnabled && !firebaseUser && !upstashQuotaExceeded && (
               <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200 backdrop-blur-md sm:flex-row sm:items-center">
                 <p className="leading-relaxed">
@@ -1658,6 +1782,7 @@ export default function App() {
                 whatsapp={whatsapp}
                 firebaseUser={firebaseUser}
                 firestoreSyncState={firestoreSyncState}
+                cloudSummary={cloudSummary}
                 googleAuthBusy={googleAuthBusy}
                 onGoogleSignIn={handleGoogleSignIn}
                 onGoogleSignOut={handleGoogleSignOut}
