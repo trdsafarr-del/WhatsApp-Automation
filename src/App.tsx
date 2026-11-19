@@ -38,7 +38,6 @@ import {
   saveDashboardToken,
 } from './lib/dashboardAuth';
 import {
-  AUTHORIZED_ADMIN_EMAIL,
   isAuthorizedRtdbAdmin,
   rtdbAuth,
   rtdbProjectMeta,
@@ -384,7 +383,6 @@ export default function App() {
   useEffect(() => {
     const unsub = onAuthStateChanged(rtdbAuth, (user) => {
       if (user && !isAuthorizedRtdbAdmin(user)) {
-        const rejectedEmail = user.email || 'unknown account';
         setFirebaseUser(null);
         setFirebaseAuthReady(true);
         syncTrackerRef.current = createRtdbSyncTracker();
@@ -394,9 +392,7 @@ export default function App() {
         setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
         setRtdbSyncState('error');
         setRtdbPermissionDenied(false);
-        setRtdbError(
-          `Access denied for "${rejectedEmail}". Only verified admin account ${AUTHORIZED_ADMIN_EMAIL} is allowed to access this database. Unauthorized account signed out.`
-        );
+        setRtdbError('Please sign in with a verified Google account to sync Firebase Realtime Database.');
         void signOutRtdb();
         return;
       }
@@ -410,6 +406,7 @@ export default function App() {
         setCloudReadyTick(0);
         setCloudSummary({ loaded: false, hasShopify: false, orders: 0, products: 0 });
         setRtdbSyncState('idle');
+        setRtdbError(null);
         setRtdbPermissionDenied(false);
       }
     });

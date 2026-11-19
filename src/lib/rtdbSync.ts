@@ -7,7 +7,6 @@ import {
 } from './firestorePayload';
 import { hasConfiguredShopify } from './orderRules';
 import {
-  AUTHORIZED_ADMIN_EMAIL,
   isAuthorizedRtdbAdmin,
   rtdb,
   rtdbAuth,
@@ -61,11 +60,8 @@ export function createRtdbSyncTracker(): RtdbSyncTracker {
 export async function signInRtdbWithGoogle(): Promise<User> {
   const cred = await signInWithPopup(rtdbAuth, rtdbGoogleProvider);
   if (!isAuthorizedRtdbAdmin(cred.user)) {
-    const rejectedEmail = cred.user?.email || 'unknown account';
     await signOut(rtdbAuth);
-    throw new Error(
-      `Access denied for "${rejectedEmail}". Only verified admin account ${AUTHORIZED_ADMIN_EMAIL} is allowed to access this database.`
-    );
+    throw new Error('Please sign in with a verified Google account to access Realtime Database.');
   }
   return cred.user;
 }

@@ -15,20 +15,16 @@ export const rtdbFirebaseConfig = {
   measurementId: 'G-VYDHT09Z5L',
 } as const;
 
-export const AUTHORIZED_ADMIN_EMAIL = 'trdsafarr@gmail.com';
-
 export function isAuthorizedRtdbAdmin(
   user: { email?: string | null; emailVerified?: boolean } | null | undefined
 ): boolean {
-  if (!user || user.emailVerified !== true || !user.email) return false;
-  return user.email.trim().toLowerCase() === AUTHORIZED_ADMIN_EMAIL;
+  return Boolean(user && user.emailVerified === true && user.email && user.email.trim().length > 0);
 }
 
 export const rtdbProjectMeta = {
   projectId: rtdbFirebaseConfig.projectId,
   databaseURL: rtdbFirebaseConfig.databaseURL,
   authDomain: rtdbFirebaseConfig.authDomain,
-  adminEmail: AUTHORIZED_ADMIN_EMAIL,
   rulesConsoleUrl:
     'https://console.firebase.google.com/project/shopify-9351f/database/shopify-9351f-default-rtdb/rules',
   authProvidersConsoleUrl:
@@ -37,7 +33,7 @@ export const rtdbProjectMeta = {
     'https://console.firebase.google.com/project/shopify-9351f/authentication/settings',
 } as const;
 
-const ADMIN_EMAIL_RULE = `auth != null && auth.token.email_verified === true && auth.token.email === '${AUTHORIZED_ADMIN_EMAIL}'`;
+const VERIFIED_GOOGLE_USER_RULE = 'auth != null && auth.token.email_verified === true';
 
 export const RECOMMENDED_RTDB_RULES_JSON = JSON.stringify(
   {
@@ -45,8 +41,8 @@ export const RECOMMENDED_RTDB_RULES_JSON = JSON.stringify(
       '.read': false,
       '.write': false,
       orderpulse: {
-        '.read': ADMIN_EMAIL_RULE,
-        '.write': ADMIN_EMAIL_RULE,
+        '.read': VERIFIED_GOOGLE_USER_RULE,
+        '.write': VERIFIED_GOOGLE_USER_RULE,
       },
       orderpulse_server: {
         '.read': false,
@@ -67,7 +63,4 @@ const rtdbApp = getOrCreateRtdbApp();
 export const rtdb = getDatabase(rtdbApp, rtdbFirebaseConfig.databaseURL);
 export const rtdbAuth = getAuth(rtdbApp);
 export const rtdbGoogleProvider = new GoogleAuthProvider();
-rtdbGoogleProvider.setCustomParameters({
-  prompt: 'select_account',
-  login_hint: AUTHORIZED_ADMIN_EMAIL,
-});
+rtdbGoogleProvider.setCustomParameters({ prompt: 'select_account' });

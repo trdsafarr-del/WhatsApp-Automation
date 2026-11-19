@@ -6,7 +6,6 @@ import {
   toSafeFirestoreDocId,
 } from './firestorePayload';
 import {
-  AUTHORIZED_ADMIN_EMAIL,
   RECOMMENDED_RTDB_RULES_JSON,
   isAuthorizedRtdbAdmin,
 } from './rtdb';
@@ -48,34 +47,30 @@ test('RTDB permission denied matcher detects locked-mode errors cleanly', () => 
   assert.equal(isRtdbPermissionDeniedMessage(new Error('network timeout')), false);
 });
 
-test('isAuthorizedRtdbAdmin allows ONLY verified trdsafarr@gmail.com and blocks all other Gmail accounts', () => {
+test('isAuthorizedRtdbAdmin allows any verified Gmail account and blocks unverified/null users', () => {
   assert.equal(
-    isAuthorizedRtdbAdmin({ email: AUTHORIZED_ADMIN_EMAIL, emailVerified: true }),
+    isAuthorizedRtdbAdmin({ email: 'trdsafarr@gmail.com', emailVerified: true }),
     true
   );
   assert.equal(
-    isAuthorizedRtdbAdmin({ email: 'TRDSAFARR@GMAIL.COM', emailVerified: true }),
+    isAuthorizedRtdbAdmin({ email: 'rollinpinbakes@gmail.com', emailVerified: true }),
     true
   );
-  // Any other Gmail account MUST be rejected
   assert.equal(
-    isAuthorizedRtdbAdmin({ email: 'randomuser@gmail.com', emailVerified: true }),
+    isAuthorizedRtdbAdmin({ email: 'team@gmail.com', emailVerified: true }),
+    true
+  );
+  // Unverified email or null user MUST be rejected
+  assert.equal(
+    isAuthorizedRtdbAdmin({ email: 'rollinpinbakes@gmail.com', emailVerified: false }),
     false
   );
-  assert.equal(
-    isAuthorizedRtdbAdmin({ email: 'trdsafarr@gmail.com.evil.com', emailVerified: true }),
-    false
-  );
-  // Unverified admin email or null user MUST be rejected
-  assert.equal(
-    isAuthorizedRtdbAdmin({ email: AUTHORIZED_ADMIN_EMAIL, emailVerified: false }),
-    false
-  );
+  assert.equal(isAuthorizedRtdbAdmin({ email: '', emailVerified: true }), false);
   assert.equal(isAuthorizedRtdbAdmin(null), false);
   assert.equal(isAuthorizedRtdbAdmin(undefined), false);
 });
 
-test('RECOMMENDED_RTDB_RULES_JSON enforces explicit root default-deny and single-admin email lock', () => {
+test('RECOMMENDED_RTDB_RULES_JSON blocks unauthenticated root access and allows any verified Google login on /orderpulse', () => {
   const parsed = JSON.parse(RECOMMENDED_RTDB_RULES_JSON) as {
     rules: {
       '.read': boolean;
@@ -88,7 +83,9 @@ test('RECOMMENDED_RTDB_RULES_JSON enforces explicit root default-deny and single
   assert.equal(parsed.rules['.write'], false);
   assert.equal(parsed.rules.orderpulse_server['.read'], false);
   assert.equal(parsed.rules.orderpulse_server['.write'], false);
-  assert.ok(parsed.rules.orderpulse['.read'].includes("auth.token.email === 'trdsafarr@gmail.com'"));
-  assert.ok(parsed.rules.orderpulse['.read'].includes('auth.token.email_verified === true'));
+  assert.equal(
+    parsed.rules.orderpulse['.read'],
+    'auth != null && auth.token.email_verified === true'
+  );
   assert.equal(parsed.rules.orderpulse['.read'], parsed.rules.orderpulse['.write']);
 });
