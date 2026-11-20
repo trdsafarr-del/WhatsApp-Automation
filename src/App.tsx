@@ -277,9 +277,33 @@ export default function App() {
         !serverHasShopify &&
         data.orders.length === 0;
 
+      const mergeWithCloudWa = (serverWa: WhatsAppState): WhatsAppState => {
+        if (serverWa.status === 'connected') return serverWa;
+        const cWa = cloud?.whatsappMeta;
+        if (cWa?.phoneNumber && (cWa.connectedAt || cWa.activeHostKind || cWa.lastHeartbeatAt)) {
+          const isDifferentHost = Boolean(
+            cWa.activeHostKind && serverWa.hostKind && cWa.activeHostKind !== serverWa.hostKind
+          );
+          if (!serverWa.phoneNumber || isDifferentHost || serverWa.isServerless) {
+            return {
+              ...serverWa,
+              mode: cWa.mode || serverWa.mode,
+              phoneNumber: cWa.phoneNumber || serverWa.phoneNumber,
+              pushName: cWa.pushName ?? serverWa.pushName,
+              connectedAt: cWa.connectedAt || serverWa.connectedAt,
+              lastHeartbeatAt: cWa.lastHeartbeatAt || serverWa.lastHeartbeatAt,
+              activeHostKind: cWa.activeHostKind || serverWa.activeHostKind,
+              remoteSessionActive: Boolean(serverWa.isServerless || isDifferentHost || !serverWa.hostKind),
+              sessionPersisted: true,
+            };
+          }
+        }
+        return serverWa;
+      };
+
       // Never let a cold/empty Vercel container wipe out Firestore-restored orders, products, or Shopify settings
       if (isColdServerlessReply && (localOrCloudHasShopify || current.orders.length > 0)) {
-        setWhatsapp(data.whatsapp);
+        setWhatsapp(mergeWithCloudWa(data.whatsapp));
         setCloudSyncEnabled(Boolean(data.cloudSyncEnabled));
         setUpstashQuotaExceeded(Boolean(data.upstashQuotaExceeded));
         setLoadError(null);
@@ -297,7 +321,7 @@ export default function App() {
       setMetrics(
         mergedOrders === data.orders ? data.metrics : computeOrderMetrics(mergedOrders)
       );
-      setWhatsapp(data.whatsapp);
+      setWhatsapp(mergeWithCloudWa(data.whatsapp));
       if (Array.isArray(data.products) && (data.products.length > 0 || current.products.length === 0)) {
         setProducts(data.products);
       }
@@ -418,10 +442,42 @@ export default function App() {
       const serverHasShopify = hasConfiguredShopify(current.settings);
       const cloudHasMoreOrders = cloud.orders.length > current.orders.length;
       const cloudHasMoreProducts = cloud.products.length > current.products.length;
-      const needsRestore =
-        (cloudHasShopify && !serverHasShopify) || cloudHasMoreOrders || cloudHasMoreProducts;
 
-      // Hydrate React UI immediately from RTDB so cold Vercel serverless deployments show data instantly
+      const cloudWa = cloud.whatsappMeta;
+      const cloudWaConnected = Boolean(
+        cloudWa?.phoneNumber && (cloudWa.connectedAt || cloudWa.activeHostKind || cloudWa.lastHeartbeatAt)
+      );
+      const localWaConnected = current.whatsapp.status === 'connected';
+      const cloudWaChanged =
+        !localWaConnected &&
+        cloudWaConnected &&
+        (current.whatsapp.phoneNumber !== cloudWa?.phoneNumber ||
+          current.whatsapp.pushName !== (cloudWa?.pushName ?? null) ||
+          current.whatsapp.connectedAt !== (cloudWa?.connectedAt ?? null) ||
+          current.whatsapp.activeHostKind !== (cloudWa?.activeHostKind ?? null) ||
+          (Boolean(cloudWa?.lastHeartbeatAt) &&
+            current.whatsapp.lastHeartbeatAt !== cloudWa?.lastHeartbeatAt) ||
+          !current.whatsapp.remoteSessionActive);
+
+      const curFestUpdatedMs = current.storefrontConfig.festivalTheme?.updatedAt
+        ? Date.parse(current.storefrontConfig.festivalTheme.updatedAt)
+        : 0;
+      const cloudFestUpdatedMs = cloud.storefrontConfig?.festivalTheme?.updatedAt
+        ? Date.parse(cloud.storefrontConfig.festivalTheme.updatedAt)
+        : 0;
+      const cloudHasNewerFestivalTheme =
+        Boolean(cloud.storefrontConfig?.festivalTheme) &&
+        Number.isFinite(cloudFestUpdatedMs) &&
+        cloudFestUpdatedMs > (Number.isFinite(curFestUpdatedMs) ? curFestUpdatedMs : 0);
+
+      const needsRestore =
+        (cloudHasShopify && !serverHasShopify) ||
+        cloudHasMoreOrders ||
+        cloudHasMoreProducts ||
+        cloudWaChanged ||
+        cloudHasNewerFestivalTheme;
+
+      // Hydrate React UI immediately from RTDB so AI Studio & Vercel reflect Railway live state in 0ms
       if (cloudHasShopify && !serverHasShopify && cloud.settings) {
         setSettings(cloud.settings);
       }
@@ -436,11 +492,30 @@ export default function App() {
       if (cloudHasMoreProducts) {
         setProducts(cloud.products);
       }
-      if (cloud.storefrontConfig && !serverHasShopify) {
+      if (cloud.storefrontConfig && (!serverHasShopify || cloudHasNewerFestivalTheme)) {
         setStorefrontConfig(cloud.storefrontConfig);
       }
       if (cloud.geoSeoConfig && !serverHasShopify) {
         setGeoSeoConfig(cloud.geoSeoConfig);
+      }
+      if (cloudWaChanged && cloudWa) {
+        setWhatsapp((prev) => {
+          if (prev.status === 'connected') return prev;
+          const isDifferentHost = Boolean(
+            cloudWa.activeHostKind && prev.hostKind && cloudWa.activeHostKind !== prev.hostKind
+          );
+          return {
+            ...prev,
+            mode: cloudWa.mode || prev.mode,
+            phoneNumber: cloudWa.phoneNumber || prev.phoneNumber,
+            pushName: cloudWa.pushName ?? prev.pushName,
+            connectedAt: cloudWa.connectedAt || prev.connectedAt,
+            lastHeartbeatAt: cloudWa.lastHeartbeatAt || prev.lastHeartbeatAt,
+            activeHostKind: cloudWa.activeHostKind || prev.activeHostKind,
+            remoteSessionActive: Boolean(prev.isServerless || isDifferentHost || !prev.hostKind),
+            sessionPersisted: true,
+          };
+        });
       }
 
       const restoreKey = [
@@ -449,6 +524,11 @@ export default function App() {
         cloud.products.length,
         cloud.orders[0]?.id || '',
         cloud.orders[0]?.respondedAt || '',
+        cloudWa?.phoneNumber || '',
+        cloudWa?.activeHostKind || '',
+        cloudWa?.connectedAt || '',
+        cloudWa?.lastHeartbeatAt || '',
+        cloud.storefrontConfig?.festivalTheme?.updatedAt || '',
       ].join(':');
 
       if (needsRestore && !restoringFromCloudRef.current && restoreKey !== lastRestoredKeyRef.current) {
@@ -588,6 +668,9 @@ export default function App() {
     settings,
     storefrontConfig,
     geoSeoConfig,
+    whatsapp.status,
+    whatsapp.phoneNumber,
+    whatsapp.lastHeartbeatAt,
   ]);
 
   useEffect(() => {
@@ -1064,7 +1147,7 @@ export default function App() {
     },
     theme: {
       breadcrumb: `${settings.shopName} / Storefront & SEO`,
-      title: 'Theme Studio (Phase 1 — Coming Next)',
+      title: '1-Click Festival Theme Engine & Original Theme Restore',
     },
     whatsapp: {
       breadcrumb: `${settings.shopName} / WhatsApp QR`,
@@ -1413,15 +1496,22 @@ export default function App() {
                 <span className="truncate">{pageMeta[activeTab].breadcrumb}</span>
                 <span aria-hidden="true">·</span>
                 <span
+                  data-testid="header-whatsapp-badge"
                   className={`font-medium whitespace-nowrap shrink-0 ${
-                    waDisplay.isHostLive ? 'text-emerald-400' : 'text-amber-300'
+                    waDisplay.isHostLive || waDisplay.isRemoteLinked
+                      ? 'text-emerald-400'
+                      : 'text-amber-300'
                   }`}
                 >
-                  {waDisplay.isHostLive
+                  {waDisplay.isLocalConnected
                     ? 'WA Live'
-                    : waDisplay.statusLabel === 'Session Paused'
-                      ? 'WA Paused'
-                      : 'WA Unlinked'}
+                    : waDisplay.isRemoteLinked
+                      ? waDisplay.remoteHostLabel
+                        ? `WA Live · ${waDisplay.remoteHostLabel}`
+                        : 'WA Live'
+                      : waDisplay.statusLabel === 'Session Paused'
+                        ? 'WA Paused'
+                        : 'WA Unlinked'}
                 </span>
               </div>
               <h1 className="truncate font-display text-sm font-semibold text-white sm:text-base">
@@ -1666,7 +1756,7 @@ export default function App() {
 
             {!isLoading &&
               !whatsapp.isServerless &&
-              !waDisplay.isHostLive &&
+              !waDisplay.isLinked &&
               whatsapp.sessionPersisted &&
               whatsapp.status !== 'connecting' && (
                 <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/12 px-4 py-3 text-xs text-amber-100 backdrop-blur-md sm:flex-row sm:items-center">
@@ -1756,6 +1846,9 @@ export default function App() {
               />
             ) : activeTab === 'theme' ? (
               <ThemeStudioView
+                storefrontConfig={storefrontConfig}
+                settings={settings}
+                onStorefrontConfigUpdated={setStorefrontConfig}
                 onOpenPincodeCatalog={() => setActiveTab('pincode')}
                 onOpenSeoManager={() => setActiveTab('seo')}
               />

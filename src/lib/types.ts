@@ -1,3 +1,7 @@
+import type { FestivalThemeConfig } from './festivalThemes.js';
+
+export type { FestivalThemeConfig };
+
 export type PollStatus =
   | 'queued'
   | 'poll_sent'
@@ -188,6 +192,7 @@ export interface StorefrontConfig {
   seoDescriptionTemplate: string;
   enableJsonLdSchema: boolean;
   storefrontAppUrl: string;
+  festivalTheme?: FestivalThemeConfig;
 }
 
 export interface PincodeAutoDetectResult {

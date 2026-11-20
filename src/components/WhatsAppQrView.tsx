@@ -115,14 +115,16 @@ export function WhatsAppQrView({
             <span
               data-testid="whatsapp-connection-status"
               className={`text-xs font-semibold ${
-                display.isHostLive
+                display.isHostLive || display.isRemoteLinked
                   ? 'text-emerald-400'
                   : isQrReady || display.statusLabel === 'Session Paused'
                     ? 'text-amber-300'
                     : 'text-slate-400'
               }`}
             >
-              {display.statusLabel}
+              {display.isRemoteLinked && display.remoteHostLabel
+                ? `Connected on ${display.remoteHostLabel} · Live`
+                : display.statusLabel}
             </span>
           </div>
 
@@ -131,12 +133,12 @@ export function WhatsAppQrView({
               <div className="w-full space-y-5 text-left" data-testid="whatsapp-linked-card">
                 <div
                   className={`flex items-start gap-3 rounded-xl border p-4 ${
-                    display.isHostLive
+                    display.isHostLive || display.isRemoteLinked
                       ? 'border-emerald-500/30 bg-emerald-500/10'
                       : 'border-amber-500/35 bg-amber-500/10'
                   }`}
                 >
-                  {display.isHostLive ? (
+                  {display.isHostLive || display.isRemoteLinked ? (
                     <CheckCircle2
                       className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400"
                       aria-hidden="true"
@@ -153,16 +155,22 @@ export function WhatsAppQrView({
                     </p>
                     <p
                       className={`mt-0.5 font-mono text-sm tabular-nums ${
-                        display.isHostLive ? 'text-emerald-200' : 'text-amber-200'
+                        display.isHostLive || display.isRemoteLinked
+                          ? 'text-emerald-200'
+                          : 'text-amber-200'
                       }`}
                     >
                       {whatsapp.phoneNumber || 'Saved Session'}
                     </p>
-                    {!display.isHostLive && (
+                    {display.isRemoteLinked ? (
+                      <p className="mt-1 text-xs text-emerald-200/90">
+                        Live on <span className="font-semibold text-white">{display.remoteHostLabel || 'Host'}</span> and synced instantly to this dashboard via Firebase RTDB — no QR re-scan needed here.
+                      </p>
+                    ) : !display.isHostLive ? (
                       <p className="mt-1 text-xs text-amber-200">
                         WhatsApp socket is currently paused on this server. Click Restore Saved Session below to resume 24/7 dispatch immediately.
                       </p>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
@@ -171,10 +179,22 @@ export function WhatsAppQrView({
                     <dt className="shrink-0 text-slate-400">Session Persistence</dt>
                     <dd
                       className={`text-right font-medium ${
-                        display.isHostLive ? 'text-emerald-400' : 'text-amber-300'
+                        display.isHostLive || display.isRemoteLinked
+                          ? 'text-emerald-400'
+                          : 'text-amber-300'
                       }`}
                     >
                       {display.persistenceLabel}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <dt className="shrink-0 text-slate-400">Active WhatsApp Host</dt>
+                    <dd className="text-right font-mono text-xs text-slate-200">
+                      {display.isLocalConnected
+                        ? 'This Server (Live)'
+                        : display.remoteHostLabel
+                          ? `${display.remoteHostLabel} (24/7 Host)`
+                          : 'Local Host'}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3 py-2.5">
@@ -190,7 +210,9 @@ export function WhatsAppQrView({
                     <dd className="text-right font-mono text-xs tabular-nums text-slate-200">
                       {whatsapp.lastHeartbeatAt
                         ? new Date(whatsapp.lastHeartbeatAt).toLocaleTimeString()
-                        : '—'}
+                        : display.isRemoteLinked
+                          ? 'Active on Host'
+                          : '—'}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3 py-2.5">
@@ -202,10 +224,8 @@ export function WhatsAppQrView({
                 </dl>
 
                 {display.isRemoteLinked && (
-                  <p className="rounded-lg border border-slate-800 bg-slate-950/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-400">
-                    {whatsapp.isServerless
-                      ? 'Already logged in on your host server and synced to this dashboard via Upstash Redis.'
-                      : 'Already running live on your 24/7 Railway/cloud host and synced via Upstash Redis.'}
+                  <p className="rounded-lg border border-emerald-500/25 bg-emerald-950/25 px-3.5 py-2.5 text-xs leading-relaxed text-emerald-100/90">
+                    WhatsApp is already connected on your 24/7 {display.remoteHostLabel || 'Host'} server and synced live via Firebase RTDB. Avoid scanning a second QR here so {display.remoteHostLabel || 'Railway'} stays uninterrupted.
                   </p>
                 )}
 
@@ -232,7 +252,7 @@ export function WhatsAppQrView({
                         </button>
                       )}
                     </>
-                  ) : !whatsapp.isServerless ? (
+                  ) : !whatsapp.isServerless && !display.isRemoteLinked ? (
                     <>
                       <button
                         type="button"
@@ -253,9 +273,19 @@ export function WhatsAppQrView({
                         Scan Fresh QR
                       </button>
                     </>
+                  ) : !whatsapp.isServerless && display.isRemoteLinked ? (
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => void onConnect('baileys_qr', true)}
+                      className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap shrink-0 sm:min-h-0 sm:w-auto"
+                    >
+                      <QrCode className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                      Switch WhatsApp to This Server (Scan QR)
+                    </button>
                   ) : null}
 
-                  {!whatsapp.isServerless && (
+                  {!whatsapp.isServerless && !display.isRemoteLinked && (
                     <button
                       type="button"
                       disabled={isBusy}

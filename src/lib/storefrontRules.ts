@@ -1,3 +1,4 @@
+import { DEFAULT_FESTIVAL_THEME_CONFIG } from './festivalThemes.js';
 import type {
   DelhiveryServiceabilityResult,
   ProductCatalogItem,
@@ -17,6 +18,7 @@ export const DEFAULT_STOREFRONT_CONFIG: StorefrontConfig = {
     'Shop {{title}} at {{shop_name}}. Fast pan-India delivery, secure COD & online payments. Order now for {{price}}.',
   enableJsonLdSchema: true,
   storefrontAppUrl: '',
+  festivalTheme: { ...DEFAULT_FESTIVAL_THEME_CONFIG },
 };
 
 export const INDIAN_PINCODE_PRESETS: Array<{

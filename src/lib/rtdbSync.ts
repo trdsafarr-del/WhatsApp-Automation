@@ -20,18 +20,21 @@ import type {
   WhatsAppState,
 } from './types';
 
+export interface RtdbWhatsAppMeta {
+  mode: WhatsAppState['mode'];
+  connectedAt: string | null;
+  lastHeartbeatAt?: string | null;
+  activeHostKind?: string | null;
+  phoneNumber: string | null;
+  pushName: string | null;
+  status?: WhatsAppState['status'];
+}
+
 export interface RtdbCloudSnapshot {
   settings?: AppSettings;
   storefrontConfig?: StorefrontConfig;
   geoSeoConfig?: GeoSeoConfig;
-  whatsappMeta?: {
-    mode: WhatsAppState['mode'];
-    connectedAt: string | null;
-    lastHeartbeatAt?: string | null;
-    activeHostKind?: string | null;
-    phoneNumber: string | null;
-    pushName: string | null;
-  };
+  whatsappMeta?: RtdbWhatsAppMeta;
   orders: OrderRecord[];
   products: ProductCatalogItem[];
 }
@@ -40,6 +43,8 @@ export interface RtdbSyncTracker {
   initialLoaded: boolean;
   configExists: boolean;
   configSignature: string | null;
+  whatsappLiveSignature: string | null;
+  remoteWhatsappMeta: RtdbWhatsAppMeta | null;
   orderSignatures: Map<string, string>;
   productSignatures: Map<string, string>;
   permissionBlocked: boolean;
@@ -50,6 +55,8 @@ export function createRtdbSyncTracker(): RtdbSyncTracker {
     initialLoaded: false,
     configExists: false,
     configSignature: null,
+    whatsappLiveSignature: null,
+    remoteWhatsappMeta: null,
     orderSignatures: new Map<string, string>(),
     productSignatures: new Map<string, string>(),
     permissionBlocked: false,
@@ -70,6 +77,98 @@ export async function signOutRtdb(): Promise<void> {
  */
 export function toSafeRtdbKey(raw: string, fallbackPrefix = 'item'): string {
   return toSafeFirestoreDocId(raw, fallbackPrefix);
+}
+
+/**
+ * Resolves which whatsappMeta should be written to RTDB `config.whatsappMeta` so a
+ * disconnected mirror host (e.g. AI Studio preview) NEVER overwrites a live Railway session.
+ */
+export function selectEffectiveRtdbWhatsappMeta(
+  local: Pick<
+    WhatsAppState,
+    | 'status'
+    | 'mode'
+    | 'connectedAt'
+    | 'lastHeartbeatAt'
+    | 'activeHostKind'
+    | 'hostKind'
+    | 'phoneNumber'
+    | 'pushName'
+    | 'remoteSessionActive'
+  >,
+  remote: RtdbWhatsAppMeta | null
+): RtdbWhatsAppMeta {
+  const isLocalLive = local.status === 'connected' && Boolean(local.phoneNumber);
+  if (isLocalLive) {
+    return {
+      mode: local.mode || 'baileys_qr',
+      connectedAt: local.connectedAt || null,
+      lastHeartbeatAt: local.lastHeartbeatAt || new Date().toISOString(),
+      activeHostKind: local.hostKind || local.activeHostKind || null,
+      phoneNumber: local.phoneNumber || null,
+      pushName: local.pushName || null,
+    };
+  }
+
+  const hasConnectedRemote = Boolean(
+    remote && remote.phoneNumber && (remote.connectedAt || remote.activeHostKind)
+  );
+  const remoteIsDifferentHost = Boolean(
+    remote?.activeHostKind && local.hostKind && remote.activeHostKind !== local.hostKind
+  );
+  if (hasConnectedRemote && (remoteIsDifferentHost || !local.phoneNumber)) {
+    return {
+      mode: remote!.mode || 'baileys_qr',
+      connectedAt: remote!.connectedAt || null,
+      lastHeartbeatAt: remote!.lastHeartbeatAt || null,
+      activeHostKind: remote!.activeHostKind || null,
+      phoneNumber: remote!.phoneNumber || null,
+      pushName: remote!.pushName || null,
+    };
+  }
+
+  return {
+    mode: local.mode || 'baileys_qr',
+    connectedAt: local.connectedAt || null,
+    lastHeartbeatAt: local.lastHeartbeatAt || null,
+    activeHostKind: local.activeHostKind || null,
+    phoneNumber: local.phoneNumber || null,
+    pushName: local.pushName || null,
+  };
+}
+
+function mergeSnapshotWhatsappMeta(
+  configMeta?: RtdbWhatsAppMeta,
+  liveMeta?: RtdbWhatsAppMeta
+): RtdbWhatsAppMeta | undefined {
+  if (!configMeta && !liveMeta) return undefined;
+  const base = configMeta || {
+    mode: 'baileys_qr' as const,
+    connectedAt: null,
+    lastHeartbeatAt: null,
+    activeHostKind: null,
+    phoneNumber: null,
+    pushName: null,
+  };
+  if (!liveMeta) return base;
+
+  const liveHasPhone = Boolean(liveMeta.phoneNumber && (liveMeta.connectedAt || liveMeta.lastHeartbeatAt));
+  if (liveHasPhone) {
+    return {
+      mode: liveMeta.mode || base.mode || 'baileys_qr',
+      connectedAt: liveMeta.connectedAt || base.connectedAt || null,
+      lastHeartbeatAt: liveMeta.lastHeartbeatAt || base.lastHeartbeatAt || null,
+      activeHostKind: liveMeta.activeHostKind || base.activeHostKind || null,
+      phoneNumber: liveMeta.phoneNumber || base.phoneNumber || null,
+      pushName: liveMeta.pushName || base.pushName || null,
+      status: liveMeta.status,
+    };
+  }
+  return {
+    ...base,
+    lastHeartbeatAt: liveMeta.lastHeartbeatAt || base.lastHeartbeatAt || null,
+    activeHostKind: liveMeta.activeHostKind || base.activeHostKind || null,
+  };
 }
 
 function buildRtdbConfigNode(params: {
@@ -151,13 +250,25 @@ export function subscribeToRtdbCloudData(
           settings?: AppSettings;
           storefrontConfig?: StorefrontConfig;
           geoSeoConfig?: GeoSeoConfig;
-          whatsappMeta?: RtdbCloudSnapshot['whatsappMeta'];
+          whatsappMeta?: RtdbWhatsAppMeta;
         };
+        whatsappLive?: RtdbWhatsAppMeta;
         orders?: Record<string, OrderRecord>;
         products?: Record<string, ProductCatalogItem>;
       };
 
       const configNode = raw.config;
+      const mergedWhatsappMeta = mergeSnapshotWhatsappMeta(
+        configNode?.whatsappMeta,
+        raw.whatsappLive
+      );
+      tracker.remoteWhatsappMeta = mergedWhatsappMeta || null;
+      if (raw.whatsappLive) {
+        tracker.whatsappLiveSignature = computeContentSignature(
+          stripUndefinedDeep(raw.whatsappLive)
+        );
+      }
+
       if (configNode && configNode.settings) {
         tracker.configExists = true;
         if (configNode.storefrontConfig && configNode.geoSeoConfig) {
@@ -209,7 +320,7 @@ export function subscribeToRtdbCloudData(
         settings: configNode?.settings,
         storefrontConfig: configNode?.storefrontConfig,
         geoSeoConfig: configNode?.geoSeoConfig,
-        whatsappMeta: configNode?.whatsappMeta,
+        whatsappMeta: mergedWhatsappMeta,
         orders: ordersList,
         products: productsList,
       });
@@ -251,6 +362,30 @@ export async function syncDeltaToRtdb(
   const nextOrderSigs: Array<[string, string]> = [];
   const nextProductSigs: Array<[string, string]> = [];
   let nextConfigSig: string | null = null;
+  let nextWaLiveSig: string | null = null;
+
+  const effectiveWaMeta = selectEffectiveRtdbWhatsappMeta(
+    state.whatsapp,
+    tracker.remoteWhatsappMeta
+  );
+
+  // If THIS host has an active local WhatsApp socket, broadcast live heartbeat + phone to `/orderpulse/whatsappLive`
+  if (state.whatsapp.status === 'connected' && state.whatsapp.phoneNumber) {
+    const livePayload = stripUndefinedDeep({
+      mode: state.whatsapp.mode || 'baileys_qr',
+      status: 'connected' as const,
+      phoneNumber: state.whatsapp.phoneNumber,
+      pushName: state.whatsapp.pushName || null,
+      connectedAt: state.whatsapp.connectedAt || null,
+      lastHeartbeatAt: state.whatsapp.lastHeartbeatAt || new Date().toISOString(),
+      activeHostKind: state.whatsapp.hostKind || state.whatsapp.activeHostKind || null,
+    });
+    const liveSig = computeContentSignature(livePayload);
+    if (liveSig !== tracker.whatsappLiveSignature) {
+      patch['whatsappLive'] = livePayload;
+      nextWaLiveSig = liveSig;
+    }
+  }
 
   const serverHasShopify = hasConfiguredShopify(state.settings);
   if (serverHasShopify || (!tracker.configExists && state.orders.length > 0)) {
@@ -258,7 +393,7 @@ export async function syncDeltaToRtdb(
       settings: state.settings,
       storefrontConfig: state.storefrontConfig,
       geoSeoConfig: state.geoSeoConfig,
-      whatsapp: state.whatsapp,
+      whatsapp: effectiveWaMeta,
     });
     const sig = computeContentSignature(configNode);
     if (sig !== tracker.configSignature) {
@@ -300,6 +435,9 @@ export async function syncDeltaToRtdb(
     if (nextConfigSig) {
       tracker.configExists = true;
       tracker.configSignature = nextConfigSig;
+    }
+    if (nextWaLiveSig) {
+      tracker.whatsappLiveSignature = nextWaLiveSig;
     }
     for (const [key, sig] of nextOrderSigs) {
       tracker.orderSignatures.set(key, sig);

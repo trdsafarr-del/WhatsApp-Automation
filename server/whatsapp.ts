@@ -180,7 +180,10 @@ class WhatsAppManager {
         currentHost,
         activeHostKind: meta.activeHostKind,
         lastHeartbeatAt: meta.lastHeartbeatAt,
-      })
+      }) ||
+      (currentHost === 'dev_preview' &&
+        meta.activeHostKind === 'railway' &&
+        Boolean(meta.phoneNumber && meta.connectedAt))
     ) {
       // Leave the 24/7 Railway / cloud production WhatsApp socket undisturbed
       return;
@@ -247,13 +250,11 @@ class WhatsAppManager {
     const meta = store.getWhatsAppMeta();
     const hostKind = detectHostRuntimeKind();
     const localRegistered = this.hasSavedAuth() && this.isAuthRegistered();
-    const isDifferentCloudHost =
-      Boolean(meta.activeHostKind) &&
-      meta.activeHostKind !== hostKind &&
-      (meta.activeHostKind === 'railway' || meta.activeHostKind === 'cloud');
+    const isDifferentActiveHost =
+      Boolean(meta.activeHostKind) && meta.activeHostKind !== hostKind;
     const remoteSessionActive =
       Boolean(meta.connectedAt && meta.phoneNumber) &&
-      (Boolean(process.env.VERCEL) || isDifferentCloudHost);
+      (Boolean(process.env.VERCEL) || isDifferentActiveHost);
     return {
       status: this.status,
       mode: meta.mode,

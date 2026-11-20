@@ -728,14 +728,26 @@ export interface WhatsAppDisplaySummary {
   isRemoteLinked: boolean;
   isLinked: boolean;
   isHostLive: boolean;
+  remoteHostLabel: string | null;
   statusLabel: string;
   sidebarLabel: string;
   persistenceLabel: string;
 }
 
+export function formatWhatsAppHostLabel(hostKind?: string | null): string | null {
+  if (!hostKind) return null;
+  const clean = hostKind.trim().toLowerCase();
+  if (clean === 'railway') return 'Railway';
+  if (clean === 'cloud') return 'Cloud Host';
+  if (clean === 'dev_preview') return 'AI Studio';
+  if (clean === 'serverless') return 'Vercel';
+  return hostKind;
+}
+
 /**
- * Computes consistent UI display states across local Node hosts and serverless dashboards (Vercel),
- * treating a cloud-synced host session with a saved phone/connectedAt as linked rather than "Not Linked".
+ * Computes consistent UI display states across local Node hosts, Railway, AI Studio,
+ * and serverless dashboards (Vercel), treating a cloud-synced session from another active host
+ * as linked rather than "Not Linked".
  */
 export function getWhatsAppDisplayState(
   whatsapp: {
@@ -756,16 +768,24 @@ export function getWhatsAppDisplayState(
   const hasRemoteMeta = Boolean(
     whatsapp.remoteSessionActive || (whatsapp.connectedAt && whatsapp.phoneNumber)
   );
+  const isDifferentActiveHost = Boolean(
+    whatsapp.activeHostKind &&
+      whatsapp.hostKind &&
+      whatsapp.activeHostKind !== whatsapp.hostKind
+  );
   const isMirrorHost = Boolean(
     whatsapp.isServerless ||
-      (whatsapp.hostKind === 'dev_preview' &&
-        (whatsapp.activeHostKind === 'railway' || whatsapp.activeHostKind === 'cloud'))
+      isDifferentActiveHost ||
+      (!whatsapp.hostKind && Boolean(whatsapp.remoteSessionActive))
   );
   const isRemoteLinked =
     isMirrorHost && !isLocalConnected && hasRemoteMeta && Boolean(whatsapp.phoneNumber);
   const isLinked = isLocalConnected || isRemoteLinked;
   const isHostLive =
     isLocalConnected || (isRemoteLinked && isHostHeartbeatRecent(whatsapp.lastHeartbeatAt, nowMs));
+  const remoteHostLabel = isRemoteLinked
+    ? formatWhatsAppHostLabel(whatsapp.activeHostKind) || 'Host'
+    : null;
 
   const isQrReady = whatsapp.status === 'qr_ready' && Boolean(whatsapp.qrDataUrl);
   const isConnecting = whatsapp.status === 'connecting';
@@ -805,7 +825,7 @@ export function getWhatsAppDisplayState(
       ? 'Saved (Auto-Restore on Boot)'
       : 'Active in Memory'
     : isRemoteLinked
-      ? 'Saved in Cloud Redis (Host Linked)'
+      ? `Live Synced via Firebase RTDB (${remoteHostLabel} Active)`
       : isSavedButPaused
         ? 'Saved (Socket Paused — Click Restore)'
         : 'Not Saved';
@@ -815,6 +835,7 @@ export function getWhatsAppDisplayState(
     isRemoteLinked,
     isLinked,
     isHostLive,
+    remoteHostLabel,
     statusLabel,
     sidebarLabel,
     persistenceLabel,

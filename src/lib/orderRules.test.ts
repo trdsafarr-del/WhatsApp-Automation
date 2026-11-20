@@ -2070,4 +2070,45 @@ test('classifyWhatsAppDisconnect prevents spurious logouts on 500 badSession, 51
   );
 });
 
+test('getWhatsAppDisplayState mirrors live Railway session on AI Studio Dev Preview and Shared App (cloud)', () => {
+  const now = Date.parse('2026-11-20T12:00:00.000Z');
 
+  // AI Studio Dev Preview (dev_preview) viewing Railway session (even before heartbeat arrives)
+  const devMirror = getWhatsAppDisplayState(
+    {
+      status: 'disconnected',
+      phoneNumber: '+919266424088',
+      connectedAt: '2026-11-20T11:43:01.276Z',
+      lastHeartbeatAt: null,
+      remoteSessionActive: true,
+      activeHostKind: 'railway',
+      hostKind: 'dev_preview',
+      sessionPersisted: true,
+      isServerless: false,
+    },
+    now
+  );
+  assert.equal(devMirror.isRemoteLinked, true);
+  assert.equal(devMirror.isLinked, true);
+  assert.equal(devMirror.remoteHostLabel, 'Railway');
+
+  // AI Studio Shared App (NODE_ENV=production -> hostKind: 'cloud') viewing Railway session with recent heartbeat
+  const sharedAppMirror = getWhatsAppDisplayState(
+    {
+      status: 'disconnected',
+      phoneNumber: '+919266424088',
+      connectedAt: '2026-11-20T11:43:01.276Z',
+      lastHeartbeatAt: '2026-11-20T11:59:30.000Z',
+      remoteSessionActive: true,
+      activeHostKind: 'railway',
+      hostKind: 'cloud',
+      sessionPersisted: true,
+      isServerless: false,
+    },
+    now
+  );
+  assert.equal(sharedAppMirror.isRemoteLinked, true);
+  assert.equal(sharedAppMirror.isHostLive, true);
+  assert.equal(sharedAppMirror.remoteHostLabel, 'Railway');
+  assert.equal(sharedAppMirror.statusLabel, 'Connected on Host · Live');
+});

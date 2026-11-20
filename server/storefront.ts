@@ -1,4 +1,9 @@
 import type { Express, Request, Response } from 'express';
+import {
+  buildFestivalStorefrontCss,
+  normalizeFestivalThemeConfig,
+  resolveEffectiveFestivalPreset,
+} from '../src/lib/festivalThemes.js';
 import { buildBakeryStorefrontSchema } from '../src/lib/geoSeo.js';
 import {
   buildProductJsonLd,
@@ -769,6 +774,122 @@ function buildStorefrontWidgetScript(origin: string): string {
 
   var autoAttempted = false;
 
+  function removeFestivalTheme() {
+    var styleEl = document.getElementById('orderpulse-festival-theme-css');
+    if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
+    var bannerEl = document.getElementById('orderpulse-festival-banner');
+    if (bannerEl && bannerEl.parentNode) bannerEl.parentNode.removeChild(bannerEl);
+    var fxEl = document.getElementById('orderpulse-festival-fx');
+    if (fxEl && fxEl.parentNode) fxEl.parentNode.removeChild(fxEl);
+    try {
+      document.documentElement.removeAttribute('data-orderpulse-festival');
+    } catch (e) {}
+  }
+
+  function applyFestivalTheme(ft) {
+    if (!ft || !ft.enabled || !ft.css) {
+      removeFestivalTheme();
+      return;
+    }
+
+    var styleEl = document.getElementById('orderpulse-festival-theme-css');
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'orderpulse-festival-theme-css';
+      (document.head || document.documentElement).appendChild(styleEl);
+    }
+    if (styleEl.textContent !== ft.css) {
+      styleEl.textContent = ft.css;
+    }
+
+    try {
+      document.documentElement.setAttribute('data-orderpulse-festival', ft.presetId || 'festive');
+    } catch (e) {}
+
+    var bannerDismissKey = 'op_fest_banner_closed_' + (ft.presetId || 'festive');
+    var bannerDismissed = false;
+    try {
+      bannerDismissed = sessionStorage.getItem(bannerDismissKey) === '1';
+    } catch (e) {}
+
+    var existingBanner = document.getElementById('orderpulse-festival-banner');
+    if (ft.showAnnouncementBar && ft.bannerText && !bannerDismissed && document.body) {
+      if (!existingBanner) {
+        existingBanner = document.createElement('div');
+        existingBanner.id = 'orderpulse-festival-banner';
+        existingBanner.style.cssText =
+          'position:relative;z-index:2147482500;width:100%;padding:9px 38px 9px 14px;text-align:center;font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:600;line-height:1.4;letter-spacing:0.01em;box-sizing:border-box;';
+        document.body.insertBefore(existingBanner, document.body.firstChild);
+      }
+      var safeBadge = String(ft.badgeText || '').replace(/</g, '&lt;');
+      var safeText = String(ft.bannerText || '').replace(/</g, '&lt;');
+      existingBanner.innerHTML =
+        (safeBadge
+          ? '<span style="display:inline-block;margin-right:8px;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,0.16);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">' +
+            safeBadge +
+            '</span>'
+          : '') +
+        '<span>' +
+        safeText +
+        '</span>' +
+        '<button type="button" id="op-fest-banner-close" aria-label="Close festive banner" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:inherit;font-size:16px;font-weight:700;cursor:pointer;padding:2px 6px;opacity:0.8;">&times;</button>';
+      var closeBtn = document.getElementById('op-fest-banner-close');
+      if (closeBtn) {
+        closeBtn.onclick = function () {
+          try {
+            sessionStorage.setItem(bannerDismissKey, '1');
+          } catch (e) {}
+          if (existingBanner && existingBanner.parentNode) {
+            existingBanner.parentNode.removeChild(existingBanner);
+          }
+        };
+      }
+    } else if (existingBanner && existingBanner.parentNode) {
+      existingBanner.parentNode.removeChild(existingBanner);
+    }
+
+    var existingFx = document.getElementById('orderpulse-festival-fx');
+    if (ft.enableFestiveEffects && document.body) {
+      if (!existingFx) {
+        existingFx = document.createElement('div');
+        existingFx.id = 'orderpulse-festival-fx';
+        existingFx.setAttribute('aria-hidden', 'true');
+        var colors = [
+          (ft.palette && ft.palette.accent) || '#f59e0b',
+          (ft.palette && ft.palette.primary) || '#b91c1c',
+          '#ffffff',
+        ];
+        if (ft.effectStyle === 'snow') colors = ['#ffffff', '#e2e8f0', '#f8fafc'];
+        var html = '';
+        for (var i = 0; i < 14; i++) {
+          var left = Math.round(((i * 7.3) % 96) + 2);
+          var size = ft.effectStyle === 'snow' ? 6 + (i % 5) : 5 + (i % 4);
+          var dur = (7 + (i % 6) * 1.4).toFixed(1);
+          var delay = ((i % 7) * 0.9).toFixed(1);
+          var color = colors[i % colors.length];
+          html +=
+            '<span class="op-fest-particle" style="left:' +
+            left +
+            '%;width:' +
+            size +
+            'px;height:' +
+            size +
+            'px;background:' +
+            color +
+            ';animation-duration:' +
+            dur +
+            's;animation-delay:' +
+            delay +
+            's;"></span>';
+        }
+        existingFx.innerHTML = html;
+        document.body.appendChild(existingFx);
+      }
+    } else if (existingFx && existingFx.parentNode) {
+      existingFx.parentNode.removeChild(existingFx);
+    }
+  }
+
   function runCheck(pincode, isInitialBoot) {
     var url = APP_ORIGIN + '/api/storefront/pincode-check?pincode=' + encodeURIComponent(pincode || '');
     fetch(url)
@@ -777,6 +898,7 @@ function buildStorefrontWidgetScript(origin: string): string {
         if (!data || !data.ok) return;
         lastPayload = data;
         var cfg = data.storefrontConfig || {};
+        applyFestivalTheme(data.festivalThemePayload || null);
 
         if (!pincode && isInitialBoot && !autoAttempted && cfg.autoDetectPincode !== false) {
           autoAttempted = true;
@@ -998,12 +1120,28 @@ export function registerStorefrontRoutes(app: Express) {
         ? buildBakeryStorefrontSchema(geoConfig)
         : undefined;
 
+    const festivalTheme = normalizeFestivalThemeConfig(storefrontConfig.festivalTheme);
+    const resolvedFestival = resolveEffectiveFestivalPreset(festivalTheme);
+    const festivalThemeCss = buildFestivalStorefrontCss(festivalTheme);
+
     res.json({
       ok: true,
       pincode,
       delhivery,
       storefrontConfig,
       bakeryGeoSchema,
+      festivalThemePayload: {
+        enabled: festivalTheme.enabled,
+        presetId: resolvedFestival.preset.id,
+        presetName: resolvedFestival.preset.name,
+        badgeText: resolvedFestival.preset.badgeText,
+        showAnnouncementBar: festivalTheme.showAnnouncementBar,
+        bannerText: resolvedFestival.effectiveBannerText,
+        enableFestiveEffects: festivalTheme.enableFestiveEffects,
+        effectStyle: resolvedFestival.preset.effectStyle,
+        palette: resolvedFestival.preset.palette,
+        css: festivalThemeCss,
+      },
       products: evaluated,
     });
   });
@@ -1422,6 +1560,14 @@ export function registerStorefrontRoutes(app: Express) {
             ? normalizeStorefrontOrigin(body.storefrontAppUrl)
             : ''
           : cur.storefrontAppUrl,
+      festivalTheme:
+        body.festivalTheme !== undefined
+          ? normalizeFestivalThemeConfig({
+              ...cur.festivalTheme,
+              ...body.festivalTheme,
+              updatedAt: new Date().toISOString(),
+            })
+          : normalizeFestivalThemeConfig(cur.festivalTheme),
     });
     await store.flushRemote();
     res.json({ ok: true, storefrontConfig: updated });

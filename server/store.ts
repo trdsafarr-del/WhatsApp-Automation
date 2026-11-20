@@ -16,6 +16,7 @@ import {
   stripUndefinedDeep,
   toSafeFirestoreDocId,
 } from '../src/lib/firestorePayload.js';
+import { normalizeFestivalThemeConfig } from '../src/lib/festivalThemes.js';
 import { DEFAULT_GEO_SEO_CONFIG } from '../src/lib/geoSeo.js';
 import {
   DEFAULT_STOREFRONT_CONFIG,
@@ -528,8 +529,8 @@ class PersistentStore {
   async ensureHydrated(force = false): Promise<void> {
     if (!this.isCloudSyncEnabled()) return;
     const now = Date.now();
-    // Re-check remote revision every 15s on Vercel serverless, 5m on persistent servers
-    const ttlMs = process.env.VERCEL ? 15_000 : 300_000;
+    // Lightweight ~150-byte revision + live WhatsApp check every 15s on Vercel, 20s on persistent servers
+    const ttlMs = process.env.VERCEL ? 15_000 : 20_000;
     if (!force && this.lastHydratedAtMs > 0 && now - this.lastHydratedAtMs < ttlMs) {
       return;
     }
@@ -542,12 +543,40 @@ class PersistentStore {
         await this.flushRemote();
 
         if (getRtdbServerConfig() !== null) {
-          const [metaNode, heartbeatNode] = await Promise.all([
+          const [metaNode, heartbeatNode, waLiveNode] = await Promise.all([
             rtdbRestGet<{ rev?: string; updatedAt?: string }>('orderpulse/meta'),
             rtdbRestGet<{ lastHeartbeatAt?: string | null; activeHostKind?: string | null }>(
               'orderpulse_server/heartbeat'
             ),
+            rtdbRestGet<Partial<DatabaseState['whatsappMeta']>>('orderpulse/whatsappLive'),
           ]);
+
+          if (waLiveNode && typeof waLiveNode === 'object' && waLiveNode.phoneNumber) {
+            const curHbMs = this.state.whatsappMeta.lastHeartbeatAt
+              ? Date.parse(this.state.whatsappMeta.lastHeartbeatAt)
+              : 0;
+            const liveHbMs = waLiveNode.lastHeartbeatAt
+              ? Date.parse(waLiveNode.lastHeartbeatAt)
+              : 0;
+            const liveConnMs = waLiveNode.connectedAt ? Date.parse(waLiveNode.connectedAt) : 0;
+            const latestLiveMs = Math.max(
+              Number.isFinite(liveHbMs) ? liveHbMs : 0,
+              Number.isFinite(liveConnMs) ? liveConnMs : 0
+            );
+            if (!this.state.whatsappMeta.phoneNumber || latestLiveMs >= (Number.isFinite(curHbMs) ? curHbMs : 0)) {
+              this.state.whatsappMeta = {
+                ...this.state.whatsappMeta,
+                mode: waLiveNode.mode || this.state.whatsappMeta.mode || 'baileys_qr',
+                phoneNumber: waLiveNode.phoneNumber || this.state.whatsappMeta.phoneNumber || null,
+                pushName: waLiveNode.pushName ?? this.state.whatsappMeta.pushName ?? null,
+                connectedAt: waLiveNode.connectedAt || this.state.whatsappMeta.connectedAt || null,
+                lastHeartbeatAt:
+                  waLiveNode.lastHeartbeatAt || this.state.whatsappMeta.lastHeartbeatAt || null,
+                activeHostKind:
+                  waLiveNode.activeHostKind || this.state.whatsappMeta.activeHostKind || null,
+              };
+            }
+          }
 
           if (heartbeatNode && typeof heartbeatNode === 'object') {
             const curHbMs = this.state.whatsappMeta.lastHeartbeatAt
@@ -1031,9 +1060,20 @@ class PersistentStore {
     };
     if (this.isCloudSyncEnabled()) {
       if (getRtdbServerConfig() !== null) {
+        const liveSnapshot = stripUndefinedDeep({
+          mode: this.state.whatsappMeta.mode || 'baileys_qr',
+          phoneNumber: this.state.whatsappMeta.phoneNumber || null,
+          pushName: this.state.whatsappMeta.pushName || null,
+          connectedAt: this.state.whatsappMeta.connectedAt || null,
+          lastHeartbeatAt: meta.lastHeartbeatAt,
+          activeHostKind: meta.activeHostKind,
+        });
         this.remoteSyncQueue = this.remoteSyncQueue
           .then(async () => {
-            await rtdbRestPut('orderpulse_server/heartbeat', meta);
+            await Promise.all([
+              rtdbRestPut('orderpulse_server/heartbeat', meta),
+              rtdbRestPut('orderpulse/whatsappLive', liveSnapshot),
+            ]);
           })
           .catch(() => {
             // Ignore transient heartbeat write errors
@@ -1268,6 +1308,23 @@ class PersistentStore {
       ...partial,
     };
     this.persistState(this.state);
+    if (getRtdbServerConfig() !== null) {
+      const liveSnapshot = stripUndefinedDeep({
+        mode: this.state.whatsappMeta.mode || 'baileys_qr',
+        phoneNumber: this.state.whatsappMeta.phoneNumber || null,
+        pushName: this.state.whatsappMeta.pushName || null,
+        connectedAt: this.state.whatsappMeta.connectedAt || null,
+        lastHeartbeatAt: this.state.whatsappMeta.lastHeartbeatAt || null,
+        activeHostKind: this.state.whatsappMeta.activeHostKind || null,
+      });
+      this.remoteSyncQueue = this.remoteSyncQueue
+        .then(async () => {
+          await rtdbRestPut('orderpulse/whatsappLive', liveSnapshot);
+        })
+        .catch(() => {
+          // Non-fatal
+        });
+    }
   }
 
   savePollMessage(messageId: string, messagePayload: unknown) {
@@ -1326,16 +1383,29 @@ class PersistentStore {
   }
 
   getStorefrontConfig(): StorefrontConfig {
-    return {
+    const merged = {
       ...DEFAULT_STOREFRONT_CONFIG,
       ...(this.state.storefrontConfig || {}),
+    };
+    return {
+      ...merged,
+      festivalTheme: normalizeFestivalThemeConfig(merged.festivalTheme),
     };
   }
 
   updateStorefrontConfig(partial: Partial<StorefrontConfig>): StorefrontConfig {
+    const current = this.getStorefrontConfig();
     this.state.storefrontConfig = {
-      ...this.getStorefrontConfig(),
+      ...current,
       ...partial,
+      festivalTheme:
+        partial.festivalTheme !== undefined
+          ? normalizeFestivalThemeConfig({
+              ...current.festivalTheme,
+              ...partial.festivalTheme,
+              updatedAt: new Date().toISOString(),
+            })
+          : normalizeFestivalThemeConfig(current.festivalTheme),
     };
     this.persistState(this.state);
     return this.state.storefrontConfig;
@@ -1407,9 +1477,14 @@ class PersistentStore {
     }
 
     if (payload.storefrontConfig && typeof payload.storefrontConfig === 'object') {
+      const currentSf = this.getStorefrontConfig();
       this.state.storefrontConfig = {
-        ...this.getStorefrontConfig(),
+        ...currentSf,
         ...payload.storefrontConfig,
+        festivalTheme:
+          payload.storefrontConfig.festivalTheme !== undefined
+            ? normalizeFestivalThemeConfig(payload.storefrontConfig.festivalTheme)
+            : currentSf.festivalTheme,
       };
     }
 
@@ -1422,24 +1497,35 @@ class PersistentStore {
     }
 
     if (payload.whatsappMeta && typeof payload.whatsappMeta === 'object') {
-      const incomingHost = payload.whatsappMeta.activeHostKind || null;
-      const isRemoteProductionHost =
-        Boolean(process.env.VERCEL) ||
-        incomingHost === 'railway' ||
-        incomingHost === 'cloud';
-      if (isRemoteProductionHost) {
-        this.state.whatsappMeta = {
-          ...this.state.whatsappMeta,
-          phoneNumber:
-            this.state.whatsappMeta.phoneNumber || payload.whatsappMeta.phoneNumber || null,
-          pushName: this.state.whatsappMeta.pushName || payload.whatsappMeta.pushName || null,
-          connectedAt:
-            this.state.whatsappMeta.connectedAt || payload.whatsappMeta.connectedAt || null,
-          lastHeartbeatAt:
-            this.state.whatsappMeta.lastHeartbeatAt || payload.whatsappMeta.lastHeartbeatAt || null,
-          activeHostKind:
-            this.state.whatsappMeta.activeHostKind || incomingHost,
-        };
+      const incoming = payload.whatsappMeta;
+      const incomingHasSession = Boolean(incoming.phoneNumber && (incoming.connectedAt || incoming.activeHostKind));
+      if (incomingHasSession) {
+        const curHbMs = this.state.whatsappMeta.lastHeartbeatAt
+          ? Date.parse(this.state.whatsappMeta.lastHeartbeatAt)
+          : 0;
+        const incHbMs = incoming.lastHeartbeatAt ? Date.parse(incoming.lastHeartbeatAt) : 0;
+        const curConnMs = this.state.whatsappMeta.connectedAt
+          ? Date.parse(this.state.whatsappMeta.connectedAt)
+          : 0;
+        const incConnMs = incoming.connectedAt ? Date.parse(incoming.connectedAt) : 0;
+        const incomingIsFresher =
+          !this.state.whatsappMeta.phoneNumber ||
+          (Number.isFinite(incHbMs) && incHbMs > (Number.isFinite(curHbMs) ? curHbMs : 0)) ||
+          (Number.isFinite(incConnMs) && incConnMs >= (Number.isFinite(curConnMs) ? curConnMs : 0));
+
+        if (incomingIsFresher || Boolean(process.env.VERCEL)) {
+          this.state.whatsappMeta = {
+            ...this.state.whatsappMeta,
+            mode: incoming.mode || this.state.whatsappMeta.mode || 'baileys_qr',
+            phoneNumber: incoming.phoneNumber || this.state.whatsappMeta.phoneNumber || null,
+            pushName: incoming.pushName ?? this.state.whatsappMeta.pushName ?? null,
+            connectedAt: incoming.connectedAt || this.state.whatsappMeta.connectedAt || null,
+            lastHeartbeatAt:
+              incoming.lastHeartbeatAt || this.state.whatsappMeta.lastHeartbeatAt || null,
+            activeHostKind:
+              incoming.activeHostKind || this.state.whatsappMeta.activeHostKind || null,
+          };
+        }
       }
     }
 
