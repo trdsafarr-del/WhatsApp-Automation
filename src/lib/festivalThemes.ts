@@ -1,3 +1,14 @@
+import {
+  type FestivalFeaturedProduct,
+  buildFestivalGarlandHtml,
+  buildFestivalHeroBannerHtml,
+  buildFestivalParticlesHtml,
+  buildFestivalShowcaseCss,
+  selectBestFestivalProducts,
+} from './festivalShowcase';
+
+export type { FestivalFeaturedProduct };
+
 export type FestivalPresetId =
   | 'diwali'
   | 'holi'
@@ -21,6 +32,9 @@ export interface FestivalThemeConfig {
   showAnnouncementBar: boolean;
   customBannerText: string;
   enableFestiveEffects: boolean;
+  showHeroBanner?: boolean;
+  show3DArticles?: boolean;
+  featuredProductHandles?: string[];
   intensity: FestivalThemeIntensity;
   updatedAt?: string;
 }
@@ -63,6 +77,9 @@ export const DEFAULT_FESTIVAL_THEME_CONFIG: FestivalThemeConfig = {
   showAnnouncementBar: true,
   customBannerText: '',
   enableFestiveEffects: true,
+  showHeroBanner: true,
+  show3DArticles: true,
+  featuredProductHandles: [],
   intensity: 'full',
 };
 
@@ -407,6 +424,15 @@ export function normalizeFestivalThemeConfig(
   raw?: Partial<FestivalThemeConfig> | null
 ): FestivalThemeConfig {
   const src = raw && typeof raw === 'object' ? raw : {};
+  const featuredProductHandles = Array.isArray(src.featuredProductHandles)
+    ? Array.from(
+        new Set(
+          src.featuredProductHandles
+            .map((h) => String(h || '').trim())
+            .filter((h) => h.length > 0 && h.length <= 160)
+        )
+      ).slice(0, 6)
+    : [];
   return {
     enabled: Boolean(src.enabled),
     selectedFestivalId: isValidFestivalThemeId(src.selectedFestivalId)
@@ -422,6 +448,15 @@ export function normalizeFestivalThemeConfig(
       typeof src.enableFestiveEffects === 'boolean'
         ? src.enableFestiveEffects
         : DEFAULT_FESTIVAL_THEME_CONFIG.enableFestiveEffects,
+    showHeroBanner:
+      typeof src.showHeroBanner === 'boolean'
+        ? src.showHeroBanner
+        : DEFAULT_FESTIVAL_THEME_CONFIG.showHeroBanner,
+    show3DArticles:
+      typeof src.show3DArticles === 'boolean'
+        ? src.show3DArticles
+        : DEFAULT_FESTIVAL_THEME_CONFIG.show3DArticles,
+    featuredProductHandles,
     intensity: src.intensity === 'subtle' ? 'subtle' : 'full',
     updatedAt: typeof src.updatedAt === 'string' ? src.updatedAt : undefined,
   };
@@ -551,8 +586,141 @@ function hexToRgbTriplet(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
+export interface FestivalThemeRuntimePayload {
+  enabled: boolean;
+  presetId: FestivalPresetId;
+  presetName: string;
+  badgeText: string;
+  showAnnouncementBar: boolean;
+  bannerText: string;
+  enableFestiveEffects: boolean;
+  showHeroBanner: boolean;
+  show3DArticles: boolean;
+  effectStyle: FestivalThemePreset['effectStyle'];
+  palette: FestivalPalette;
+  featuredProducts: FestivalFeaturedProduct[];
+  heroBannerHtml: string;
+  garlandHtml: string;
+  particlesHtml: string;
+  css: string;
+}
+
+export function normalizeShopPreviewOrigin(rawDomain?: string | null): string {
+  const cleaned = String(rawDomain || '')
+    .trim()
+    .replace(/^(https?:\/\/)+/i, '')
+    .replace(/\/+.*$/, '')
+    .trim();
+  if (!cleaned || !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(cleaned)) {
+    return 'https://broomiesbakery.in';
+  }
+  return `https://${cleaned}`;
+}
+
+export function sanitizePreviewPath(rawPath?: string | null): string {
+  const trimmed = String(rawPath || '/').trim();
+  if (!trimmed || !trimmed.startsWith('/') || trimmed.startsWith('//')) {
+    return '/';
+  }
+  // Keep only safe relative path + query without control characters
+  const safe = trimmed.replace(/[\r\n\t\0]/g, '').slice(0, 300);
+  if (safe.includes('://')) return '/';
+  return safe || '/';
+}
+
+export function buildFestivalThemePayload(
+  config: FestivalThemeConfig,
+  options?:
+    | Date
+    | string
+    | {
+        now?: Date | string;
+        catalogProducts?: FestivalFeaturedProduct[];
+        shopName?: string;
+      }
+): FestivalThemeRuntimePayload {
+  const opts =
+    options instanceof Date || typeof options === 'string'
+      ? { now: options }
+      : options || {};
+  const normalized = normalizeFestivalThemeConfig(config);
+  const resolved = resolveEffectiveFestivalPreset(normalized, opts.now);
+  const featuredProducts = selectBestFestivalProducts(
+    opts.catalogProducts || [],
+    resolved.preset.id,
+    normalized.featuredProductHandles || [],
+    3
+  );
+  const baseCss = buildFestivalStorefrontCss(normalized, opts.now);
+  const showcaseCss = normalized.enabled
+    ? buildFestivalShowcaseCss(resolved.preset, normalized)
+    : '';
+  const combinedCss = [baseCss, showcaseCss].filter(Boolean).join('\n\n');
+
+  return {
+    enabled: normalized.enabled,
+    presetId: resolved.preset.id,
+    presetName: resolved.preset.name,
+    badgeText: resolved.preset.badgeText,
+    showAnnouncementBar: normalized.showAnnouncementBar,
+    bannerText: resolved.effectiveBannerText,
+    enableFestiveEffects: normalized.enableFestiveEffects,
+    showHeroBanner: normalized.showHeroBanner !== false,
+    show3DArticles: normalized.show3DArticles !== false,
+    effectStyle: resolved.preset.effectStyle,
+    palette: resolved.preset.palette,
+    featuredProducts,
+    heroBannerHtml: normalized.enabled
+      ? buildFestivalHeroBannerHtml({
+          preset: resolved.preset,
+          config: normalized,
+          products: featuredProducts,
+          shopName: opts.shopName,
+        })
+      : '',
+    garlandHtml:
+      normalized.enabled && normalized.show3DArticles !== false
+        ? buildFestivalGarlandHtml(resolved.preset)
+        : '',
+    particlesHtml:
+      normalized.enabled && normalized.enableFestiveEffects
+        ? buildFestivalParticlesHtml(resolved.preset)
+        : '',
+    css: combinedCss,
+  };
+}
+
+export function buildFestivalPreviewUrl(
+  baseOrigin: string,
+  config: FestivalThemeConfig,
+  mode: 'festive' | 'original',
+  pagePath = '/'
+): string {
+  const normalized = normalizeFestivalThemeConfig(config);
+  const safePath = sanitizePreviewPath(pagePath);
+  const params = new URLSearchParams();
+  params.set('mode', mode);
+  params.set('festival', normalized.selectedFestivalId);
+  params.set('intensity', normalized.intensity);
+  params.set('banner', normalized.showAnnouncementBar ? '1' : '0');
+  params.set('fx', normalized.enableFestiveEffects ? '1' : '0');
+  params.set('hero', normalized.showHeroBanner !== false ? '1' : '0');
+  params.set('art3d', normalized.show3DArticles !== false ? '1' : '0');
+  if ((normalized.featuredProductHandles || []).length > 0) {
+    params.set('picks', (normalized.featuredProductHandles || []).slice(0, 3).join(','));
+  }
+  if (normalized.customBannerText.trim()) {
+    params.set('bannerText', normalized.customBannerText.trim());
+  }
+  if (safePath !== '/') {
+    params.set('path', safePath);
+  }
+  const cleanOrigin = String(baseOrigin || '').replace(/\/+$/, '');
+  return `${cleanOrigin}/api/storefront/preview?${params.toString()}`;
+}
+
 /**
- * Compiles non-destructive, scoped CSS for the Shopify storefront bridge.
+ * Compiles non-destructive, scoped CSS for the Shopify storefront bridge (Dawn 16+ & standard themes).
  * Returns an empty string when `enabled` is false so toggling OFF removes all overrides
  * and restores the original Shopify theme cleanly.
  */
@@ -588,12 +756,12 @@ export function buildFestivalStorefrontCss(
   --op-fest-primary-text: ${p.primaryText};
   --op-fest-accent: ${p.accent};
   --op-fest-border: ${p.borderColor};
-  --color-button: ${primaryRgb};
-  --color-button-text: ${primaryTextRgb};
-  --color-link: ${primaryRgb};
-  --color-badge-background: ${accentRgb};
-  --color-badge-foreground: ${textRgb};
-  ${isFull ? `--color-background: ${pageBgRgb}; --gradient-background: ${p.pageBg}; --color-foreground: ${textRgb};` : ''}
+  --color-button: ${primaryRgb} !important;
+  --color-button-text: ${primaryTextRgb} !important;
+  --color-link: ${primaryRgb} !important;
+  --color-badge-background: ${accentRgb} !important;
+  --color-badge-foreground: ${textRgb} !important;
+  ${isFull ? `--color-background: ${pageBgRgb} !important; --gradient-background: ${p.pageBg} !important; --color-foreground: ${textRgb} !important;` : ''}
 }
 
 /* Primary Buttons & CTAs */
@@ -605,6 +773,7 @@ button[name="add"],
 .shopify-payment-button__button--unbranded,
 a.button--primary {
   background-color: ${p.primary} !important;
+  background-image: none !important;
   color: ${p.primaryText} !important;
   border-color: ${p.primary} !important;
   transition: background-color 0.2s ease, transform 0.15s ease !important;
@@ -627,83 +796,122 @@ button[name="add"]:hover,
   border-color: ${p.accent} !important;
 }
 
-/* Header & Navigation */
-.header-wrapper,
-header.header,
-.site-header,
-sticky-header {
-  background-color: ${p.headerBg} !important;
-  color: ${p.headerText} !important;
-  border-bottom: 2px solid ${p.accent} !important;
-}
-
-.header-wrapper a,
-.header-wrapper .header__menu-item,
-.header-wrapper .header__icon,
-.header-wrapper summary,
-.header-wrapper .h2,
-.site-header a {
-  color: ${p.headerText} !important;
-}
-
 /* Announcement Banner */
 #orderpulse-festival-banner {
-  background: linear-gradient(90deg, ${p.bannerBg}, ${p.accent}, ${p.bannerBg});
-  color: ${p.bannerText};
+  background: linear-gradient(90deg, ${p.bannerBg}, ${p.accent}, ${p.bannerBg}) !important;
+  color: ${p.bannerText} !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.12);
 }
 `;
 
   const fullSurfaceRules = isFull
     ? `
-/* Full Storefront Surface & Card Theme */
+/* Full Storefront Surface & Card Theme (scoped to main content so header/footer keep distinct palettes) */
 html,
 body,
 main#MainContent,
 .content-for-layout,
-.shopify-section .gradient {
+main#MainContent .shopify-section > .gradient,
+main#MainContent .color-scheme-1,
+main#MainContent .color-scheme-2,
+main#MainContent .collection.gradient,
+main#MainContent .rich-text.gradient,
+main#MainContent .multicolumn.gradient {
   background-color: ${p.pageBg} !important;
+  background-image: none !important;
   color: ${p.textColor} !important;
 }
 
-.card,
-.card-wrapper,
-.product-card,
-.product-grid-item,
-.collection-hero,
-.multicolumn-card,
-.rich-text__blocks {
+main#MainContent .banner__box,
+main#MainContent .card,
+main#MainContent .card-wrapper .card,
+main#MainContent .product-card,
+main#MainContent .product-grid-item,
+main#MainContent .collection-hero,
+main#MainContent .multicolumn-card,
+main#MainContent .rich-text__blocks {
   background-color: ${p.surfaceBg} !important;
   border: 1px solid ${p.borderColor} !important;
   border-radius: 12px !important;
 }
 
-.card__heading,
-.card__heading a,
-.product__title,
-.product__title h1,
-.price-item,
-h1, h2, h3 {
-  color: ${p.textColor};
+main#MainContent .card__heading,
+main#MainContent .card__heading a,
+main#MainContent .product__title,
+main#MainContent .product__title h1,
+main#MainContent .price-item,
+main#MainContent h1,
+main#MainContent h2,
+main#MainContent h3 {
+  color: ${p.textColor} !important;
+}
+`
+    : '';
+
+  const headerAndFooterRules = `
+/* Header, Announcement Utility Bar & Navigation (placed after main rules so Dawn .color-scheme-1 never overrides headerBg) */
+body .header-wrapper,
+body .shopify-section-group-header-group .header-wrapper,
+body .shopify-section-group-header-group .header-wrapper.gradient,
+body .section-header .header-wrapper,
+body header.header,
+body .site-header,
+body sticky-header {
+  background-color: ${p.headerBg} !important;
+  background-image: none !important;
+  color: ${p.headerText} !important;
+  border-bottom: 2px solid ${p.accent} !important;
 }
 
-/* Footer */
-footer.footer,
-.site-footer,
-.shopify-section-group-footer-group {
+body .utility-bar,
+body .shopify-section-group-header-group .utility-bar,
+body .announcement-bar-section .utility-bar {
   background-color: ${p.footerBg} !important;
+  background-image: none !important;
+  color: ${p.headerText} !important;
+}
+
+body .header-wrapper a,
+body .header-wrapper span,
+body .header-wrapper .header__menu-item,
+body .header-wrapper .header__icon,
+body .header-wrapper summary,
+body .header-wrapper .h2,
+body .header-wrapper svg,
+body .utility-bar a,
+body .utility-bar p,
+body .utility-bar span,
+body .site-header a {
+  color: ${p.headerText} !important;
+}
+
+${
+  isFull
+    ? `
+/* Footer */
+body footer.footer,
+body .site-footer,
+body .shopify-section-group-footer-group,
+body .shopify-section-group-footer-group .gradient,
+body .shopify-section-group-footer-group footer.footer {
+  background-color: ${p.footerBg} !important;
+  background-image: none !important;
   color: ${p.footerText} !important;
   border-top: 2px solid ${p.accent} !important;
 }
 
-footer.footer a,
-footer.footer h2,
-footer.footer p,
-.site-footer a {
+body footer.footer a,
+body footer.footer h2,
+body footer.footer p,
+body footer.footer span,
+body footer.footer li,
+body .site-footer a {
   color: ${p.footerText} !important;
 }
 `
-    : '';
+    : ''
+}
+`;
 
   const fxRules = normalized.enableFestiveEffects
     ? `
@@ -729,5 +937,249 @@ footer.footer p,
 `
     : '';
 
-  return `${baseVars}${fullSurfaceRules}${fxRules}`.trim();
+  return `${baseVars}${fullSurfaceRules}${headerAndFooterRules}${fxRules}`.trim();
 }
+
+function escapeHtmlAttr(str: string): string {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function safeJsonForScriptTag(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+/**
+ * Rewrites a live fetched Shopify storefront HTML page so it renders cleanly inside
+ * OrderPulse's live preview iframe or standalone shareable preview link, with real
+ * store assets loading from the store origin and live festival CSS/banner/FX preview.
+ */
+export function rewriteShopifyHtmlForFestivalPreview(
+  rawHtml: string,
+  storefrontOrigin: string,
+  options: {
+    mode: 'festive' | 'original';
+    payload: FestivalThemeRuntimePayload;
+    currentPath?: string;
+  }
+): string {
+  const cleanOrigin = normalizeShopPreviewOrigin(storefrontOrigin);
+  const safeBaseHref = escapeHtmlAttr(`${cleanOrigin}/`);
+  const effectivePayload: FestivalThemeRuntimePayload =
+    options.mode === 'festive'
+      ? options.payload
+      : { ...options.payload, enabled: false, css: '' };
+
+  // Strip any meta CSP that could block embedded preview frames
+  let html = String(rawHtml || '').replace(
+    /<meta[^>]+http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi,
+    ''
+  );
+
+  // Strip Shopify ScriptTag asyncLoad entries for our live storefront widget.js (which use
+  // JSON-escaped `\/` slashes and would otherwise load the live OFF state and erase preview CSS)
+  html = html
+    .replace(/"https?:\\?\/\\?\/[^"]*?storefront\\?\/widget\.js[^"]*"\s*,?/gi, '')
+    .replace(/,\s*\]/g, ']');
+
+  // Strip cross-origin tracking/pixel/checkout scripts AND any direct live widget.js script tags
+  html = html.replace(
+    /<script\b[^>]*>[\s\S]*?<\/script>/gi,
+    (tag) => {
+      if (
+        /web-pixels|webPixelsManager|trekkie|monorail|magic-checkout|razorpay|shop-js|shop\.app|perf-kit|storefront-renderer|analytics|facebook\.net|gtag|googletagmanager|storefront(?:\\?\/)widget\.js|orderpulse.*widget\.js/i.test(
+          tag
+        )
+      ) {
+        return '';
+      }
+      return tag;
+    }
+  );
+
+  // Remove existing <base> tags to prevent conflicts with our storefront origin <base>
+  html = html.replace(/<base\b[^>]*>/gi, '');
+
+  const initialStyleTag =
+    effectivePayload.enabled && effectivePayload.css
+      ? `<style id="orderpulse-festival-theme-css">${effectivePayload.css.replace(/<\/style>/gi, '<\\/style>')}</style>`
+      : '';
+
+  const headInject = `<base href="${safeBaseHref}" />${initialStyleTag}`;
+
+  if (/<head\b[^>]*>/i.test(html)) {
+    html = html.replace(/<head\b[^>]*>/i, (match) => `${match}\n${headInject}`);
+  } else {
+    html = `<head>${headInject}</head>${html}`;
+  }
+
+  const bridgeScript = `
+<script data-op-festival-preview-bridge="1">
+(function () {
+  var INITIAL_PAYLOAD = ${safeJsonForScriptTag(effectivePayload)};
+  var STORE_ORIGIN = ${safeJsonForScriptTag(cleanOrigin)};
+
+  function removeFestivalPreview() {
+    var ids = [
+      'orderpulse-festival-theme-css',
+      'orderpulse-festival-banner',
+      'orderpulse-festival-garland',
+      'orderpulse-festival-hero',
+      'orderpulse-festival-fx'
+    ];
+    for (var k = 0; k < ids.length; k++) {
+      var el = document.getElementById(ids[k]);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+    try { document.documentElement.removeAttribute('data-orderpulse-festival'); } catch (e) {}
+  }
+
+  function applyFestivalPreview(ft) {
+    if (!ft || !ft.enabled || !ft.css) {
+      removeFestivalPreview();
+      return;
+    }
+    var styleEl = document.getElementById('orderpulse-festival-theme-css');
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'orderpulse-festival-theme-css';
+      (document.head || document.documentElement).appendChild(styleEl);
+    }
+    if (styleEl.textContent !== ft.css) {
+      styleEl.textContent = ft.css;
+    }
+    try {
+      document.documentElement.setAttribute('data-orderpulse-festival', ft.presetId || 'festive');
+    } catch (e) {}
+
+    // 1. Top Festive Announcement Bar
+    var existingBanner = document.getElementById('orderpulse-festival-banner');
+    if (ft.showAnnouncementBar && ft.bannerText && document.body) {
+      if (!existingBanner) {
+        existingBanner = document.createElement('div');
+        existingBanner.id = 'orderpulse-festival-banner';
+        existingBanner.style.cssText =
+          'position:relative;z-index:2147482500;width:100%;padding:9px 38px 9px 14px;text-align:center;font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:600;line-height:1.4;letter-spacing:0.01em;box-sizing:border-box;';
+        document.body.insertBefore(existingBanner, document.body.firstChild);
+      }
+      var safeBadge = String(ft.badgeText || '').replace(/</g, '&lt;');
+      var safeText = String(ft.bannerText || '').replace(/</g, '&lt;');
+      existingBanner.innerHTML =
+        (safeBadge
+          ? '<span style="display:inline-block;margin-right:8px;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,0.16);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">' +
+            safeBadge +
+            '</span>'
+          : '') +
+        '<span>' + safeText + '</span>';
+    } else if (existingBanner && existingBanner.parentNode) {
+      existingBanner.parentNode.removeChild(existingBanner);
+    }
+
+    // 2. Hanging 3D Festive Lights / Garland directly below the header
+    var existingGarland = document.getElementById('orderpulse-festival-garland');
+    if (ft.show3DArticles && ft.garlandHtml && document.body) {
+      if (!existingGarland) {
+        existingGarland = document.createElement('div');
+        existingGarland.id = 'orderpulse-festival-garland';
+        var headerGroup = document.querySelector('.shopify-section-group-header-group, header.header, .header-wrapper');
+        if (headerGroup && headerGroup.parentNode) {
+          headerGroup.parentNode.insertBefore(existingGarland, headerGroup.nextSibling);
+        } else {
+          document.body.insertBefore(existingGarland, document.body.firstChild);
+        }
+      }
+      existingGarland.innerHTML = ft.garlandHtml;
+    } else if (existingGarland && existingGarland.parentNode) {
+      existingGarland.parentNode.removeChild(existingGarland);
+    }
+
+    // 3. Auto-Product 3D Festive Hero Showcase Banner at the top of MainContent
+    var existingHero = document.getElementById('orderpulse-festival-hero');
+    if (ft.showHeroBanner && ft.heroBannerHtml && document.body) {
+      if (!existingHero) {
+        existingHero = document.createElement('div');
+        existingHero.id = 'orderpulse-festival-hero';
+        var mainEl = document.querySelector('main#MainContent, main, .content-for-layout');
+        if (mainEl) {
+          mainEl.insertBefore(existingHero, mainEl.firstChild);
+        } else {
+          document.body.insertBefore(existingHero, document.body.firstChild);
+        }
+      }
+      existingHero.innerHTML = ft.heroBannerHtml;
+    } else if (existingHero && existingHero.parentNode) {
+      existingHero.parentNode.removeChild(existingHero);
+    }
+
+    // 4. Rich Animated Snowflakes / Sparkles / Gulal / Hearts FX
+    var existingFx = document.getElementById('orderpulse-festival-fx');
+    if (ft.enableFestiveEffects && ft.particlesHtml && document.body) {
+      if (!existingFx) {
+        existingFx = document.createElement('div');
+        existingFx.id = 'orderpulse-festival-fx';
+        existingFx.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(existingFx);
+      }
+      existingFx.innerHTML = ft.particlesHtml;
+    } else if (existingFx && existingFx.parentNode) {
+      existingFx.parentNode.removeChild(existingFx);
+    }
+  }
+
+  function bootPreview() {
+    applyFestivalPreview(INITIAL_PAYLOAD);
+    // Keep internal storefront link clicks inside the live preview proxy
+    document.addEventListener('click', function (ev) {
+      var target = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+      if (!target) return;
+      var href = target.getAttribute('href') || '';
+      if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+      try {
+        var resolved = new URL(href, STORE_ORIGIN + '/');
+        var storeHost = new URL(STORE_ORIGIN).hostname.replace(/^www\\./, '');
+        var linkHost = resolved.hostname.replace(/^www\\./, '');
+        if (linkHost === storeHost) {
+          ev.preventDefault();
+          var nextPath = (resolved.pathname || '/') + (resolved.search || '');
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'ORDERPULSE_PREVIEW_NAVIGATE', path: nextPath }, '*');
+          } else {
+            var cur = new URL(window.location.href);
+            cur.searchParams.set('path', nextPath);
+            window.location.href = cur.toString();
+          }
+        }
+      } catch (e) {}
+    }, true);
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (!ev || !ev.data || ev.data.type !== 'ORDERPULSE_FESTIVAL_PREVIEW_UPDATE') return;
+    applyFestivalPreview(ev.data.payload || null);
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootPreview);
+  } else {
+    bootPreview();
+  }
+})();
+</script>`;
+
+  if (/<\/body>/i.test(html)) {
+    html = html.replace(/<\/body>/i, `${bridgeScript}\n</body>`);
+  } else {
+    html = `${html}\n${bridgeScript}`;
+  }
+
+  return html;
+}
+

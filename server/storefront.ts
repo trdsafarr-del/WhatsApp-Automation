@@ -1,8 +1,12 @@
 import type { Express, Request, Response } from 'express';
 import {
-  buildFestivalStorefrontCss,
+  type FestivalFeaturedProduct,
+  buildFestivalThemePayload,
+  isValidFestivalThemeId,
   normalizeFestivalThemeConfig,
-  resolveEffectiveFestivalPreset,
+  normalizeShopPreviewOrigin,
+  rewriteShopifyHtmlForFestivalPreview,
+  sanitizePreviewPath,
 } from '../src/lib/festivalThemes.js';
 import { buildBakeryStorefrontSchema } from '../src/lib/geoSeo.js';
 import {
@@ -45,6 +49,93 @@ const indiaPostCityCache = new Map<
   string,
   { pincode: string; city: string; state: string; expiresAtMs: number }
 >();
+const storefrontHtmlPreviewCache = new Map<
+  string,
+  { html: string; finalOrigin: string; expiresAtMs: number }
+>();
+const storefrontLiveProductsCache = new Map<
+  string,
+  { products: FestivalFeaturedProduct[]; expiresAtMs: number }
+>();
+
+async function fetchLiveStorefrontCatalogForBanner(
+  storeOrigin: string,
+  localProducts: ProductCatalogItem[]
+): Promise<FestivalFeaturedProduct[]> {
+  const merged = new Map<string, FestivalFeaturedProduct>();
+
+  for (const p of localProducts || []) {
+    if (p.status === 'active' && p.handle && p.imageUrl && /^https?:\/\//i.test(p.imageUrl)) {
+      merged.set(p.handle.toLowerCase(), {
+        id: p.id,
+        title: p.title,
+        handle: p.handle,
+        price: p.price,
+        currency: p.currency || 'INR',
+        imageUrl: p.imageUrl,
+        productType: p.productType,
+        tags: p.tags,
+      });
+    }
+  }
+
+  const cleanOrigin = normalizeShopPreviewOrigin(storeOrigin);
+  const now = Date.now();
+  let cached = storefrontLiveProductsCache.get(cleanOrigin);
+  if (!cached || cached.expiresAtMs <= now) {
+    try {
+      const res = await fetch(`${cleanOrigin}/products.json?limit=50`, {
+        redirect: 'follow',
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'OrderPulse-Storefront/1.0',
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as {
+          products?: Array<{
+            id?: number | string;
+            title?: string;
+            handle?: string;
+            product_type?: string;
+            tags?: string[] | string;
+            images?: Array<{ src?: string }>;
+            variants?: Array<{ price?: string }>;
+          }>;
+        };
+        const liveList: FestivalFeaturedProduct[] = [];
+        for (const raw of json.products || []) {
+          const img = raw.images?.[0]?.src || '';
+          const handle = String(raw.handle || '').trim();
+          const title = String(raw.title || '').trim();
+          if (!handle || !title || !img) continue;
+          liveList.push({
+            id: `shopify-${raw.id ?? handle}`,
+            title,
+            handle,
+            price: String(raw.variants?.[0]?.price || ''),
+            currency: 'INR',
+            imageUrl: img,
+            productType: String(raw.product_type || ''),
+            tags: Array.isArray(raw.tags) ? raw.tags.join(', ') : String(raw.tags || ''),
+          });
+        }
+        cached = { products: liveList, expiresAtMs: now + 5 * 60_000 };
+        storefrontLiveProductsCache.set(cleanOrigin, cached);
+      }
+    } catch {
+      // Non-fatal fallback to local synced catalog
+    }
+  }
+
+  for (const item of cached?.products || []) {
+    const key = item.handle.toLowerCase();
+    if (!merged.has(key)) merged.set(key, item);
+  }
+
+  return Array.from(merged.values());
+}
 
 async function lookupIndiaPostByPincode(
   pincode: string
@@ -775,18 +866,26 @@ function buildStorefrontWidgetScript(origin: string): string {
   var autoAttempted = false;
 
   function removeFestivalTheme() {
-    var styleEl = document.getElementById('orderpulse-festival-theme-css');
-    if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
-    var bannerEl = document.getElementById('orderpulse-festival-banner');
-    if (bannerEl && bannerEl.parentNode) bannerEl.parentNode.removeChild(bannerEl);
-    var fxEl = document.getElementById('orderpulse-festival-fx');
-    if (fxEl && fxEl.parentNode) fxEl.parentNode.removeChild(fxEl);
+    var ids = [
+      'orderpulse-festival-theme-css',
+      'orderpulse-festival-banner',
+      'orderpulse-festival-garland',
+      'orderpulse-festival-hero',
+      'orderpulse-festival-fx'
+    ];
+    for (var k = 0; k < ids.length; k++) {
+      var node = document.getElementById(ids[k]);
+      if (node && node.parentNode) node.parentNode.removeChild(node);
+    }
     try {
       document.documentElement.removeAttribute('data-orderpulse-festival');
     } catch (e) {}
   }
 
   function applyFestivalTheme(ft) {
+    if (document.querySelector('script[data-op-festival-preview-bridge="1"]')) {
+      return;
+    }
     if (!ft || !ft.enabled || !ft.css) {
       removeFestivalTheme();
       return;
@@ -848,43 +947,51 @@ function buildStorefrontWidgetScript(origin: string): string {
       existingBanner.parentNode.removeChild(existingBanner);
     }
 
+    var existingGarland = document.getElementById('orderpulse-festival-garland');
+    if (ft.show3DArticles && ft.garlandHtml && document.body) {
+      if (!existingGarland) {
+        existingGarland = document.createElement('div');
+        existingGarland.id = 'orderpulse-festival-garland';
+        var headerGroup = document.querySelector('.shopify-section-group-header-group, header.header, .header-wrapper');
+        if (headerGroup && headerGroup.parentNode) {
+          headerGroup.parentNode.insertBefore(existingGarland, headerGroup.nextSibling);
+        } else {
+          document.body.insertBefore(existingGarland, document.body.firstChild);
+        }
+      }
+      existingGarland.innerHTML = ft.garlandHtml;
+    } else if (existingGarland && existingGarland.parentNode) {
+      existingGarland.parentNode.removeChild(existingGarland);
+    }
+
+    // Show Auto-Product 3D Hero Showcase Banner on homepage & collections
+    var isHomeOrCollection = window.location.pathname === '/' || window.location.pathname.indexOf('/collections') === 0;
+    var existingHero = document.getElementById('orderpulse-festival-hero');
+    if (ft.showHeroBanner && ft.heroBannerHtml && isHomeOrCollection && document.body) {
+      if (!existingHero) {
+        existingHero = document.createElement('div');
+        existingHero.id = 'orderpulse-festival-hero';
+        var mainEl = document.querySelector('main#MainContent, main, .content-for-layout');
+        if (mainEl) {
+          mainEl.insertBefore(existingHero, mainEl.firstChild);
+        } else {
+          document.body.insertBefore(existingHero, document.body.firstChild);
+        }
+      }
+      existingHero.innerHTML = ft.heroBannerHtml;
+    } else if (existingHero && existingHero.parentNode) {
+      existingHero.parentNode.removeChild(existingHero);
+    }
+
     var existingFx = document.getElementById('orderpulse-festival-fx');
-    if (ft.enableFestiveEffects && document.body) {
+    if (ft.enableFestiveEffects && ft.particlesHtml && document.body) {
       if (!existingFx) {
         existingFx = document.createElement('div');
         existingFx.id = 'orderpulse-festival-fx';
         existingFx.setAttribute('aria-hidden', 'true');
-        var colors = [
-          (ft.palette && ft.palette.accent) || '#f59e0b',
-          (ft.palette && ft.palette.primary) || '#b91c1c',
-          '#ffffff',
-        ];
-        if (ft.effectStyle === 'snow') colors = ['#ffffff', '#e2e8f0', '#f8fafc'];
-        var html = '';
-        for (var i = 0; i < 14; i++) {
-          var left = Math.round(((i * 7.3) % 96) + 2);
-          var size = ft.effectStyle === 'snow' ? 6 + (i % 5) : 5 + (i % 4);
-          var dur = (7 + (i % 6) * 1.4).toFixed(1);
-          var delay = ((i % 7) * 0.9).toFixed(1);
-          var color = colors[i % colors.length];
-          html +=
-            '<span class="op-fest-particle" style="left:' +
-            left +
-            '%;width:' +
-            size +
-            'px;height:' +
-            size +
-            'px;background:' +
-            color +
-            ';animation-duration:' +
-            dur +
-            's;animation-delay:' +
-            delay +
-            's;"></span>';
-        }
-        existingFx.innerHTML = html;
         document.body.appendChild(existingFx);
       }
+      existingFx.innerHTML = ft.particlesHtml;
     } else if (existingFx && existingFx.parentNode) {
       existingFx.parentNode.removeChild(existingFx);
     }
@@ -1121,8 +1228,13 @@ export function registerStorefrontRoutes(app: Express) {
         : undefined;
 
     const festivalTheme = normalizeFestivalThemeConfig(storefrontConfig.festivalTheme);
-    const resolvedFestival = resolveEffectiveFestivalPreset(festivalTheme);
-    const festivalThemeCss = buildFestivalStorefrontCss(festivalTheme);
+    const liveCatalog = festivalTheme.enabled
+      ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, products)
+      : [];
+    const festivalThemePayload = buildFestivalThemePayload(festivalTheme, {
+      catalogProducts: liveCatalog,
+      shopName: settings.shopName,
+    });
 
     res.json({
       ok: true,
@@ -1130,20 +1242,143 @@ export function registerStorefrontRoutes(app: Express) {
       delhivery,
       storefrontConfig,
       bakeryGeoSchema,
-      festivalThemePayload: {
-        enabled: festivalTheme.enabled,
-        presetId: resolvedFestival.preset.id,
-        presetName: resolvedFestival.preset.name,
-        badgeText: resolvedFestival.preset.badgeText,
-        showAnnouncementBar: festivalTheme.showAnnouncementBar,
-        bannerText: resolvedFestival.effectiveBannerText,
-        enableFestiveEffects: festivalTheme.enableFestiveEffects,
-        effectStyle: resolvedFestival.preset.effectStyle,
-        palette: resolvedFestival.preset.palette,
-        css: festivalThemeCss,
-      },
+      festivalThemePayload,
       products: evaluated,
     });
+  });
+
+  // Live catalog products for Theme Studio auto-product 3D banner picker
+  app.get('/api/storefront/festival-products', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const settings = store.getSettings();
+    const liveCatalog = await fetchLiveStorefrontCatalogForBanner(
+      settings.shopifyStoreDomain,
+      store.getProducts()
+    );
+    res.json({ ok: true, products: liveCatalog });
+  });
+
+  // Live Real Shopify Website Preview Proxy (renders actual merchant storefront with live festival theme preview)
+  app.get('/api/storefront/preview', async (req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const settings = store.getSettings();
+    const storefrontConfig = store.getStorefrontConfig();
+    const savedTheme = normalizeFestivalThemeConfig(storefrontConfig.festivalTheme);
+
+    const storeOrigin = normalizeShopPreviewOrigin(settings.shopifyStoreDomain);
+    const pagePath = sanitizePreviewPath(String(req.query.path || '/'));
+    const forceRefresh = String(req.query.refresh || '') === '1';
+
+    const modeParam = String(req.query.mode || '').toLowerCase();
+    const mode: 'festive' | 'original' =
+      modeParam === 'original'
+        ? 'original'
+        : modeParam === 'festive'
+          ? 'festive'
+          : savedTheme.enabled
+            ? 'festive'
+            : 'original';
+
+    const festivalParam = String(req.query.festival || '').trim();
+    const intensityParam = String(req.query.intensity || '').trim();
+    const bannerParam = req.query.banner;
+    const fxParam = req.query.fx;
+    const heroParam = req.query.hero;
+    const art3dParam = req.query.art3d;
+    const picksParam =
+      typeof req.query.picks === 'string' && req.query.picks.trim()
+        ? req.query.picks
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+    const bannerTextParam =
+      typeof req.query.bannerText === 'string' ? req.query.bannerText.trim().slice(0, 180) : undefined;
+
+    const previewConfig = normalizeFestivalThemeConfig({
+      ...savedTheme,
+      enabled: mode === 'festive',
+      selectedFestivalId: isValidFestivalThemeId(festivalParam)
+        ? festivalParam
+        : savedTheme.selectedFestivalId,
+      intensity:
+        intensityParam === 'subtle' || intensityParam === 'full'
+          ? intensityParam
+          : savedTheme.intensity,
+      showAnnouncementBar:
+        bannerParam === '0' ? false : bannerParam === '1' ? true : savedTheme.showAnnouncementBar,
+      enableFestiveEffects:
+        fxParam === '0' ? false : fxParam === '1' ? true : savedTheme.enableFestiveEffects,
+      showHeroBanner:
+        heroParam === '0' ? false : heroParam === '1' ? true : savedTheme.showHeroBanner,
+      show3DArticles:
+        art3dParam === '0' ? false : art3dParam === '1' ? true : savedTheme.show3DArticles,
+      featuredProductHandles:
+        picksParam !== undefined ? picksParam : savedTheme.featuredProductHandles,
+      customBannerText: bannerTextParam !== undefined ? bannerTextParam : savedTheme.customBannerText,
+    });
+
+    const liveCatalog = await fetchLiveStorefrontCatalogForBanner(
+      storeOrigin,
+      store.getProducts()
+    );
+    const payload = buildFestivalThemePayload(previewConfig, {
+      catalogProducts: liveCatalog,
+      shopName: settings.shopName,
+    });
+    const targetUrl = `${storeOrigin}${pagePath}`;
+    const cacheKey = targetUrl;
+    const now = Date.now();
+    let cached = !forceRefresh ? storefrontHtmlPreviewCache.get(cacheKey) : undefined;
+
+    if (!cached || cached.expiresAtMs <= now) {
+      try {
+        const upstream = await fetch(targetUrl, {
+          redirect: 'follow',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-IN,en;q=0.9',
+          },
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (!upstream.ok) {
+          throw new Error(`Shopify storefront responded with HTTP ${upstream.status}`);
+        }
+        const rawHtml = await upstream.text();
+        let finalOrigin = storeOrigin;
+        try {
+          if (upstream.url) {
+            finalOrigin = new URL(upstream.url).origin;
+          }
+        } catch {
+          // Keep normalized store origin
+        }
+        cached = {
+          html: rawHtml,
+          finalOrigin,
+          expiresAtMs: now + 90_000,
+        };
+        storefrontHtmlPreviewCache.set(cacheKey, cached);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unable to load live Shopify website';
+        res.status(502).setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(`<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>Storefront Preview Error</title></head><body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif;padding:24px;text-align:center;"><div><h2 style="margin:0 0 8px;font-size:18px;">Unable to load live store preview</h2><p style="margin:0 0 14px;font-size:13px;color:#94a3b8;">${msg.replace(/</g, '&lt;')}</p><p style="margin:0;font-size:12px;color:#64748b;">Target store: ${storeOrigin.replace(/</g, '&lt;')}</p></div></body></html>`);
+        return;
+      }
+    }
+
+    const rewritten = rewriteShopifyHtmlForFestivalPreview(cached.html, cached.finalOrigin, {
+      mode,
+      payload,
+      currentPath: pagePath,
+    });
+
+    res.removeHeader('X-Frame-Options');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(rewritten);
   });
 
   // Public Storefront Bridge Script served directly to the customer's Shopify storefront

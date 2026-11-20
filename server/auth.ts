@@ -129,7 +129,8 @@ export function isPublicApiPath(pathname: string): boolean {
     clean === '/api/storefront/widget.js' ||
     clean === '/api/storefront/auto-pincode' ||
     clean === '/api/storefront/reverse-pincode' ||
-    clean === '/api/storefront/pincode-check'
+    clean === '/api/storefront/pincode-check' ||
+    clean === '/api/storefront/preview'
   ) {
     return true;
   }
