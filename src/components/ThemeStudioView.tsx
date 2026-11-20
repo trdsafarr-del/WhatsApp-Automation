@@ -46,6 +46,9 @@ export function ThemeStudioView({
   );
 
   const [draft, setDraft] = useState<FestivalThemeConfig>(savedFestival);
+  const [previewMode, setPreviewMode] = useState<'festive' | 'original'>(
+    savedFestival.enabled ? 'festive' : 'original'
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -103,6 +106,7 @@ export function ThemeStudioView({
       enabled: nextEnabled,
     };
     const nextResolved = resolveEffectiveFestivalPreset(nextConfig);
+    setPreviewMode(nextEnabled ? 'festive' : 'original');
     void persistFestivalTheme(
       nextConfig,
       nextEnabled
@@ -116,6 +120,7 @@ export function ThemeStudioView({
       ...draft,
       enabled: false,
     };
+    setPreviewMode('original');
     void persistFestivalTheme(
       nextConfig,
       'Original Shopify theme restored with zero leftover styles.'
@@ -128,11 +133,12 @@ export function ThemeStudioView({
       selectedFestivalId: festivalId,
     };
     const nextResolved = resolveEffectiveFestivalPreset(nextConfig);
+    setPreviewMode('festive');
     void persistFestivalTheme(
       nextConfig,
       nextConfig.enabled
         ? `Switched live Shopify theme to ${nextResolved.preset.name}.`
-        : `Selected ${nextResolved.preset.name}. Flip the switch ON to publish live.`
+        : `Previewing ${nextResolved.preset.name}. Flip the switch ON to publish live.`
     );
   };
 
@@ -141,6 +147,7 @@ export function ThemeStudioView({
       ...draft,
       intensity,
     };
+    setPreviewMode('festive');
     void persistFestivalTheme(
       nextConfig,
       intensity === 'full'
@@ -181,13 +188,16 @@ export function ThemeStudioView({
   };
 
   const handleResetDefaults = () => {
+    setPreviewMode('original');
     void persistFestivalTheme(
       { ...DEFAULT_FESTIVAL_THEME_CONFIG },
       'Theme settings reset and original Shopify theme restored.'
     );
   };
 
-  const previewPalette = draft.enabled
+  const showFestivePreview = draft.enabled ? previewMode !== 'original' : previewMode === 'festive';
+
+  const previewPalette = showFestivePreview
     ? resolved.preset.palette
     : {
         pageBg: '#FFFFFF',
@@ -341,10 +351,10 @@ export function ThemeStudioView({
         )}
       </div>
 
-      {/* Main 12-Col Studio: Left Presets & Controls, Right Live Storefront Preview */}
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+      {/* Main 12-Col Studio: Preview first on narrow/split-screen viewports, side-by-side at lg+ */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12 lg:items-start">
         {/* Left: Festival Selector & Customization */}
-        <div className="space-y-5 xl:col-span-7">
+        <div className="order-2 space-y-5 lg:order-1 lg:col-span-7">
           {/* Auto-Detect + Festival Preset Grid */}
           <div className="rounded-xl border border-slate-800/90 bg-slate-900/75 p-4 backdrop-blur-md sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3.5">
@@ -617,30 +627,64 @@ export function ThemeStudioView({
           </div>
         </div>
 
-        {/* Right: Live Interactive Shopify Storefront Preview */}
-        <div className="space-y-4 xl:col-span-5">
+        {/* Right (top on mobile/split-screen): Live Interactive Shopify Storefront Preview */}
+        <div className="order-1 space-y-4 lg:sticky lg:top-20 lg:order-2 lg:col-span-5">
           <div className="rounded-xl border border-slate-800/90 bg-slate-900/80 p-4 backdrop-blur-md sm:p-5">
-            <div className="flex items-center justify-between gap-2 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
               <div>
                 <h3 className="font-display text-sm font-semibold text-white">
                   Live Shopify Storefront Preview
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  {draft.enabled
-                    ? `Previewing ${resolved.preset.name} (${draft.intensity === 'full' ? 'Full Colors' : 'Accents Only'})`
+                  {showFestivePreview
+                    ? draft.enabled
+                      ? `Live on Store: ${resolved.preset.name} (${draft.intensity === 'full' ? 'Full Colors' : 'Accents Only'})`
+                      : `Previewing ${resolved.preset.name} — Flip ON to publish live`
                     : 'Previewing Original Unmodified Shopify Theme'}
                 </p>
               </div>
-              <span
-                data-testid="festival-preview-mode"
-                className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-semibold ${
-                  draft.enabled
-                    ? 'bg-emerald-500/15 text-emerald-300'
-                    : 'bg-slate-800 text-slate-300'
-                }`}
-              >
-                {draft.enabled ? resolved.preset.id.toUpperCase() : 'ORIGINAL'}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <div
+                  role="group"
+                  aria-label="Storefront Preview Mode"
+                  className="inline-flex rounded-lg border border-slate-800 bg-slate-950/90 p-0.5 text-[10px] font-semibold"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('festive')}
+                    className={`rounded-md px-2 py-1 transition-colors ${
+                      showFestivePreview
+                        ? 'bg-emerald-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Festive
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('original')}
+                    className={`rounded-md px-2 py-1 transition-colors ${
+                      !showFestivePreview
+                        ? 'bg-slate-700 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Original
+                  </button>
+                </div>
+                <span
+                  data-testid="festival-preview-mode"
+                  className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-semibold ${
+                    showFestivePreview
+                      ? draft.enabled
+                        ? 'bg-emerald-500/15 text-emerald-300'
+                        : 'bg-amber-500/15 text-amber-300'
+                      : 'bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  {showFestivePreview ? resolved.preset.id.toUpperCase() : 'ORIGINAL'}
+                </span>
+              </div>
             </div>
 
             {/* Browser Chrome Mockup */}
@@ -649,29 +693,36 @@ export function ThemeStudioView({
               className="overflow-hidden rounded-xl border border-slate-700/80 shadow-xl transition-colors duration-300"
               style={{
                 backgroundColor:
-                  draft.enabled && draft.intensity === 'subtle'
+                  showFestivePreview && draft.intensity === 'subtle'
                     ? '#FFFFFF'
                     : previewPalette.pageBg,
                 color:
-                  draft.enabled && draft.intensity === 'subtle'
+                  showFestivePreview && draft.intensity === 'subtle'
                     ? '#111827'
                     : previewPalette.textColor,
               }}
             >
               {/* Browser URL Bar */}
-              <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-950 px-3 py-2 text-[10px] text-slate-400">
-                <div className="flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-rose-400/80" />
-                  <span className="h-2 w-2 rounded-full bg-amber-400/80" />
-                  <span className="h-2 w-2 rounded-full bg-emerald-400/80" />
+              <div className="flex items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-3 py-2 text-[10px] text-slate-400">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="h-2 w-2 rounded-full bg-rose-400/80" />
+                    <span className="h-2 w-2 rounded-full bg-amber-400/80" />
+                    <span className="h-2 w-2 rounded-full bg-emerald-400/80" />
+                  </div>
+                  <span className="truncate font-mono text-[10px] text-slate-300">
+                    https://{shopDomain}
+                  </span>
                 </div>
-                <span className="truncate font-mono text-[10px] text-slate-300">
-                  https://{shopDomain}
-                </span>
+                {showFestivePreview && !draft.enabled && (
+                  <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-amber-300">
+                    PREVIEW ONLY
+                  </span>
+                )}
               </div>
 
               {/* Optional Festive Announcement Bar */}
-              {draft.enabled && draft.showAnnouncementBar && (
+              {showFestivePreview && draft.showAnnouncementBar && (
                 <div
                   className="px-3 py-1.5 text-center text-[10px] font-semibold leading-snug"
                   style={{
@@ -692,7 +743,7 @@ export function ThemeStudioView({
                 style={{
                   backgroundColor: previewPalette.headerBg,
                   color: previewPalette.headerText,
-                  borderBottom: `2px solid ${draft.enabled ? previewPalette.accent : '#E5E7EB'}`,
+                  borderBottom: `2px solid ${showFestivePreview ? previewPalette.accent : '#E5E7EB'}`,
                 }}
               >
                 <span className="text-xs font-bold tracking-tight">{shopDisplayName}</span>
@@ -711,11 +762,11 @@ export function ThemeStudioView({
                   className="rounded-lg p-3.5 transition-colors duration-300"
                   style={{
                     backgroundColor:
-                      draft.enabled && draft.intensity === 'full'
+                      showFestivePreview && draft.intensity === 'full'
                         ? previewPalette.surfaceAltBg
                         : '#F8FAFC',
                     border: `1px solid ${
-                      draft.enabled && draft.intensity === 'full'
+                      showFestivePreview && draft.intensity === 'full'
                         ? previewPalette.borderColor
                         : '#E5E7EB'
                     }`,
@@ -724,14 +775,14 @@ export function ThemeStudioView({
                   <span
                     className="inline-block rounded px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
                     style={{
-                      backgroundColor: draft.enabled ? previewPalette.accent : '#E5E7EB',
-                      color: draft.enabled ? previewPalette.bannerText : '#111827',
+                      backgroundColor: showFestivePreview ? previewPalette.accent : '#E5E7EB',
+                      color: showFestivePreview ? previewPalette.bannerText : '#111827',
                     }}
                   >
-                    {draft.enabled ? resolved.preset.badgeText : 'Freshly Baked'}
+                    {showFestivePreview ? resolved.preset.badgeText : 'Freshly Baked'}
                   </span>
                   <p className="mt-1.5 text-sm font-bold leading-snug">
-                    {draft.enabled
+                    {showFestivePreview
                       ? `${resolved.preset.shortName} Artisanal Gift Collection`
                       : 'Signature Artisanal Cookie Tins & Cakes'}
                   </p>
@@ -739,7 +790,7 @@ export function ThemeStudioView({
                     className="mt-0.5 text-[11px]"
                     style={{
                       color:
-                        draft.enabled && draft.intensity === 'full'
+                        showFestivePreview && draft.intensity === 'full'
                           ? previewPalette.mutedTextColor
                           : '#6B7280',
                     }}
@@ -768,11 +819,11 @@ export function ThemeStudioView({
                       className="rounded-lg p-2.5 transition-colors duration-300"
                       style={{
                         backgroundColor:
-                          draft.enabled && draft.intensity === 'full'
+                          showFestivePreview && draft.intensity === 'full'
                             ? previewPalette.surfaceBg
                             : '#FFFFFF',
                         border: `1px solid ${
-                          draft.enabled && draft.intensity === 'full'
+                          showFestivePreview && draft.intensity === 'full'
                             ? previewPalette.borderColor
                             : '#E5E7EB'
                         }`,
@@ -782,11 +833,11 @@ export function ThemeStudioView({
                         className="flex h-14 items-center justify-center rounded-md text-[10px] font-semibold"
                         style={{
                           backgroundColor:
-                            draft.enabled && draft.intensity === 'full'
+                            showFestivePreview && draft.intensity === 'full'
                               ? previewPalette.accentSoft
                               : '#F3F4F6',
                           color:
-                            draft.enabled && draft.intensity === 'full'
+                            showFestivePreview && draft.intensity === 'full'
                               ? previewPalette.primary
                               : '#4B5563',
                         }}
@@ -816,22 +867,22 @@ export function ThemeStudioView({
                 className="flex items-center justify-between px-4 py-2 text-[10px] transition-colors duration-300"
                 style={{
                   backgroundColor:
-                    draft.enabled && draft.intensity === 'full'
+                    showFestivePreview && draft.intensity === 'full'
                       ? previewPalette.footerBg
                       : '#F9FAFB',
                   color:
-                    draft.enabled && draft.intensity === 'full'
+                    showFestivePreview && draft.intensity === 'full'
                       ? previewPalette.footerText
                       : '#4B5563',
                   borderTop: `2px solid ${
-                    draft.enabled && draft.intensity === 'full'
+                    showFestivePreview && draft.intensity === 'full'
                       ? previewPalette.accent
                       : '#E5E7EB'
                   }`,
                 }}
               >
                 <span>© {shopDisplayName}</span>
-                <span>{draft.enabled && draft.enableFestiveEffects ? 'FX Active' : 'Fast COD'}</span>
+                <span>{showFestivePreview && draft.enableFestiveEffects ? 'FX Active' : 'Fast COD'}</span>
               </div>
             </div>
 

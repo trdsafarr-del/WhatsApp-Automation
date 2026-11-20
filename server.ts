@@ -771,7 +771,7 @@ async function startServer() {
   // Frontend Vite middleware (dev) or static dist (production)
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, allowedHosts: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
