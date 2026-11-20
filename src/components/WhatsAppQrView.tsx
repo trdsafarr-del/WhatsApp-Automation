@@ -428,19 +428,19 @@ export function WhatsAppQrView({
           <div className="mt-5 space-y-5 text-sm text-slate-300">
             <div>
               <h4 className="font-medium text-white">
-                1. One-Time QR / Pairing Login (No Repeated Scanning)
+                1. Atomic Session Backup &amp; Crash Recovery
               </h4>
               <p className="mt-1 leading-relaxed text-slate-400">
-                Multi-device encryption keys are saved continuously to <span className="font-mono text-xs text-slate-200">data/wa-auth</span> (and backed up to Upstash Redis when configured). Whenever the server restarts, it automatically restores your WhatsApp link without logging out.
+                Multi-device encryption keys are saved to <span className="font-mono text-xs text-slate-200">data/wa-auth</span> with an atomic mirror backup so mid-write restarts never corrupt <span className="font-mono text-xs text-slate-200">creds.json</span>.
               </p>
             </div>
 
             <div>
               <h4 className="font-medium text-white">
-                2. Seamless 515 Handshake &amp; Auto-Reconnect
+                2. Anti-Logout Protection (500 / 515 / 440 Safe)
               </h4>
               <p className="mt-1 leading-relaxed text-slate-400">
-                Post-scan stream restarts (code 515), transient drops, or idle timeouts flush <span className="font-mono text-xs text-slate-200">creds.json</span> before reconnecting automatically. Auth keys are cleared only if you tap Logout on your phone or dashboard.
+                Transient WhatsApp drops (codes 500, 408, 428, 503), post-scan 515 handshakes, and 20s keep-alive pings auto-reconnect without wiping credentials. Auth is cleared only on a genuine phone-side unlink (401) or manual Logout.
               </p>
             </div>
 
@@ -455,10 +455,14 @@ export function WhatsAppQrView({
 
             <div className="border-t border-slate-800 pt-4">
               <p className="text-xs font-semibold text-slate-200">
-                24/7 Hosting Note
+                {whatsapp.cloudAuthBackupEnabled
+                  ? 'Cloud Session Backup: Active'
+                  : '24/7 Hosting Note (Prevent Idle Container Restarts)'}
               </p>
               <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                For 24/7 QR uptime without logging out, run this app on a persistent Node host (Render / Railway / Fly.io / VPS) where <span className="font-mono text-slate-200">data/wa-auth</span> stays saved on disk. See the <span className="font-medium text-slate-200">Install &amp; Deploy</span> tab for exact steps.
+                {whatsapp.cloudAuthBackupEnabled
+                  ? 'Encrypted server-side cloud auth backup is enabled — WhatsApp credentials sync automatically within seconds so container restarts stay logged in.'
+                  : <>Preview/ephemeral containers sleep after inactivity and reset local disk. For zero-logout 24/7 uptime, set <span className="font-mono text-slate-200">FIREBASE_RTDB_URL</span> + <span className="font-mono text-slate-200">FIREBASE_RTDB_SECRET</span> (or mount a persistent <span className="font-mono text-slate-200">DATA_DIR</span> volume on Railway/VPS) and keep only one server instance connected at a time.</>}
               </p>
             </div>
           </div>

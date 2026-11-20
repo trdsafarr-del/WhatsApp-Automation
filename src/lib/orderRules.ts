@@ -1957,7 +1957,9 @@ export interface ProfitLossReportSummary {
   totalCogs: number;
   totalPackagingCost: number;
   totalForwardShipping: number;
+  totalRtoForwardShipping: number;
   totalRtoShippingCost: number;
+  totalRtoPackagingCost: number;
   totalRtoLoss: number;
   totalPaymentFees: number;
   totalMarketingCost: number;
@@ -2148,12 +2150,16 @@ export function calculateOrderPnl(
   const cogsPct = Math.max(0, Math.min(100, Number(costSettings.cogsPercent) || 0));
   const packCost = Math.max(0, Number(costSettings.packagingCostPerOrder) || 0);
   const fwdShipping =
-    typeof order.delhiveryShippingCost === 'number' && Number.isFinite(order.delhiveryShippingCost)
-      ? Math.max(0, order.delhiveryShippingCost)
+    typeof order.delhiveryShippingCost === 'number' &&
+    Number.isFinite(order.delhiveryShippingCost) &&
+    order.delhiveryShippingCost > 0
+      ? order.delhiveryShippingCost
       : Math.max(0, Number(costSettings.fallbackForwardShippingCost) || 0);
   const rtoReturnLeg =
-    typeof order.delhiveryRtoCost === 'number' && Number.isFinite(order.delhiveryRtoCost)
-      ? Math.max(0, order.delhiveryRtoCost)
+    typeof order.delhiveryRtoCost === 'number' &&
+    Number.isFinite(order.delhiveryRtoCost) &&
+    order.delhiveryRtoCost > 0
+      ? order.delhiveryRtoCost
       : Math.max(0, Number(costSettings.fallbackRtoShippingCost) || 0);
   const codFee = isCod
     ? typeof order.delhiveryCodFee === 'number' && Number.isFinite(order.delhiveryCodFee)
@@ -2354,7 +2360,9 @@ export function buildProfitLossReport(
   let totalCogs = 0;
   let totalPackagingCost = 0;
   let totalForwardShipping = 0;
+  let totalRtoForwardShipping = 0;
   let totalRtoShippingCost = 0;
+  let totalRtoPackagingCost = 0;
   let totalRtoLoss = 0;
   let totalPaymentFees = 0;
   let totalMarketingCost = 0;
@@ -2416,7 +2424,9 @@ export function buildProfitLossReport(
       rtoCount += 1;
       totalPackagingCost += row.packagingCost;
       totalForwardShipping += row.forwardShippingCost;
+      totalRtoForwardShipping += row.forwardShippingCost;
       totalRtoShippingCost += row.rtoShippingCost;
+      totalRtoPackagingCost += row.packagingCost;
       totalMarketingCost += row.marketingCost;
       totalRtoLoss += row.totalCost;
 
@@ -2561,7 +2571,9 @@ export function buildProfitLossReport(
     totalCogs: round2(totalCogs),
     totalPackagingCost: round2(totalPackagingCost),
     totalForwardShipping: round2(totalForwardShipping),
+    totalRtoForwardShipping: round2(totalRtoForwardShipping),
     totalRtoShippingCost: round2(totalRtoShippingCost),
+    totalRtoPackagingCost: round2(totalRtoPackagingCost),
     totalRtoLoss: round2(totalRtoLoss),
     totalPaymentFees: round2(totalPaymentFees),
     totalMarketingCost: round2(totalMarketingCost + totalDailyMetaAds + extraAds),
@@ -3282,3 +3294,64 @@ export function shouldAutoCancelOpenShopifyOrder(
 
   return tags.includes(cancelTag);
 }
+
+export type WhatsAppDisconnectAction =
+  | 'restart_immediate'
+  | 'pause_keep_auth'
+  | 'reconnect_bad_session'
+  | 'logout_clear_auth'
+  | 'qr_timeout_clear_unregistered'
+  | 'reconnect';
+
+/**
+ * Classifies a Baileys WhatsApp Web socket close event so transient glitches (such as
+ * 500 badSession, 515 restartRequired, 408/428/503 drops, or 440/conflict handoffs)
+ * NEVER accidentally wipe saved WhatsApp credentials and force repeated re-scans.
+ */
+export function classifyWhatsAppDisconnect(params: {
+  statusCode?: number;
+  errMessage?: string;
+  isAuthRegistered: boolean;
+  consecutiveBadSessions: number;
+}): WhatsAppDisconnectAction {
+  const code = params.statusCode;
+  const lowerMsg = (params.errMessage || '').trim().toLowerCase();
+
+  // 515: normal post-QR-scan stream restart
+  if (code === 515) {
+    return 'restart_immediate';
+  }
+
+  // 440 or conflict/replaced: another server instance briefly held the session — pause without wiping auth
+  if (
+    code === 440 ||
+    isWhatsAppConnectionReplaced(code) ||
+    lowerMsg.includes('conflict') ||
+    lowerMsg.includes('connection replaced') ||
+    lowerMsg.includes('replaced')
+  ) {
+    return 'pause_keep_auth';
+  }
+
+  // 500 (badSession): frequently transient in Baileys v6/v7 — retry up to 3 times before clearing auth
+  if (code === 500) {
+    return params.consecutiveBadSessions < 3 ? 'reconnect_bad_session' : 'logout_clear_auth';
+  }
+
+  // 401 (loggedOut) or 411 (multideviceMismatch): true phone-side unlink / invalid session
+  if (code === 401 || code === 411) {
+    return 'logout_clear_auth';
+  }
+
+  // Unregistered QR window timed out without being scanned
+  if (
+    !params.isAuthRegistered &&
+    (lowerMsg.includes('qr refs attempts ended') || code === 408)
+  ) {
+    return 'qr_timeout_clear_unregistered';
+  }
+
+  // All other close codes (408 registered, 428, 503, network resets) -> auto-reconnect keeping auth
+  return 'reconnect';
+}
+

@@ -936,10 +936,10 @@ export function ProfitLossPanel({
         )}
       </section>
 
-      {/* 5-Column Financial KPI Summary */}
+      {/* 6-Column Financial KPI Summary */}
       <section
         aria-label="Profit and Loss Key Metrics"
-        className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 xl:grid-cols-5"
+        className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3.5 xl:grid-cols-6"
       >
         <div
           className={`rounded-xl border p-3.5 backdrop-blur-md sm:p-4 ${
@@ -960,7 +960,7 @@ export function ProfitLossPanel({
           </div>
           <p
             data-testid="pnl-net-profit-value"
-            className={`mt-1.5 font-mono text-2xl font-semibold tabular-nums ${
+            className={`mt-1.5 font-mono text-xl font-semibold tabular-nums sm:text-2xl ${
               isProfitPositive ? 'text-emerald-400' : 'text-rose-400'
             }`}
           >
@@ -971,9 +971,35 @@ export function ProfitLossPanel({
           </p>
         </div>
 
+        <div
+          className={`rounded-xl border p-3.5 backdrop-blur-md sm:p-4 ${
+            pnl.projectedNetProfit >= 0
+              ? 'border-indigo-400/40 bg-indigo-500/10'
+              : 'border-rose-500/30 bg-rose-500/8'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <p className="text-[11px] font-medium text-indigo-200 sm:text-xs">
+              Expected Profit (No RTO)
+            </p>
+            <Truck className="h-4 w-4 text-indigo-300" aria-hidden="true" />
+          </div>
+          <p
+            data-testid="pnl-expected-profit-value"
+            className={`mt-1.5 font-mono text-xl font-semibold tabular-nums sm:text-2xl ${
+              pnl.projectedNetProfit >= 0 ? 'text-indigo-200' : 'text-rose-300'
+            }`}
+          >
+            {formatInr(pnl.projectedNetProfit, pnl.currency)}
+          </p>
+          <p className="mt-1 text-[11px] leading-snug text-indigo-200/80 tabular-nums">
+            +{formatInr(pnl.projectedTransitProfit, pnl.currency)} if {pnl.inTransitCount} transit deliver · auto-deducts RTO
+          </p>
+        </div>
+
         <div className="rounded-xl border border-slate-800/90 bg-slate-900/80 p-3.5 backdrop-blur-md sm:p-4">
           <p className="text-[11px] font-medium text-slate-400 sm:text-xs">Delivered Revenue</p>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-white">
+          <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-white sm:text-2xl">
             {formatInr(pnl.realizedRevenue, pnl.currency)}
           </p>
           <p className="mt-1 text-[11px] text-indigo-300 tabular-nums">
@@ -983,32 +1009,35 @@ export function ProfitLossPanel({
 
         <div className="rounded-xl border border-slate-800/90 bg-slate-900/80 p-3.5 backdrop-blur-md sm:p-4">
           <p className="text-[11px] font-medium text-slate-400 sm:text-xs">Total Costs Deducted</p>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-amber-300">
+          <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-amber-300 sm:text-2xl">
             {formatInr(pnl.totalRealizedCosts, pnl.currency)}
           </p>
           <p className="mt-1 text-[11px] text-slate-400 tabular-nums">
-            COGS {formatInr(pnl.totalCogs, pnl.currency)} · Ship {formatInr(pnl.totalForwardShipping, pnl.currency)}
+            COGS {formatInr(pnl.totalCogs, pnl.currency)} · 2-Way Ship {formatInr(pnl.totalForwardShipping + pnl.totalRtoShippingCost, pnl.currency)}
           </p>
         </div>
 
         <div className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-3.5 backdrop-blur-md sm:p-4">
           <p className="text-[11px] font-medium text-rose-200/90 sm:text-xs">RTO Direct Loss</p>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-rose-400">
+          <p
+            data-testid="pnl-rto-loss-value"
+            className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-rose-400 sm:text-2xl"
+          >
             {formatInr(-pnl.totalRtoLoss, pnl.currency)}
           </p>
-          <p className="mt-1 text-[11px] text-slate-400 tabular-nums">
-            {pnl.rtoCount} RTO orders (2-way freight + pack)
+          <p className="mt-1 text-[11px] leading-snug text-slate-400 tabular-nums">
+            {pnl.rtoCount} RTO · Fwd {formatInr(pnl.totalRtoForwardShipping, pnl.currency)} + Ret {formatInr(pnl.totalRtoShippingCost, pnl.currency)} + Pack {formatInr(pnl.totalRtoPackagingCost, pnl.currency)}
           </p>
         </div>
 
-        <div className="col-span-2 rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3.5 backdrop-blur-md sm:col-span-1 sm:p-4">
+        <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3.5 backdrop-blur-md sm:p-4">
           <div className="flex items-center justify-between gap-1">
             <p className="text-[11px] font-medium text-cyan-200/90 sm:text-xs">
               WhatsApp RTO Saved
             </p>
             <ShieldCheck className="h-4 w-4 text-cyan-400" aria-hidden="true" />
           </div>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums text-cyan-300">
+          <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-cyan-300 sm:text-2xl">
             {formatInr(pnl.whatsappRtoSavings, pnl.currency)}
           </p>
           <p className="mt-1 text-[11px] text-slate-400 tabular-nums">

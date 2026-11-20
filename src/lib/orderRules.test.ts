@@ -10,6 +10,7 @@ import {
   buildSettlementAndDelaySummary,
   calculateOrderPnl,
   calculateUnitEconomicsSimulation,
+  classifyWhatsAppDisconnect,
   computeBillableParcelWeightGrams,
   computeIncrementalRtoLegCost,
   computeMetaAdDateKeysInRange,
@@ -1931,4 +1932,142 @@ test('Tiered date-wise Daily Meta Ads spend calculates ₹500 -> ₹900 -> ₹15
   assert.equal(row16?.metaAdsCost, 900);
   assert.equal(row19?.metaAdsCost, 1500);
 });
+
+test('Expected Profit includes In-Transit delivery profit and automatically deducts both lost profit and 2-way RTO courier cost when an order turns RTO', () => {
+  const costs = {
+    cogsPercent: 35,
+    packagingCostPerOrder: 25,
+    fallbackForwardShippingCost: 75,
+    fallbackRtoShippingCost: 75,
+    fallbackCodFee: 25,
+    prepaidGatewayPercent: 2,
+    marketingCostPerOrder: 0,
+    dailyMetaAdsSpend: 0,
+    metaAdsRateHistory: [{ effectiveFrom: '2026-11-13', dailySpend: 0 }],
+  };
+
+  const makeOrder = (overrides: Partial<OrderRecord>): OrderRecord => ({
+    id: 'ord-1',
+    shopifyOrderId: '1',
+    orderNumber: '#2001',
+    customerName: 'Aarav',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '1000.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cookies Tin',
+    financialStatus: 'pending',
+    paymentMethod: 'COD',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'delivered',
+    shopifyTags: 'confirm, cod',
+    pollStatus: 'confirmed',
+    whatsappMessageId: null,
+    pollQuestion: '',
+    pollSentAt: null,
+    respondedAt: null,
+    responseChannel: 'whatsapp_poll',
+    shopifySynced: true,
+    createdAt: '2026-11-19T10:00:00+05:30',
+    events: [],
+    ...overrides,
+  });
+
+  // 1 delivered (profit = 1000 - 350 - 25 - 75 - 25 = 525) + 2 in_transit (each expected profit = 525)
+  const delv = makeOrder({ id: 'o1', orderNumber: '#2001', shipmentStatus: 'delivered' });
+  const tr1 = makeOrder({ id: 'o2', orderNumber: '#2002', shipmentStatus: 'in_transit', delhiveryRtoCost: 0 });
+  const tr2 = makeOrder({ id: 'o3', orderNumber: '#2003', shipmentStatus: 'in_transit' });
+
+  const beforeRto = buildProfitLossReport([delv, tr1, tr2], costs, 0);
+  assert.equal(beforeRto.netRealizedProfit, 525);
+  assert.equal(beforeRto.projectedTransitProfit, 1050);
+  assert.equal(beforeRto.projectedNetProfit, 1575);
+  assert.equal(beforeRto.rtoCount, 0);
+  assert.equal(beforeRto.totalRtoLoss, 0);
+
+  // Now tr1 turns RTO (even though delhiveryRtoCost was 0 from pre-RTO sync, fallback 2-way return leg ₹75 MUST apply!)
+  const tr1NowRto = makeOrder({
+    ...tr1,
+    orderNote: 'In Transit For Return',
+    delhiveryRtoCost: 0,
+  });
+
+  const afterRto = buildProfitLossReport([delv, tr1NowRto, tr2], costs, 0);
+  // 2-way RTO cost = Forward ₹75 + Return ₹75 + Pack ₹25 = ₹175
+  assert.equal(afterRto.rtoCount, 1);
+  assert.equal(afterRto.totalRtoForwardShipping, 75);
+  assert.equal(afterRto.totalRtoShippingCost, 75);
+  assert.equal(afterRto.totalRtoPackagingCost, 25);
+  assert.equal(afterRto.totalRtoLoss, 175);
+  // Realized profit drops by ₹175 (525 - 175 = 350)
+  assert.equal(afterRto.netRealizedProfit, 350);
+  // Expected transit profit drops from 1050 -> 525 (only tr2 remains in transit)
+  assert.equal(afterRto.projectedTransitProfit, 525);
+  // Expected Profit (No RTO) drops by BOTH lost transit profit (525) + 2-way RTO cost (175) = 700 (1575 -> 875)
+  assert.equal(afterRto.projectedNetProfit, 875);
+  assert.equal(beforeRto.projectedNetProfit - afterRto.projectedNetProfit, 525 + 175);
+});
+
+test('classifyWhatsAppDisconnect prevents spurious logouts on 500 badSession, 515 restart, 440 conflict, and transient drops', () => {
+  // 515 post-QR-scan restart -> immediate reconnect
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 515, isAuthRegistered: true, consecutiveBadSessions: 0 }),
+    'restart_immediate'
+  );
+
+  // 500 badSession -> retry up to 3 times WITHOUT wiping auth; only clear on 4th consecutive failure
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 500, isAuthRegistered: true, consecutiveBadSessions: 0 }),
+    'reconnect_bad_session'
+  );
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 500, isAuthRegistered: true, consecutiveBadSessions: 2 }),
+    'reconnect_bad_session'
+  );
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 500, isAuthRegistered: true, consecutiveBadSessions: 3 }),
+    'logout_clear_auth'
+  );
+
+  // 440 or conflict message -> pause without wiping credentials
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 440, isAuthRegistered: true, consecutiveBadSessions: 0 }),
+    'pause_keep_auth'
+  );
+  assert.equal(
+    classifyWhatsAppDisconnect({
+      statusCode: 401,
+      errMessage: 'Stream Errored (conflict)',
+      isAuthRegistered: true,
+      consecutiveBadSessions: 0,
+    }),
+    'pause_keep_auth'
+  );
+
+  // Genuine 401 phone-side logout -> clear auth
+  assert.equal(
+    classifyWhatsAppDisconnect({
+      statusCode: 401,
+      errMessage: 'Intentional Logout',
+      isAuthRegistered: true,
+      consecutiveBadSessions: 0,
+    }),
+    'logout_clear_auth'
+  );
+
+  // Transient network drops (408 registered, 428, 503) -> auto-reconnect keeping auth
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 408, isAuthRegistered: true, consecutiveBadSessions: 0 }),
+    'reconnect'
+  );
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 428, isAuthRegistered: true, consecutiveBadSessions: 0 }),
+    'reconnect'
+  );
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 503, isAuthRegistered: true, consecutiveBadSessions: 0 }),
+    'reconnect'
+  );
+});
+
 

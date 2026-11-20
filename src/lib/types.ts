@@ -134,6 +134,7 @@ export interface WhatsAppState {
   lastHeartbeatAt: string | null;
   reconnectCount: number;
   sessionPersisted: boolean;
+  cloudAuthBackupEnabled?: boolean;
   remoteSessionActive?: boolean;
   activeHostKind?: string | null;
   hostKind?: string | null;

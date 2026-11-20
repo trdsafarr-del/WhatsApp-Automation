@@ -380,6 +380,7 @@ class PersistentStore {
   private pendingPollFlushTimer: NodeJS.Timeout | null = null;
   private lastAuthBackupAtMs = 0;
   private lastAuthBackupDigest: string | null = null;
+  private lastCredsBackupDigest: string | null = null;
   private rtdbConfigSig: string | null = null;
   private rtdbOrderSigs = new Map<string, string>();
   private rtdbProductSigs = new Map<string, string>();
@@ -1055,17 +1056,27 @@ class PersistentStore {
    */
   async backupAuthFiles(authDir: string, options?: { force?: boolean }): Promise<void> {
     if (!this.isCloudSyncEnabled() || !fs.existsSync(authDir)) return;
-    if (
-      !shouldBackupWhatsAppAuth({
+    const isRtdb = getRtdbServerConfig() !== null;
+    const allowFullBundle =
+      isRtdb ||
+      shouldBackupWhatsAppAuth({
         lastBackupAtMs: this.lastAuthBackupAtMs,
         force: options?.force,
-      })
-    ) {
-      return;
-    }
+      });
     try {
       const credsPath = path.join(authDir, 'creds.json');
       const credsContent = fs.existsSync(credsPath) ? fs.readFileSync(credsPath, 'utf8') : '';
+      if (!credsContent) return;
+
+      const credsDigest = crypto.createHash('sha256').update(credsContent).digest('hex');
+
+      // On Upstash free tier, always keep tiny creds.json (~2 KB) fresh even between 15m full bundle windows
+      if (!allowFullBundle) {
+        if (credsDigest === this.lastCredsBackupDigest) return;
+        await upstashSet(REDIS_WA_CREDS_KEY, credsContent);
+        this.lastCredsBackupDigest = credsDigest;
+        return;
+      }
 
       const entries = fs.readdirSync(authDir);
       const fileEntries: Array<{ name: string; size: number }> = [];
@@ -1077,7 +1088,8 @@ class PersistentStore {
         }
       }
 
-      const pickedNames = selectPriorityAuthFiles(fileEntries, 650_000);
+      const maxBytes = isRtdb ? 2_500_000 : 650_000;
+      const pickedNames = selectPriorityAuthFiles(fileEntries, maxBytes);
       const bundle: Record<string, string> = {};
       for (const name of pickedNames) {
         bundle[name] = fs.readFileSync(path.join(authDir, name), 'utf8');
@@ -1097,7 +1109,7 @@ class PersistentStore {
         return;
       }
 
-      if (getRtdbServerConfig() !== null) {
+      if (isRtdb) {
         const authPatch: Record<string, unknown> = {};
         if (credsContent) authPatch['wa_creds'] = credsContent;
         if (bundleJson) authPatch['wa_auth'] = bundleJson;
@@ -1111,6 +1123,7 @@ class PersistentStore {
       }
       this.lastAuthBackupAtMs = Date.now();
       this.lastAuthBackupDigest = digest;
+      this.lastCredsBackupDigest = credsDigest;
     } catch {
       // Ignore transient backup error
     }
@@ -1151,6 +1164,7 @@ class PersistentStore {
   async clearRemoteAuth(): Promise<void> {
     this.lastAuthBackupAtMs = 0;
     this.lastAuthBackupDigest = null;
+    this.lastCredsBackupDigest = null;
     if (getRtdbServerConfig() !== null) {
       await Promise.all([
         rtdbRestDelete('orderpulse_server/wa_auth'),

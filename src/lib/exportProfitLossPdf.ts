@@ -117,10 +117,11 @@ export function exportProfitLossReportToPdf({
   );
 
   const cardsStartY = kpiTopY + 10;
-  const cardGap = 8;
-  const cardWidth = (pageWidth - 72 - cardGap * 4) / 5;
+  const cardGap = 7;
+  const cardWidth = (pageWidth - 72 - cardGap * 5) / 6;
   const cardHeight = 48;
   const isProfitPos = pnl.netRealizedProfit >= 0;
+  const isProjectedPos = pnl.projectedNetProfit >= 0;
 
   const cards = [
     {
@@ -130,6 +131,14 @@ export function exportProfitLossReportToPdf({
       bg: isProfitPos ? ([236, 253, 245] as const) : ([254, 242, 242] as const),
       border: isProfitPos ? ([110, 231, 183] as const) : ([252, 165, 165] as const),
       accent: isProfitPos ? ([4, 120, 87] as const) : ([185, 28, 28] as const),
+    },
+    {
+      label: 'EXPECTED PROFIT (NO RTO)',
+      value: formatInrPdf(pnl.projectedNetProfit, pnl.currency),
+      sub: `+${formatInrPdf(pnl.projectedTransitProfit, pnl.currency)} (${pnl.inTransitCount} transit)`,
+      bg: isProjectedPos ? ([238, 242, 255] as const) : ([254, 242, 242] as const),
+      border: isProjectedPos ? ([165, 180, 252] as const) : ([252, 165, 165] as const),
+      accent: isProjectedPos ? ([67, 56, 202] as const) : ([185, 28, 28] as const),
     },
     {
       label: 'DELIVERED REVENUE',
@@ -142,15 +151,15 @@ export function exportProfitLossReportToPdf({
     {
       label: 'TOTAL COSTS DEDUCTED',
       value: formatInrPdf(pnl.totalRealizedCosts, pnl.currency),
-      sub: `COGS ${formatInrPdf(pnl.totalCogs, pnl.currency)} · Ship ${formatInrPdf(pnl.totalForwardShipping, pnl.currency)}`,
+      sub: `COGS ${formatInrPdf(pnl.totalCogs, pnl.currency)} · 2W Ship ${formatInrPdf(pnl.totalForwardShipping + pnl.totalRtoShippingCost, pnl.currency)}`,
       bg: [255, 251, 235] as const,
       border: [252, 211, 77] as const,
       accent: [180, 83, 9] as const,
     },
     {
-      label: 'RTO DIRECT LOSS',
+      label: 'RTO DIRECT LOSS (2-WAY)',
       value: formatInrPdf(-pnl.totalRtoLoss, pnl.currency),
-      sub: `${pnl.rtoCount} RTO (2-way freight + pack)`,
+      sub: `${pnl.rtoCount} RTO: Fwd ${formatInrPdf(pnl.totalRtoForwardShipping, pnl.currency)} + Ret ${formatInrPdf(pnl.totalRtoShippingCost, pnl.currency)}`,
       bg: [254, 242, 242] as const,
       border: [252, 165, 165] as const,
       accent: [185, 28, 28] as const,

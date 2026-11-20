@@ -4,12 +4,12 @@ import path from 'node:path';
 import type { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import {
   DEFAULT_SETTINGS,
+  classifyWhatsAppDisconnect,
   detectHostRuntimeKind,
   formatJidToDisplayPhone,
   formatOrderTemplate,
   formatPollPayload,
   isTransientWhatsAppError,
-  isWhatsAppConnectionReplaced,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
   resolvePollVoteAction,
@@ -49,6 +49,7 @@ const AUTH_DIR = process.env.VERCEL
   : process.env.DATA_DIR
     ? path.resolve(process.env.DATA_DIR, 'wa-auth')
     : path.resolve(process.cwd(), 'data', 'wa-auth');
+const CREDS_BACKUP_PATH = path.join(path.dirname(AUTH_DIR), 'wa-auth-creds.backup.json');
 
 class WhatsAppManager {
   private sock: WASocket | null = null;
@@ -58,6 +59,7 @@ class WhatsAppManager {
   private pairingCode: string | null = null;
   private lastHeartbeatAt: string | null = null;
   private reconnectCount = 0;
+  private consecutiveBadSessions = 0;
   private lastError: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -65,6 +67,7 @@ class WhatsAppManager {
   private authBackupTimer: NodeJS.Timeout | null = null;
   private credsSaveQueue: Promise<void> = Promise.resolve();
   private isInitializing = false;
+  private initPromise: Promise<void> | null = null;
   private initialWaiters: Array<() => void> = [];
 
   private inFlightDispatches = new Set<string>();
@@ -79,14 +82,13 @@ class WhatsAppManager {
   }
 
   private hasSavedAuth(): boolean {
-    return fs.existsSync(path.join(AUTH_DIR, 'creds.json'));
+    return fs.existsSync(path.join(AUTH_DIR, 'creds.json')) || fs.existsSync(CREDS_BACKUP_PATH);
   }
 
-  private isAuthRegistered(): boolean {
-    const credsPath = path.join(AUTH_DIR, 'creds.json');
-    if (!fs.existsSync(credsPath)) return false;
+  private parseCredsRegistered(filePath: string): boolean {
+    if (!fs.existsSync(filePath)) return false;
     try {
-      const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8')) as {
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf8')) as {
         registered?: boolean;
         me?: { id?: string };
       };
@@ -95,6 +97,52 @@ class WhatsAppManager {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Atomically mirrors valid registered creds.json so a crash or restart mid-write
+   * can never corrupt creds.json and force a logout.
+   */
+  private writeAtomicCredsBackup() {
+    const credsPath = path.join(AUTH_DIR, 'creds.json');
+    if (!this.parseCredsRegistered(credsPath)) return;
+    try {
+      const content = fs.readFileSync(credsPath, 'utf8');
+      const dir = path.dirname(CREDS_BACKUP_PATH);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const tmp = `${CREDS_BACKUP_PATH}.tmp`;
+      fs.writeFileSync(tmp, content, 'utf8');
+      fs.renameSync(tmp, CREDS_BACKUP_PATH);
+    } catch {
+      // Non-fatal backup error
+    }
+  }
+
+  private recoverCredsFromBackupIfCorrupt(): boolean {
+    const credsPath = path.join(AUTH_DIR, 'creds.json');
+    if (this.parseCredsRegistered(credsPath)) return true;
+    if (!this.parseCredsRegistered(CREDS_BACKUP_PATH)) return false;
+    try {
+      if (!fs.existsSync(AUTH_DIR)) {
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      }
+      const content = fs.readFileSync(CREDS_BACKUP_PATH, 'utf8');
+      const tmp = `${credsPath}.tmp`;
+      fs.writeFileSync(tmp, content, 'utf8');
+      fs.renameSync(tmp, credsPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private isAuthRegistered(): boolean {
+    if (this.parseCredsRegistered(path.join(AUTH_DIR, 'creds.json'))) {
+      return true;
+    }
+    return this.recoverCredsFromBackupIfCorrupt();
   }
 
   private notifyWaiters() {
@@ -138,10 +186,12 @@ class WhatsAppManager {
       return;
     }
 
-    if (!this.hasSavedAuth() && store.isCloudSyncEnabled()) {
+    this.recoverCredsFromBackupIfCorrupt();
+    if (!this.isAuthRegistered() && store.isCloudSyncEnabled()) {
       await store.restoreAuthFiles(AUTH_DIR);
     }
     if (this.hasSavedAuth() && this.isAuthRegistered()) {
+      this.writeAtomicCredsBackup();
       if (store.isCloudSyncEnabled()) {
         void store.backupAuthFiles(AUTH_DIR, { force: true });
       }
@@ -158,13 +208,13 @@ class WhatsAppManager {
     if (this.authBackupTimer) clearTimeout(this.authBackupTimer);
     this.authBackupTimer = setTimeout(() => {
       void store.backupAuthFiles(AUTH_DIR, { force });
-    }, force ? 1500 : 10_000);
+    }, force ? 1500 : 8_000);
   }
 
   private startHeartbeat() {
     if (process.env.VERCEL) return;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = setInterval(async () => {
+    this.heartbeatTimer = setInterval(() => {
       if (this.status !== 'connected') return;
       const now = new Date().toISOString();
       this.lastHeartbeatAt = now;
@@ -172,14 +222,7 @@ class WhatsAppManager {
         lastHeartbeatAt: now,
         activeHostKind: detectHostRuntimeKind(),
       });
-      if (this.sock) {
-        try {
-          await this.sock.sendPresenceUpdate('available');
-        } catch {
-          // Connection listener handles reconnect if socket dropped
-        }
-      }
-    }, 120_000);
+    }, 90_000);
 
     if (this.queueFlushTimer) clearInterval(this.queueFlushTimer);
     this.queueFlushTimer = setInterval(() => {
@@ -225,6 +268,7 @@ class WhatsAppManager {
         this.lastHeartbeatAt || (localRegistered || remoteSessionActive ? meta.lastHeartbeatAt : null) || null,
       reconnectCount: this.reconnectCount,
       sessionPersisted: localRegistered || remoteSessionActive,
+      cloudAuthBackupEnabled: store.isCloudSyncEnabled(),
       remoteSessionActive,
       activeHostKind: meta.activeHostKind || null,
       hostKind,
@@ -234,7 +278,7 @@ class WhatsAppManager {
 
   async connect(
     requestedMode?: WhatsAppEngineMode,
-    options?: { fresh?: boolean; waitForQr?: boolean }
+    options?: { fresh?: boolean; waitForQr?: boolean; fromReconnect?: boolean }
   ): Promise<WhatsAppState> {
     const mode: WhatsAppEngineMode = requestedMode || 'baileys_qr';
     store.updateWhatsAppMeta({ mode });
@@ -247,10 +291,15 @@ class WhatsAppManager {
     }
 
     if (this.isInitializing) {
-      if (options?.waitForQr !== false) {
-        await this.waitForQrOrOpen();
+      if (options?.fromReconnect && this.initPromise) {
+        // Wait for current socket setup to finish, then run the reconnect cleanly (never drop 515!)
+        await this.initPromise.catch(() => {});
+      } else {
+        if (options?.waitForQr !== false) {
+          await this.waitForQrOrOpen();
+        }
+        return this.getState();
       }
-      return this.getState();
     }
 
     this.isInitializing = true;
@@ -259,7 +308,14 @@ class WhatsAppManager {
     this.qrRaw = null;
     if (options?.fresh) {
       this.pairingCode = null;
+      this.reconnectCount = 0;
+      this.consecutiveBadSessions = 0;
     }
+
+    let resolveInit!: () => void;
+    this.initPromise = new Promise<void>((resolve) => {
+      resolveInit = resolve;
+    });
 
     try {
       // Wait for any in-flight creds.json save (especially during 515 post-scan restart)
@@ -268,16 +324,17 @@ class WhatsAppManager {
 
       // Clean stale unregistered pairing files when user explicitly requests a fresh QR
       if (options?.fresh) {
-        this.reconnectCount = 0;
         this.clearAuthFiles();
         void store.clearRemoteAuth();
+      } else {
+        this.recoverCredsFromBackupIfCorrupt();
       }
 
       if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       }
       // Never pull stale cloud auth back in when the user explicitly asked for a fresh QR login
-      if (!options?.fresh && !this.hasSavedAuth() && store.isCloudSyncEnabled()) {
+      if (!options?.fresh && !this.isAuthRegistered() && store.isCloudSyncEnabled()) {
         await store.restoreAuthFiles(AUTH_DIR);
       }
 
@@ -353,7 +410,9 @@ class WhatsAppManager {
         syncFullHistory: false,
         browser: Browsers.macOS('Chrome'),
         connectTimeoutMs: 45_000,
-        keepAliveIntervalMs: 30_000,
+        defaultQueryTimeoutMs: 60_000,
+        keepAliveIntervalMs: 20_000,
+        retryRequestDelayMs: 500,
         getMessage: async (key) => {
           if (!key.id) return undefined;
           const cached = store.getPollMessage(key.id) as WAMessage | undefined;
@@ -368,6 +427,7 @@ class WhatsAppManager {
         this.credsSaveQueue = this.credsSaveQueue
           .then(() => saveCreds())
           .then(() => {
+            this.writeAtomicCredsBackup();
             this.scheduleAuthBackup();
           })
           .catch(() => {
@@ -396,6 +456,7 @@ class WhatsAppManager {
           const now = new Date().toISOString();
           this.status = 'connected';
           this.reconnectCount = 0;
+          this.consecutiveBadSessions = 0;
           this.qrDataUrl = null;
           this.qrRaw = null;
           this.pairingCode = null;
@@ -410,6 +471,7 @@ class WhatsAppManager {
             phoneNumber: userId ? formatJidToDisplayPhone(userId) : 'Linked Device',
             pushName: sock.user?.name || 'WhatsApp Business',
           });
+          this.writeAtomicCredsBackup();
           this.scheduleAuthBackup(true);
           this.startHeartbeat();
           this.notifyWaiters();
@@ -426,29 +488,25 @@ class WhatsAppManager {
               ? lastDisconnect.error.message
               : 'WhatsApp socket closed';
 
-          const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-          const isRestartRequired = statusCode === DisconnectReason.restartRequired;
-          const isQrTimeout =
-            !this.isAuthRegistered() &&
-            (errMessage.toLowerCase().includes('qr refs attempts ended') ||
-              statusCode === DisconnectReason.timedOut);
-          const isConnectionReplaced =
-            statusCode === DisconnectReason.connectionReplaced ||
-            isWhatsAppConnectionReplaced(statusCode);
-          const isBadSession =
-            statusCode === DisconnectReason.badSession ||
-            statusCode === DisconnectReason.multideviceMismatch;
+          const action = classifyWhatsAppDisconnect({
+            statusCode,
+            errMessage,
+            isAuthRegistered: this.isAuthRegistered(),
+            consecutiveBadSessions: this.consecutiveBadSessions,
+          });
 
-          if (isLoggedOut || isBadSession) {
+          if (action === 'logout_clear_auth') {
+            this.consecutiveBadSessions = 0;
             this.clearAuthFiles();
             void store.clearRemoteAuth();
             this.status = 'disconnected';
             this.qrDataUrl = null;
             this.qrRaw = null;
             this.pairingCode = null;
-            this.lastError = isLoggedOut
-              ? 'Device logged out from WhatsApp phone. Click Generate WhatsApp QR to link again.'
-              : 'Session expired or mismatched. Click Generate WhatsApp QR to link fresh.';
+            this.lastError =
+              statusCode === DisconnectReason.loggedOut
+                ? 'Device logged out from WhatsApp phone. Click Generate WhatsApp QR to link again.'
+                : 'Session expired or mismatched. Click Generate WhatsApp QR to link fresh.';
             store.updateWhatsAppMeta({
               connectedAt: null,
               lastHeartbeatAt: null,
@@ -456,44 +514,63 @@ class WhatsAppManager {
               pushName: null,
             });
             this.notifyWaiters();
-          } else if (isConnectionReplaced) {
-            // Another persistent host (e.g. Railway) took over this WhatsApp session; pause without wiping Redis auth
+          } else if (action === 'pause_keep_auth') {
+            // Another persistent host (e.g. Railway / preview tab) took over this WhatsApp session; pause without wiping auth
             this.status = 'disconnected';
             this.qrDataUrl = null;
             this.qrRaw = null;
             this.pairingCode = null;
             this.lastError =
-              'WhatsApp session is active on another server host (e.g. Railway). Keep only one 24/7 host socket active at a time, or click Restore Saved Session when ready.';
+              'WhatsApp session was replaced by another server instance. Keep only one 24/7 server active at a time, or click Restore Saved Session when ready.';
             this.notifyWaiters();
-          } else if (isRestartRequired) {
-            // Normal post-QR-scan handshake: flush creds.json and reconnect immediately without error flash
+          } else if (action === 'restart_immediate') {
+            // Normal post-QR-scan handshake (515): flush creds.json and reconnect immediately without error flash
             this.status = 'connecting';
             this.lastError = null;
             await this.credsSaveQueue;
+            this.writeAtomicCredsBackup();
             if (!process.env.VERCEL) {
               if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
               this.reconnectTimer = setTimeout(() => {
-                void this.connect('baileys_qr', { waitForQr: false });
+                void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
               }, 250);
             }
-          } else if (isQrTimeout) {
-            // Stop cleanly when QR wasn't scanned within 60s instead of spinning forever
+          } else if (action === 'reconnect_bad_session') {
+            // Transient 500 badSession: retry up to 3 times without wiping saved credentials
+            this.consecutiveBadSessions += 1;
+            this.reconnectCount += 1;
+            this.status = 'connecting';
+            this.lastError = null;
+            await this.credsSaveQueue;
+            this.writeAtomicCredsBackup();
+            if (!process.env.VERCEL) {
+              const delayMs = this.consecutiveBadSessions === 1 ? 3_000 : this.consecutiveBadSessions === 2 ? 7_000 : 15_000;
+              if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+              this.reconnectTimer = setTimeout(() => {
+                void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
+              }, delayMs);
+            }
+            this.notifyWaiters();
+          } else if (action === 'qr_timeout_clear_unregistered') {
+            // Stop cleanly when QR wasn't scanned within timeout instead of spinning forever
             this.clearAuthFiles();
             this.status = 'disconnected';
             this.qrDataUrl = null;
             this.qrRaw = null;
             this.pairingCode = null;
-            this.lastError = 'QR code expired after 60s without scanning. Click Generate WhatsApp QR to get a new one.';
+            this.lastError = 'QR code expired without scanning. Click Generate WhatsApp QR to get a new one.';
             this.notifyWaiters();
           } else if (!process.env.VERCEL) {
             // Auto-reconnect 24/7 for transient drops without logging out
             this.reconnectCount += 1;
             this.status = 'connecting';
             this.lastError = errMessage;
+            await this.credsSaveQueue;
+            this.writeAtomicCredsBackup();
             const delayMs = Math.min(30_000, 2_500 * Math.min(this.reconnectCount, 6));
             if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
             this.reconnectTimer = setTimeout(() => {
-              void this.connect('baileys_qr', { waitForQr: false });
+              void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
             }, delayMs);
             this.notifyWaiters();
           } else {
@@ -584,10 +661,18 @@ class WhatsAppManager {
         }
       });
 
+      // Release initialization lock BEFORE waiting for QR/open so a fast 515 post-scan restart is never blocked
+      this.isInitializing = false;
+      this.initPromise = null;
+      resolveInit();
+
       if (options?.waitForQr !== false) {
         await this.waitForQrOrOpen(8000);
       }
     } catch (err) {
+      this.isInitializing = false;
+      this.initPromise = null;
+      resolveInit();
       this.status = 'error';
       this.lastError =
         err instanceof Error
@@ -596,12 +681,10 @@ class WhatsAppManager {
       if (!process.env.VERCEL && this.isAuthRegistered()) {
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
-          void this.connect('baileys_qr', { waitForQr: false });
+          void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
         }, 10_000);
       }
       this.notifyWaiters();
-    } finally {
-      this.isInitializing = false;
     }
 
     return this.getState();
@@ -664,7 +747,9 @@ class WhatsAppManager {
       clearTimeout(this.authBackupTimer);
       this.authBackupTimer = null;
     }
-    if (this.isConnected() && this.isAuthRegistered()) {
+    await this.credsSaveQueue;
+    this.writeAtomicCredsBackup();
+    if (this.isAuthRegistered()) {
       await store.backupAuthFiles(AUTH_DIR, { force: true });
     }
     await this.closeSocketOnly();
@@ -672,23 +757,27 @@ class WhatsAppManager {
 
   private async closeSocketOnly() {
     this.stopHeartbeat();
-    if (this.sock) {
+    const prevSock = this.sock;
+    this.sock = null;
+    if (prevSock) {
       try {
-        this.sock.ev.removeAllListeners('connection.update');
-        this.sock.ev.removeAllListeners('creds.update');
-        this.sock.ev.removeAllListeners('messages.update');
-        this.sock.ev.removeAllListeners('messages.upsert');
-        this.sock.end(undefined);
+        prevSock.ev.removeAllListeners('connection.update');
+        prevSock.ev.removeAllListeners('creds.update');
+        prevSock.ev.removeAllListeners('messages.update');
+        prevSock.ev.removeAllListeners('messages.upsert');
+        prevSock.end(undefined);
       } catch {
         // Ignore close errors
       }
-      this.sock = null;
     }
   }
 
   private clearAuthFiles() {
     if (fs.existsSync(AUTH_DIR)) {
       fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    }
+    if (fs.existsSync(CREDS_BACKUP_PATH)) {
+      fs.rmSync(CREDS_BACKUP_PATH, { force: true });
     }
   }
 
