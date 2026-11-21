@@ -247,7 +247,15 @@ test('buildFestivalThemePayload renders 3D Christmas/Diwali articles, auto-produ
   assert.ok(xmasPayload.heroBannerHtml.includes('https://cdn.shopify.com/s/files/1/rose-hamper.jpg'));
   assert.ok(xmasPayload.garlandHtml.includes('op-garland-bulb'));
   assert.ok(xmasPayload.particlesHtml.includes('op-fest-snow'));
+  assert.ok(xmasPayload.background3DHtml.includes('op-bg3d-stage'));
+  assert.ok(xmasPayload.background3DHtml.includes('data-festival-bg="christmas"'));
+  assert.ok(xmasPayload.background3DHtml.includes('data-dark-canvas="1"'));
+  assert.ok(xmasPayload.background3DHtml.includes('op-xmas-forest'));
+  assert.ok(xmasPayload.background3DHtml.includes('op-xmas-corner-left'));
+  assert.ok(xmasPayload.background3DHtml.includes('op-xmas-sleigh'));
   assert.ok(xmasPayload.css.includes('#orderpulse-festival-hero'));
+  assert.ok(xmasPayload.css.includes('#orderpulse-festival-bg-3d'));
+  assert.ok(xmasPayload.css.includes('opXmasSleighGlide'));
 
   const diwaliPayload = buildFestivalThemePayload(
     {
@@ -256,11 +264,14 @@ test('buildFestivalThemePayload renders 3D Christmas/Diwali articles, auto-produ
       selectedFestivalId: 'diwali',
       showHeroBanner: true,
       show3DArticles: true,
+      show3DBackground: true,
     },
     { catalogProducts: sampleProducts }
   );
   assert.ok(diwaliPayload.heroBannerHtml.includes('op-3d-flame'));
   assert.ok(diwaliPayload.heroBannerHtml.includes('opDiyaBowl'));
+  assert.ok(diwaliPayload.background3DHtml.includes('data-festival-bg="diwali"'));
+  assert.ok(diwaliPayload.background3DHtml.includes('op-xmas-corner-left'));
 
   const offPayload = buildFestivalThemePayload(
     {
@@ -271,6 +282,7 @@ test('buildFestivalThemePayload renders 3D Christmas/Diwali articles, auto-produ
     { catalogProducts: sampleProducts }
   );
   assert.equal(offPayload.css, '');
+  assert.equal(offPayload.background3DHtml, '');
   assert.equal(offPayload.heroBannerHtml, '');
   assert.equal(offPayload.garlandHtml, '');
   assert.equal(offPayload.particlesHtml, '');

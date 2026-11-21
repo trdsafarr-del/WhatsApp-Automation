@@ -1,11 +1,17 @@
 import {
   type FestivalFeaturedProduct,
+  buildFestival3DBackgroundHtml,
   buildFestivalGarlandHtml,
   buildFestivalHeroBannerHtml,
   buildFestivalParticlesHtml,
   buildFestivalShowcaseCss,
   selectBestFestivalProducts,
 } from './festivalShowcase';
+import {
+  buildSantaRoamerCss,
+  buildSantaRoamerHtml,
+  buildSantaRoamerRuntimeJs,
+} from './santaRoamer';
 
 export type { FestivalFeaturedProduct };
 
@@ -34,6 +40,7 @@ export interface FestivalThemeConfig {
   enableFestiveEffects: boolean;
   showHeroBanner?: boolean;
   show3DArticles?: boolean;
+  show3DBackground?: boolean;
   featuredProductHandles?: string[];
   intensity: FestivalThemeIntensity;
   updatedAt?: string;
@@ -79,6 +86,7 @@ export const DEFAULT_FESTIVAL_THEME_CONFIG: FestivalThemeConfig = {
   enableFestiveEffects: true,
   showHeroBanner: true,
   show3DArticles: true,
+  show3DBackground: true,
   featuredProductHandles: [],
   intensity: 'full',
 };
@@ -456,6 +464,10 @@ export function normalizeFestivalThemeConfig(
       typeof src.show3DArticles === 'boolean'
         ? src.show3DArticles
         : DEFAULT_FESTIVAL_THEME_CONFIG.show3DArticles,
+    show3DBackground:
+      typeof src.show3DBackground === 'boolean'
+        ? src.show3DBackground
+        : DEFAULT_FESTIVAL_THEME_CONFIG.show3DBackground,
     featuredProductHandles,
     intensity: src.intensity === 'subtle' ? 'subtle' : 'full',
     updatedAt: typeof src.updatedAt === 'string' ? src.updatedAt : undefined,
@@ -596,12 +608,15 @@ export interface FestivalThemeRuntimePayload {
   enableFestiveEffects: boolean;
   showHeroBanner: boolean;
   show3DArticles: boolean;
+  show3DBackground: boolean;
   effectStyle: FestivalThemePreset['effectStyle'];
   palette: FestivalPalette;
   featuredProducts: FestivalFeaturedProduct[];
+  background3DHtml: string;
   heroBannerHtml: string;
   garlandHtml: string;
   particlesHtml: string;
+  roamerHtml: string;
   css: string;
 }
 
@@ -655,7 +670,10 @@ export function buildFestivalThemePayload(
   const showcaseCss = normalized.enabled
     ? buildFestivalShowcaseCss(resolved.preset, normalized)
     : '';
-  const combinedCss = [baseCss, showcaseCss].filter(Boolean).join('\n\n');
+  const roamerCss = normalized.enabled
+    ? buildSantaRoamerCss(resolved.preset.id, normalized)
+    : '';
+  const combinedCss = [baseCss, showcaseCss, roamerCss].filter(Boolean).join('\n\n');
 
   return {
     enabled: normalized.enabled,
@@ -667,9 +685,14 @@ export function buildFestivalThemePayload(
     enableFestiveEffects: normalized.enableFestiveEffects,
     showHeroBanner: normalized.showHeroBanner !== false,
     show3DArticles: normalized.show3DArticles !== false,
+    show3DBackground: normalized.show3DBackground !== false,
     effectStyle: resolved.preset.effectStyle,
     palette: resolved.preset.palette,
     featuredProducts,
+    background3DHtml:
+      normalized.enabled && normalized.show3DBackground !== false
+        ? buildFestival3DBackgroundHtml(resolved.preset)
+        : '',
     heroBannerHtml: normalized.enabled
       ? buildFestivalHeroBannerHtml({
           preset: resolved.preset,
@@ -686,6 +709,9 @@ export function buildFestivalThemePayload(
       normalized.enabled && normalized.enableFestiveEffects
         ? buildFestivalParticlesHtml(resolved.preset)
         : '',
+    roamerHtml: normalized.enabled
+      ? buildSantaRoamerHtml(resolved.preset.id, normalized)
+      : '',
     css: combinedCss,
   };
 }
@@ -706,6 +732,7 @@ export function buildFestivalPreviewUrl(
   params.set('fx', normalized.enableFestiveEffects ? '1' : '0');
   params.set('hero', normalized.showHeroBanner !== false ? '1' : '0');
   params.set('art3d', normalized.show3DArticles !== false ? '1' : '0');
+  params.set('bg3d', normalized.show3DBackground !== false ? '1' : '0');
   if ((normalized.featuredProductHandles || []).length > 0) {
     params.set('picks', (normalized.featuredProductHandles || []).slice(0, 3).join(','));
   }
@@ -976,7 +1003,16 @@ export function rewriteShopifyHtmlForFestivalPreview(
   const effectivePayload: FestivalThemeRuntimePayload =
     options.mode === 'festive'
       ? options.payload
-      : { ...options.payload, enabled: false, css: '' };
+      : {
+          ...options.payload,
+          enabled: false,
+          css: '',
+          background3DHtml: '',
+          heroBannerHtml: '',
+          garlandHtml: '',
+          particlesHtml: '',
+          roamerHtml: '',
+        };
 
   // Strip any meta CSP that could block embedded preview frames
   let html = String(rawHtml || '').replace(
@@ -1008,17 +1044,26 @@ export function rewriteShopifyHtmlForFestivalPreview(
   // Remove existing <base> tags to prevent conflicts with our storefront origin <base>
   html = html.replace(/<base\b[^>]*>/gi, '');
 
+  const baseTag = `<base href="${safeBaseHref}" />`;
   const initialStyleTag =
     effectivePayload.enabled && effectivePayload.css
       ? `<style id="orderpulse-festival-theme-css">${effectivePayload.css.replace(/<\/style>/gi, '<\\/style>')}</style>`
       : '';
 
-  const headInject = `<base href="${safeBaseHref}" />${initialStyleTag}`;
-
   if (/<head\b[^>]*>/i.test(html)) {
-    html = html.replace(/<head\b[^>]*>/i, (match) => `${match}\n${headInject}`);
+    html = html.replace(/<head\b[^>]*>/i, (match) => `${match}\n${baseTag}`);
   } else {
-    html = `<head>${headInject}</head>${html}`;
+    html = `<head>${baseTag}</head>${html}`;
+  }
+
+  // Place our festival <style> right before </head> so it ALWAYS wins the CSS cascade
+  // over Dawn's inline :root/--gradient-background style blocks!
+  if (initialStyleTag) {
+    if (/<\/head>/i.test(html)) {
+      html = html.replace(/<\/head>/i, `${initialStyleTag}\n</head>`);
+    } else {
+      html = `${initialStyleTag}\n${html}`;
+    }
   }
 
   const bridgeScript = `
@@ -1026,14 +1071,18 @@ export function rewriteShopifyHtmlForFestivalPreview(
 (function () {
   var INITIAL_PAYLOAD = ${safeJsonForScriptTag(effectivePayload)};
   var STORE_ORIGIN = ${safeJsonForScriptTag(cleanOrigin)};
+${buildSantaRoamerRuntimeJs()}
 
   function removeFestivalPreview() {
+    stopSantaRoamer();
     var ids = [
       'orderpulse-festival-theme-css',
+      'orderpulse-festival-bg-3d',
       'orderpulse-festival-banner',
       'orderpulse-festival-garland',
       'orderpulse-festival-hero',
-      'orderpulse-festival-fx'
+      'orderpulse-festival-fx',
+      'orderpulse-festival-roamer'
     ];
     for (var k = 0; k < ids.length; k++) {
       var el = document.getElementById(ids[k]);
@@ -1059,6 +1108,20 @@ export function rewriteShopifyHtmlForFestivalPreview(
     try {
       document.documentElement.setAttribute('data-orderpulse-festival', ft.presetId || 'festive');
     } catch (e) {}
+
+    // 0. Full-Website 3D Animated Festive Background Layer
+    var existingBg3d = document.getElementById('orderpulse-festival-bg-3d');
+    if (ft.show3DBackground && ft.background3DHtml && document.body) {
+      if (!existingBg3d) {
+        existingBg3d = document.createElement('div');
+        existingBg3d.id = 'orderpulse-festival-bg-3d';
+        existingBg3d.setAttribute('aria-hidden', 'true');
+        document.body.insertBefore(existingBg3d, document.body.firstChild);
+      }
+      existingBg3d.innerHTML = ft.background3DHtml;
+    } else if (existingBg3d && existingBg3d.parentNode) {
+      existingBg3d.parentNode.removeChild(existingBg3d);
+    }
 
     // 1. Top Festive Announcement Bar
     var existingBanner = document.getElementById('orderpulse-festival-banner');
@@ -1132,6 +1195,9 @@ export function rewriteShopifyHtmlForFestivalPreview(
     } else if (existingFx && existingFx.parentNode) {
       existingFx.parentNode.removeChild(existingFx);
     }
+
+    // 5. Roaming Interactive 3D Santa Claus Character
+    mountFestivalRoamer(ft);
   }
 
   function bootPreview() {

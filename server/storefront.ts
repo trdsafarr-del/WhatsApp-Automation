@@ -8,6 +8,7 @@ import {
   rewriteShopifyHtmlForFestivalPreview,
   sanitizePreviewPath,
 } from '../src/lib/festivalThemes.js';
+import { buildSantaRoamerRuntimeJs } from '../src/lib/santaRoamer.js';
 import { buildBakeryStorefrontSchema } from '../src/lib/geoSeo.js';
 import {
   buildProductJsonLd,
@@ -864,14 +865,18 @@ function buildStorefrontWidgetScript(origin: string): string {
   }
 
   var autoAttempted = false;
+${buildSantaRoamerRuntimeJs()}
 
   function removeFestivalTheme() {
+    stopSantaRoamer();
     var ids = [
       'orderpulse-festival-theme-css',
+      'orderpulse-festival-bg-3d',
       'orderpulse-festival-banner',
       'orderpulse-festival-garland',
       'orderpulse-festival-hero',
-      'orderpulse-festival-fx'
+      'orderpulse-festival-fx',
+      'orderpulse-festival-roamer'
     ];
     for (var k = 0; k < ids.length; k++) {
       var node = document.getElementById(ids[k]);
@@ -904,6 +909,19 @@ function buildStorefrontWidgetScript(origin: string): string {
     try {
       document.documentElement.setAttribute('data-orderpulse-festival', ft.presetId || 'festive');
     } catch (e) {}
+
+    var existingBg3d = document.getElementById('orderpulse-festival-bg-3d');
+    if (ft.show3DBackground && ft.background3DHtml && document.body) {
+      if (!existingBg3d) {
+        existingBg3d = document.createElement('div');
+        existingBg3d.id = 'orderpulse-festival-bg-3d';
+        existingBg3d.setAttribute('aria-hidden', 'true');
+        document.body.insertBefore(existingBg3d, document.body.firstChild);
+      }
+      existingBg3d.innerHTML = ft.background3DHtml;
+    } else if (existingBg3d && existingBg3d.parentNode) {
+      existingBg3d.parentNode.removeChild(existingBg3d);
+    }
 
     var bannerDismissKey = 'op_fest_banner_closed_' + (ft.presetId || 'festive');
     var bannerDismissed = false;
@@ -995,6 +1013,8 @@ function buildStorefrontWidgetScript(origin: string): string {
     } else if (existingFx && existingFx.parentNode) {
       existingFx.parentNode.removeChild(existingFx);
     }
+
+    mountFestivalRoamer(ft);
   }
 
   function runCheck(pincode, isInitialBoot) {
@@ -1285,6 +1305,7 @@ export function registerStorefrontRoutes(app: Express) {
     const fxParam = req.query.fx;
     const heroParam = req.query.hero;
     const art3dParam = req.query.art3d;
+    const bg3dParam = req.query.bg3d;
     const picksParam =
       typeof req.query.picks === 'string' && req.query.picks.trim()
         ? req.query.picks
@@ -1313,6 +1334,8 @@ export function registerStorefrontRoutes(app: Express) {
         heroParam === '0' ? false : heroParam === '1' ? true : savedTheme.showHeroBanner,
       show3DArticles:
         art3dParam === '0' ? false : art3dParam === '1' ? true : savedTheme.show3DArticles,
+      show3DBackground:
+        bg3dParam === '0' ? false : bg3dParam === '1' ? true : savedTheme.show3DBackground,
       featuredProductHandles:
         picksParam !== undefined ? picksParam : savedTheme.featuredProductHandles,
       customBannerText: bannerTextParam !== undefined ? bannerTextParam : savedTheme.customBannerText,

@@ -24,6 +24,626 @@ export interface FestivalHeroCopy {
   articleLabel: string;
 }
 
+export interface Festival3DBackgroundSpec {
+  label: string;
+  isDarkCanvas: boolean;
+  baseGradient: string;
+  auroraGradient: string;
+  orb1: string;
+  orb2: string;
+  orb3: string;
+  orb4: string;
+  prismColor: string;
+  gridColor: string;
+  glowShadow: string;
+  cardTintBg: string;
+  btnDepth: string;
+}
+
+export function getFestival3DBackgroundSpec(
+  presetId: FestivalPresetId
+): Festival3DBackgroundSpec {
+  switch (presetId) {
+    case 'christmas':
+      return {
+        label: '3D Snowy Christmas Pine Forest, Hanging Baubles, Santa Sleigh & Starry Winter Sky',
+        isDarkCanvas: true,
+        baseGradient:
+          'linear-gradient(180deg, #071928 0%, #0D2E3B 35%, #11433A 70%, #0D2F28 100%)',
+        auroraGradient:
+          'radial-gradient(ellipse 75% 45% at 22% 18%, rgba(220,38,38,0.22) 0%, transparent 65%), radial-gradient(ellipse 70% 45% at 78% 22%, rgba(250,204,21,0.18) 0%, transparent 65%), radial-gradient(ellipse 80% 50% at 50% 62%, rgba(16,185,129,0.20) 0%, transparent 70%)',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.55), rgba(245,158,11,0.22) 55%, rgba(245,158,11,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(254,202,202,0.48), rgba(220,38,38,0.20) 55%, rgba(136,19,55,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(187,247,208,0.45), rgba(16,185,129,0.18) 55%, rgba(6,78,59,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.50), rgba(186,230,253,0.16) 55%, rgba(14,116,144,0) 100%)',
+        prismColor: 'rgba(254, 240, 138, 0.28)',
+        gridColor: 'rgba(255, 255, 255, 0.08)',
+        glowShadow: 'rgba(4, 18, 28, 0.42)',
+        cardTintBg: 'rgba(255, 253, 250, 0.96)',
+        btnDepth: '#6E0D19',
+      };
+    case 'diwali':
+      return {
+        label: '3D Hanging Brass Kandil Lanterns, Lit Diyas, Golden Fireworks & Warm Velvet Aura',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(155deg, #FFF7E0 0%, #FDE6BF 48%, #FCD6C8 100%)',
+        auroraGradient:
+          'conic-gradient(from 90deg at 50% 45%, rgba(217,145,0,0.22), rgba(154,27,47,0.18), rgba(251,191,36,0.22), rgba(234,88,12,0.16), rgba(217,145,0,0.22))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.92), rgba(217,145,0,0.45) 55%, rgba(146,64,14,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(253,164,175,0.82), rgba(154,27,47,0.38) 55%, rgba(92,15,30,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(254,215,170,0.88), rgba(234,88,12,0.38) 55%, rgba(154,52,18,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(255,251,235,0.90), rgba(245,158,11,0.34) 55%, rgba(180,83,9,0) 100%)',
+        prismColor: 'rgba(217, 145, 0, 0.22)',
+        gridColor: 'rgba(154, 27, 47, 0.11)',
+        glowShadow: 'rgba(154, 27, 47, 0.24)',
+        cardTintBg: 'rgba(255, 252, 246, 0.94)',
+        btnDepth: '#5E0E1B',
+      };
+    case 'holi':
+      return {
+        label: '3D Gulal Color Cloud Bursts, Festive Bunting & Rainbow Splash Depth',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(145deg, #FFF0F8 0%, #FEF6D8 48%, #E6FAFE 100%)',
+        auroraGradient:
+          'conic-gradient(from 45deg at 50% 45%, rgba(236,72,153,0.22), rgba(245,158,11,0.20), rgba(6,182,212,0.20), rgba(139,92,246,0.20), rgba(236,72,153,0.22))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(249,168,212,0.92), rgba(236,72,153,0.48) 55%, rgba(157,23,77,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.92), rgba(245,158,11,0.46) 55%, rgba(180,83,9,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(165,243,252,0.92), rgba(6,182,212,0.44) 55%, rgba(21,94,117,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(221,214,254,0.92), rgba(139,92,246,0.42) 55%, rgba(91,33,182,0) 100%)',
+        prismColor: 'rgba(236, 72, 153, 0.20)',
+        gridColor: 'rgba(139, 92, 246, 0.12)',
+        glowShadow: 'rgba(194, 24, 91, 0.24)',
+        cardTintBg: 'rgba(255, 253, 255, 0.94)',
+        btnDepth: '#7E0E39',
+      };
+    case 'eid':
+      return {
+        label: '3D Starry Emerald Eid Sky, Crescent Moon & Swaying Golden Fanoos Lanterns',
+        isDarkCanvas: true,
+        baseGradient:
+          'linear-gradient(180deg, #06281C 0%, #0B4631 45%, #0F5E42 82%, #073323 100%)',
+        auroraGradient:
+          'radial-gradient(ellipse 75% 45% at 75% 18%, rgba(250,204,21,0.22) 0%, transparent 65%), radial-gradient(ellipse 75% 50% at 25% 65%, rgba(16,185,129,0.22) 0%, transparent 70%)',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.55), rgba(200,150,46,0.20) 55%, rgba(133,77,14,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(167,243,208,0.45), rgba(15,106,74,0.20) 55%, rgba(6,40,28,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(254,249,195,0.45), rgba(217,160,23,0.18) 55%, rgba(113,63,18,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(209,250,229,0.40), rgba(5,150,105,0.16) 55%, rgba(6,78,59,0) 100%)',
+        prismColor: 'rgba(250, 204, 21, 0.26)',
+        gridColor: 'rgba(250, 204, 21, 0.10)',
+        glowShadow: 'rgba(4, 24, 17, 0.42)',
+        cardTintBg: 'rgba(252, 255, 253, 0.96)',
+        btnDepth: '#063B28',
+      };
+    case 'valentine':
+      return {
+        label: '3D Velvet Rose Bokeh, Floating Ruby Hearts & Romantic Silk Depth',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(145deg, #FFF0F4 0%, #FFE4EC 50%, #FFF5F8 100%)',
+        auroraGradient:
+          'conic-gradient(from 60deg at 50% 45%, rgba(225,29,72,0.18), rgba(251,113,133,0.22), rgba(244,63,94,0.16), rgba(190,18,60,0.16), rgba(225,29,72,0.18))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,205,211,0.92), rgba(225,29,72,0.42) 55%, rgba(136,19,55,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(253,164,175,0.90), rgba(244,63,94,0.38) 55%, rgba(159,18,57,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(254,240,138,0.86), rgba(245,158,11,0.32) 55%, rgba(180,83,9,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(252,231,243,0.90), rgba(219,39,119,0.34) 55%, rgba(131,24,67,0) 100%)',
+        prismColor: 'rgba(225, 29, 72, 0.18)',
+        gridColor: 'rgba(190, 18, 60, 0.11)',
+        glowShadow: 'rgba(190, 18, 60, 0.24)',
+        cardTintBg: 'rgba(255, 251, 253, 0.94)',
+        btnDepth: '#7F0D2A',
+      };
+    case 'navratri':
+      return {
+        label: '3D Temple Marigold Lanterns, Glowing Diyas & Sindoor Crimson Radiance',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(145deg, #FFF5E8 0%, #FFE8CC 50%, #FDE3DC 100%)',
+        auroraGradient:
+          'conic-gradient(from 75deg at 50% 45%, rgba(234,88,12,0.22), rgba(200,30,30,0.18), rgba(245,158,11,0.20), rgba(127,29,29,0.16), rgba(234,88,12,0.22))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,215,170,0.92), rgba(234,88,12,0.44) 55%, rgba(154,52,18,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(254,202,202,0.90), rgba(200,30,30,0.40) 55%, rgba(127,29,29,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(254,240,138,0.92), rgba(245,158,11,0.40) 55%, rgba(180,83,9,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(255,237,213,0.90), rgba(249,115,22,0.34) 55%, rgba(194,65,12,0) 100%)',
+        prismColor: 'rgba(234, 88, 12, 0.20)',
+        gridColor: 'rgba(200, 30, 30, 0.11)',
+        glowShadow: 'rgba(185, 28, 28, 0.24)',
+        cardTintBg: 'rgba(255, 252, 247, 0.94)',
+        btnDepth: '#7F1212',
+      };
+    case 'new_year':
+      return {
+        label: '3D Midnight Celebration Sky, Golden Fireworks Bursts & Champagne Sparkle',
+        isDarkCanvas: true,
+        baseGradient:
+          'linear-gradient(180deg, #070B18 0%, #101A36 48%, #162246 82%, #0B1226 100%)',
+        auroraGradient:
+          'radial-gradient(ellipse 75% 45% at 25% 20%, rgba(250,204,21,0.22) 0%, transparent 65%), radial-gradient(ellipse 75% 45% at 75% 28%, rgba(99,102,241,0.22) 0%, transparent 65%)',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.55), rgba(202,138,4,0.22) 55%, rgba(113,63,18,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(199,210,254,0.45), rgba(79,70,229,0.20) 55%, rgba(30,27,75,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(254,249,195,0.45), rgba(234,179,8,0.18) 55%, rgba(133,77,14,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(226,232,240,0.40), rgba(148,163,184,0.16) 55%, rgba(15,23,42,0) 100%)',
+        prismColor: 'rgba(250, 204, 21, 0.26)',
+        gridColor: 'rgba(250, 204, 21, 0.10)',
+        glowShadow: 'rgba(2, 6, 23, 0.48)',
+        cardTintBg: 'rgba(255, 255, 255, 0.96)',
+        btnDepth: '#020617',
+      };
+    case 'independence_day':
+      return {
+        label: '3D Tricolor Saffron-White-Green Waves & Chakra Blue Aurora',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(155deg, #FFF1DF 0%, #FFFFFF 50%, #E4FAEC 100%)',
+        auroraGradient:
+          'conic-gradient(from 90deg at 50% 45%, rgba(255,111,0,0.20), rgba(19,136,8,0.18), rgba(11,37,89,0.16), rgba(255,153,51,0.18), rgba(255,111,0,0.20))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,215,170,0.92), rgba(255,111,0,0.44) 55%, rgba(154,52,18,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(187,247,208,0.92), rgba(19,136,8,0.42) 55%, rgba(20,83,45,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(191,219,254,0.90), rgba(11,37,89,0.34) 55%, rgba(7,25,61,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(255,237,213,0.90), rgba(249,115,22,0.34) 55%, rgba(194,65,12,0) 100%)',
+        prismColor: 'rgba(255, 111, 0, 0.18)',
+        gridColor: 'rgba(11, 37, 89, 0.11)',
+        glowShadow: 'rgba(19, 136, 8, 0.24)',
+        cardTintBg: 'rgba(255, 255, 255, 0.94)',
+        btnDepth: '#094E04',
+      };
+    case 'janmashtami':
+      return {
+        label: '3D Peacock Sapphire Nebula, Flute Gold Orbs & Lotus Depth',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(145deg, #EEF5FF 0%, #FBF8EC 50%, #E7F3FF 100%)',
+        auroraGradient:
+          'conic-gradient(from 110deg at 50% 45%, rgba(22,75,138,0.20), rgba(217,155,22,0.20), rgba(14,165,233,0.18), rgba(13,43,84,0.16), rgba(22,75,138,0.20))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(191,219,254,0.92), rgba(22,75,138,0.42) 55%, rgba(13,43,84,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.92), rgba(217,155,22,0.42) 55%, rgba(133,77,14,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(165,243,252,0.92), rgba(14,165,233,0.36) 55%, rgba(3,105,161,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(187,247,208,0.88), rgba(16,185,129,0.32) 55%, rgba(6,95,70,0) 100%)',
+        prismColor: 'rgba(22, 75, 138, 0.18)',
+        gridColor: 'rgba(22, 75, 138, 0.12)',
+        glowShadow: 'rgba(13, 43, 84, 0.24)',
+        cardTintBg: 'rgba(252, 254, 255, 0.94)',
+        btnDepth: '#09254A',
+      };
+    case 'mothers_day':
+      return {
+        label: '3D Orchid Blossom Aurora, Lilac Silk Orbs & Floral Corner Motifs',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(145deg, #FAF0FF 0%, #FFF2F8 50%, #F4E8FF 100%)',
+        auroraGradient:
+          'conic-gradient(from 135deg at 50% 45%, rgba(134,25,143,0.18), rgba(219,39,119,0.18), rgba(192,132,252,0.20), rgba(162,28,175,0.16), rgba(134,25,143,0.18))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(245,208,254,0.92), rgba(134,25,143,0.40) 55%, rgba(74,18,89,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(251,207,232,0.92), rgba(219,39,119,0.38) 55%, rgba(131,24,67,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(233,213,255,0.92), rgba(168,85,247,0.34) 55%, rgba(88,28,135,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(254,240,138,0.88), rgba(245,158,11,0.30) 55%, rgba(180,83,9,0) 100%)',
+        prismColor: 'rgba(134, 25, 143, 0.18)',
+        gridColor: 'rgba(134, 25, 143, 0.11)',
+        glowShadow: 'rgba(134, 25, 143, 0.24)',
+        cardTintBg: 'rgba(255, 252, 255, 0.94)',
+        btnDepth: '#520D57',
+      };
+    case 'raksha_bandhan':
+    default:
+      return {
+        label: '3D Roseberry & Silk Gold Festive Aura with Floral Corners',
+        isDarkCanvas: false,
+        baseGradient:
+          'linear-gradient(145deg, #FFF0F5 0%, #FDF4E3 50%, #FFE4EC 100%)',
+        auroraGradient:
+          'conic-gradient(from 80deg at 50% 45%, rgba(184,29,83,0.18), rgba(212,148,26,0.20), rgba(244,63,94,0.16), rgba(107,18,53,0.16), rgba(184,29,83,0.18))',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(253,164,175,0.92), rgba(184,29,83,0.42) 55%, rgba(107,18,53,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.92), rgba(212,148,26,0.42) 55%, rgba(146,64,14,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(251,207,232,0.92), rgba(219,39,119,0.36) 55%, rgba(131,24,67,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(254,243,199,0.92), rgba(245,158,11,0.34) 55%, rgba(180,83,9,0) 100%)',
+        prismColor: 'rgba(212, 148, 26, 0.20)',
+        gridColor: 'rgba(184, 29, 83, 0.11)',
+        glowShadow: 'rgba(184, 29, 83, 0.24)',
+        cardTintBg: 'rgba(255, 252, 254, 0.94)',
+        btnDepth: '#6E0D30',
+      };
+  }
+}
+
+/**
+ * Generates an unmistakable, richly illustrated 3D Christmas Winter Wonderland scenic backdrop:
+ * - Starry winter Christmas Eve night sky with twinkling golden stars
+ * - Glowing full winter moon & gliding Santa Claus sleigh + reindeer silhouette
+ * - Top-left & top-right snow-dusted evergreen pine boughs with holly berries & swaying 3D glossy baubles
+ * - Bottom panorama of layered snow-capped Christmas pine trees, twinkling warm lights,
+ *   decorated corner Christmas trees with star toppers, wrapped gifts & rolling glistening snow drifts
+ * - Ambient background crystal snowflakes & warm Christmas bokeh glints
+ */
+function buildChristmasScenicBgHtml(): string {
+  const starCoords = [
+    [5, 8, 3, '0s'],
+    [12, 15, 2.5, '0.6s'],
+    [19, 6, 3.5, '1.2s'],
+    [28, 12, 2.5, '1.8s'],
+    [35, 7, 3, '0.4s'],
+    [43, 16, 2.5, '1.5s'],
+    [52, 9, 3.5, '0.9s'],
+    [61, 14, 2.5, '2.1s'],
+    [69, 6, 3, '0.3s'],
+    [76, 11, 2.5, '1.7s'],
+    [88, 9, 3.5, '1.1s'],
+    [94, 17, 2.5, '0.5s'],
+    [8, 32, 2.5, '1.4s'],
+    [91, 34, 3, '0.8s'],
+    [4, 52, 2.5, '2.0s'],
+    [95, 50, 2.5, '1.0s'],
+  ] as const;
+
+  const starsHtml = starCoords
+    .map(
+      ([x, y, sz, delay]) =>
+        `<span class="op-xmas-star" style="left:${x}%;top:${y}%;width:${sz * 3}px;height:${sz * 3}px;animation-delay:${delay};"></span>`
+    )
+    .join('');
+
+  // Left & Right hanging 3D glossy Christmas ornaments from snowy pine boughs
+  const cornerLeftSvg = `<svg class="op-xmas-corner op-xmas-corner-left" viewBox="0 0 320 340" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <radialGradient id="opBgRedBauble" cx="32%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#FECDD3"/>
+      <stop offset="32%" stop-color="#E11D48"/>
+      <stop offset="76%" stop-color="#9F1239"/>
+      <stop offset="100%" stop-color="#4C0519"/>
+    </radialGradient>
+    <radialGradient id="opBgGoldBauble" cx="32%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#FEF9C3"/>
+      <stop offset="38%" stop-color="#F59E0B"/>
+      <stop offset="82%" stop-color="#B45309"/>
+      <stop offset="100%" stop-color="#451A03"/>
+    </radialGradient>
+    <radialGradient id="opBgGreenBauble" cx="32%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#BBF7D0"/>
+      <stop offset="40%" stop-color="#16A34A"/>
+      <stop offset="82%" stop-color="#14532D"/>
+      <stop offset="100%" stop-color="#052E16"/>
+    </radialGradient>
+  </defs>
+  <!-- Snowy Pine Bough -->
+  <path d="M-10 -8 C40 16 115 30 220 12 C180 42 108 62 28 66 L-10 46 Z" fill="#14532D"/>
+  <path d="M-8 12 C56 34 128 40 200 22 C164 56 96 76 18 82 L-10 68 Z" fill="#166534" opacity="0.95"/>
+  <path d="M4 22 Q74 36 164 20" stroke="#E0F2FE" stroke-width="5" stroke-linecap="round" opacity="0.72"/>
+  <!-- Holly Berries -->
+  <circle cx="52" cy="46" r="5.5" fill="#EF4444"/>
+  <circle cx="62" cy="51" r="5" fill="#DC2626"/>
+  <circle cx="57" cy="40" r="4.5" fill="#F87171"/>
+  <circle cx="144" cy="34" r="5" fill="#EF4444"/>
+  <circle cx="152" cy="39" r="4.5" fill="#DC2626"/>
+  <!-- Swaying Bauble 1 (Large Glossy Crimson) -->
+  <g class="op-xmas-sway-a" style="transform-origin:78px 46px;">
+    <line x1="78" y1="46" x2="78" y2="152" stroke="#FDE047" stroke-width="2.2" opacity="0.88"/>
+    <rect x="69" y="148" width="18" height="12" rx="3" fill="#F59E0B"/>
+    <circle cx="78" cy="196" r="40" fill="url(#opBgRedBauble)"/>
+    <ellipse cx="64" cy="180" rx="9" ry="15" transform="rotate(-24 64 180)" fill="#FFFFFF" opacity="0.34"/>
+    <path d="M78 174 V218 M56 196 H100 M63 181 L93 211 M93 181 L63 211" stroke="#FEF08A" stroke-width="2.2" stroke-linecap="round" opacity="0.82"/>
+  </g>
+  <!-- Swaying Bauble 2 (Champagne Gold) -->
+  <g class="op-xmas-sway-b" style="transform-origin:164px 32px;">
+    <line x1="164" y1="32" x2="164" y2="108" stroke="#FDE047" stroke-width="2" opacity="0.85"/>
+    <rect x="157" y="104" width="14" height="10" rx="3" fill="#FEF08A"/>
+    <circle cx="164" cy="142" r="30" fill="url(#opBgGoldBauble)"/>
+    <ellipse cx="153" cy="131" rx="7" ry="11" transform="rotate(-24 153 131)" fill="#FFFFFF" opacity="0.4"/>
+    <path d="M137 142 Q164 155 191 142" stroke="#FFFBEB" stroke-width="2.4" opacity="0.72"/>
+  </g>
+  <!-- Swaying Bauble 3 (Small Emerald Star) -->
+  <g class="op-xmas-sway-a" style="transform-origin:24px 66px;">
+    <line x1="24" y1="66" x2="24" y2="224" stroke="#FDE047" stroke-width="1.8" opacity="0.75"/>
+    <circle cx="24" cy="248" r="24" fill="url(#opBgGreenBauble)"/>
+    <ellipse cx="16" cy="239" rx="5" ry="9" transform="rotate(-20 16 239)" fill="#FFFFFF" opacity="0.35"/>
+  </g>
+</svg>`;
+
+  const cornerRightSvg = `<svg class="op-xmas-corner op-xmas-corner-right" viewBox="0 0 320 340" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <radialGradient id="opBgRedBaubleR" cx="32%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#FECDD3"/>
+      <stop offset="32%" stop-color="#E11D48"/>
+      <stop offset="76%" stop-color="#9F1239"/>
+      <stop offset="100%" stop-color="#4C0519"/>
+    </radialGradient>
+    <radialGradient id="opBgGoldBaubleR" cx="32%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#FEF9C3"/>
+      <stop offset="38%" stop-color="#F59E0B"/>
+      <stop offset="82%" stop-color="#B45309"/>
+      <stop offset="100%" stop-color="#451A03"/>
+    </radialGradient>
+  </defs>
+  <!-- Snowy Pine Bough -->
+  <path d="M330 -8 C280 16 205 30 100 12 C140 42 212 62 292 66 L330 46 Z" fill="#14532D"/>
+  <path d="M328 12 C264 34 192 40 120 22 C156 56 224 76 302 82 L330 68 Z" fill="#166534" opacity="0.95"/>
+  <path d="M316 22 Q246 36 156 20" stroke="#E0F2FE" stroke-width="5" stroke-linecap="round" opacity="0.72"/>
+  <circle cx="268" cy="46" r="5.5" fill="#EF4444"/>
+  <circle cx="258" cy="51" r="5" fill="#DC2626"/>
+  <circle cx="176" cy="34" r="5" fill="#EF4444"/>
+  <!-- Swaying Bauble Right 1 (Glossy Crimson) -->
+  <g class="op-xmas-sway-b" style="transform-origin:244px 48px;">
+    <line x1="244" y1="48" x2="244" y2="164" stroke="#FDE047" stroke-width="2.2" opacity="0.88"/>
+    <rect x="235" y="160" width="18" height="12" rx="3" fill="#F59E0B"/>
+    <circle cx="244" cy="206" r="38" fill="url(#opBgRedBaubleR)"/>
+    <ellipse cx="231" cy="191" rx="8.5" ry="14" transform="rotate(-24 231 191)" fill="#FFFFFF" opacity="0.34"/>
+    <path d="M214 206 Q244 222 274 206" stroke="#FEF08A" stroke-width="2.6" opacity="0.82"/>
+  </g>
+  <!-- Swaying Star Ornament -->
+  <g class="op-xmas-sway-a" style="transform-origin:158px 30px;">
+    <line x1="158" y1="30" x2="158" y2="104" stroke="#FDE047" stroke-width="2" opacity="0.85"/>
+    <circle cx="158" cy="134" r="34" fill="#FEF08A" opacity="0.18"/>
+    <path d="M158 100 L166 122 L190 123 L171 137 L178 160 L158 146 L138 160 L145 137 L126 123 L150 122 Z" fill="url(#opBgGoldBaubleR)"/>
+  </g>
+</svg>`;
+
+  // Glowing full moon + Santa Claus Sleigh & Reindeer gliding across the starry sky
+  const moonAndSleighHtml = `<div class="op-xmas-moon" aria-hidden="true"></div>
+<div class="op-xmas-sleigh" aria-hidden="true">
+  <svg viewBox="0 0 280 76" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <g fill="#FEF9C3" opacity="0.88">
+      <!-- Sleigh -->
+      <path d="M16 54 C36 58 68 58 84 46 L88 42 C72 52 38 52 22 48 C18 47 14 42 18 39 C13 40 10 51 16 54 Z"/>
+      <path d="M26 44 L22 26 C34 26 42 32 54 34 L72 28 L76 44 Z"/>
+      <!-- Santa + Gift Sack -->
+      <circle cx="46" cy="22" r="6.5"/>
+      <path d="M41 18 C43 11 52 10 55 15 L49 18 Z"/>
+      <circle cx="34" cy="27" r="7.5"/>
+      <!-- Reins -->
+      <path d="M74 34 Q118 42 162 32 T240 28" stroke="#FDE047" stroke-width="1.3" fill="none" opacity="0.72"/>
+      <!-- Reindeer 1 -->
+      <path d="M138 40 C145 34 156 34 162 38 L168 30 L172 32 L166 42 L169 52 L165 53 L161 44 L148 44 L144 54 L140 53 L143 43 L135 45 Z"/>
+      <path d="M169 30 L174 22 M171 27 L176 26" stroke="#FEF9C3" stroke-width="1.6" stroke-linecap="round"/>
+      <!-- Reindeer 2 -->
+      <path d="M188 35 C195 29 206 29 212 33 L218 25 L222 27 L216 37 L219 47 L215 48 L211 39 L198 39 L194 49 L190 48 L193 38 L185 40 Z"/>
+      <path d="M219 25 L224 17 M221 22 L226 21" stroke="#FEF9C3" stroke-width="1.6" stroke-linecap="round"/>
+      <!-- Lead Reindeer (Rudolph) -->
+      <path d="M236 30 C243 24 254 24 260 28 L266 20 L270 22 L264 32 L267 42 L263 43 L259 34 L246 34 L242 44 L238 43 L241 33 L233 35 Z"/>
+      <path d="M267 20 L272 12 M269 17 L274 16" stroke="#FEF9C3" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="272" cy="23" r="3" fill="#EF4444"/>
+    </g>
+  </svg>
+</div>`;
+
+  // Full-width Snowy Christmas Pine Forest, Snow Hills, Decorated Christmas Trees & Gifts Panorama
+  const forestPanoramaSvg = `<svg class="op-xmas-forest" viewBox="0 0 1440 300" preserveAspectRatio="xMidYMax slice" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <linearGradient id="opSnowHillBack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1E4E5F" stop-opacity="0.72"/>
+      <stop offset="100%" stop-color="#0E2E3A" stop-opacity="0.92"/>
+    </linearGradient>
+    <linearGradient id="opSnowDriftMid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#DBEAFE"/>
+      <stop offset="60%" stop-color="#EFF6FF"/>
+      <stop offset="100%" stop-color="#BFDBFE"/>
+    </linearGradient>
+    <linearGradient id="opSnowDriftFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#DBEAFE"/>
+    </linearGradient>
+    <linearGradient id="opPineRich" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#15803D"/>
+      <stop offset="100%" stop-color="#052E16"/>
+    </linearGradient>
+    <linearGradient id="opPineDeep" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#166534"/>
+      <stop offset="100%" stop-color="#06281A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Distant Snowy Mountains & Far Pine Silhouettes -->
+  <path d="M0 205 Q220 120 460 185 T960 170 T1440 195 L1440 300 L0 300 Z" fill="url(#opSnowHillBack)"/>
+  <g fill="#0A332A" opacity="0.78">
+    <polygon points="180,210 210,126 240,210"/>
+    <polygon points="225,215 262,112 299,215"/>
+    <polygon points="340,220 370,145 400,220"/>
+    <polygon points="520,225 552,155 584,225"/>
+    <polygon points="860,225 894,150 928,225"/>
+    <polygon points="1030,220 1068,136 1106,220"/>
+    <polygon points="1170,215 1208,118 1246,215"/>
+    <polygon points="1245,215 1280,132 1315,215"/>
+  </g>
+
+  <!-- Mid Snowy Rolling Hill -->
+  <path d="M0 245 Q310 195 660 236 T1440 228 L1440 300 L0 300 Z" fill="url(#opSnowDriftMid)" opacity="0.88"/>
+
+  <!-- Left Hero Decorated 3D Christmas Tree -->
+  <g transform="translate(26, 26)">
+    <rect x="64" y="206" width="22" height="36" rx="4" fill="#5C2D16"/>
+    <path d="M75 112 L10 212 Q75 224 140 212 Z" fill="url(#opPineDeep)"/>
+    <path d="M75 72 L22 162 Q75 174 128 162 Z" fill="url(#opPineRich)"/>
+    <path d="M75 34 L34 114 Q75 124 116 114 Z" fill="url(#opPineRich)"/>
+    <!-- Snow Caps on Tree Branches -->
+    <path d="M75 34 L56 72 Q75 80 94 72 Z" fill="#F0F9FF" opacity="0.88"/>
+    <path d="M40 112 Q75 126 110 112" stroke="#E0F2FE" stroke-width="5" stroke-linecap="round" opacity="0.72"/>
+    <path d="M24 160 Q75 176 126 160" stroke="#E0F2FE" stroke-width="5.5" stroke-linecap="round" opacity="0.7"/>
+    <!-- Tree Garland & Baubles -->
+    <path d="M46 98 Q75 112 104 96" stroke="#FDE047" stroke-width="3" fill="none"/>
+    <path d="M32 146 Q75 162 118 144" stroke="#FDE047" stroke-width="3.2" fill="none"/>
+    <path d="M22 194 Q75 212 128 192" stroke="#FDE047" stroke-width="3.5" fill="none"/>
+    <circle cx="60" cy="96" r="5.5" fill="#EF4444" class="op-xmas-twinkle"/>
+    <circle cx="92" cy="100" r="5" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="48" cy="146" r="6" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="76" cy="142" r="6" fill="#EF4444" class="op-xmas-twinkle"/>
+    <circle cx="104" cy="148" r="5.5" fill="#38BDF8" class="op-xmas-twinkle"/>
+    <circle cx="42" cy="192" r="6.5" fill="#EF4444" class="op-xmas-twinkle"/>
+    <circle cx="78" cy="196" r="6.5" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="112" cy="192" r="6" fill="#EF4444" class="op-xmas-twinkle"/>
+    <!-- Glowing Star Topper -->
+    <circle cx="75" cy="26" r="18" fill="#FEF08A" opacity="0.34"/>
+    <path d="M75 8 L80 20 L93 21 L83 29 L86 42 L75 34 L64 42 L67 29 L57 21 L70 20 Z" fill="#FDE047"/>
+    <!-- Gift Boxes under Left Tree -->
+    <rect x="112" y="210" width="32" height="28" rx="4" fill="#DC2626"/>
+    <rect x="125" y="210" width="6" height="28" fill="#FDE047"/>
+    <rect x="112" y="221" width="32" height="5" fill="#FDE047"/>
+    <rect x="148" y="218" width="24" height="22" rx="4" fill="#15803D"/>
+    <rect x="157" y="218" width="5" height="22" fill="#EF4444"/>
+  </g>
+
+  <!-- Secondary Mid-Left Snowy Pine -->
+  <g transform="translate(178, 92)">
+    <path d="M46 20 L6 138 Q46 146 86 138 Z" fill="url(#opPineDeep)"/>
+    <path d="M46 20 L28 66 Q46 72 64 66 Z" fill="#E0F2FE" opacity="0.82"/>
+    <circle cx="34" cy="96" r="4" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="58" cy="112" r="4" fill="#EF4444" class="op-xmas-twinkle"/>
+  </g>
+
+  <!-- Right Hero Decorated 3D Christmas Tree -->
+  <g transform="translate(1254, 18)">
+    <rect x="68" y="212" width="24" height="38" rx="4" fill="#5C2D16"/>
+    <path d="M80 112 L10 218 Q80 232 150 218 Z" fill="url(#opPineDeep)"/>
+    <path d="M80 70 L22 166 Q80 178 138 166 Z" fill="url(#opPineRich)"/>
+    <path d="M80 30 L36 116 Q80 126 124 116 Z" fill="url(#opPineRich)"/>
+    <path d="M80 30 L59 70 Q80 78 101 70 Z" fill="#F0F9FF" opacity="0.88"/>
+    <path d="M42 114 Q80 128 118 114" stroke="#E0F2FE" stroke-width="5" stroke-linecap="round" opacity="0.72"/>
+    <path d="M24 164 Q80 180 136 164" stroke="#E0F2FE" stroke-width="5.5" stroke-linecap="round" opacity="0.7"/>
+    <path d="M48 96 Q80 112 112 96" stroke="#FDE047" stroke-width="3" fill="none"/>
+    <path d="M34 148 Q80 166 126 148" stroke="#FDE047" stroke-width="3.2" fill="none"/>
+    <path d="M22 198 Q80 218 138 198" stroke="#FDE047" stroke-width="3.5" fill="none"/>
+    <circle cx="64" cy="96" r="5.5" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="96" cy="100" r="5.5" fill="#EF4444" class="op-xmas-twinkle"/>
+    <circle cx="50" cy="148" r="6" fill="#EF4444" class="op-xmas-twinkle"/>
+    <circle cx="80" cy="146" r="6" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="112" cy="150" r="5.5" fill="#38BDF8" class="op-xmas-twinkle"/>
+    <circle cx="44" cy="198" r="6.5" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="82" cy="202" r="6.5" fill="#EF4444" class="op-xmas-twinkle"/>
+    <circle cx="118" cy="198" r="6" fill="#FDE047" class="op-xmas-twinkle"/>
+    <circle cx="80" cy="22" r="19" fill="#FEF08A" opacity="0.34"/>
+    <path d="M80 4 L85 17 L99 18 L88 26 L92 39 L80 31 L68 39 L72 26 L61 18 L75 17 Z" fill="#FDE047"/>
+    <!-- Gift Boxes under Right Tree -->
+    <rect x="-12" y="216" width="34" height="30" rx="4" fill="#DC2626"/>
+    <rect x="2" y="216" width="6" height="30" fill="#FDE047"/>
+    <rect x="-12" y="228" width="34" height="5" fill="#FDE047"/>
+    <rect x="26" y="224" width="24" height="22" rx="4" fill="#F59E0B"/>
+    <rect x="35" y="224" width="5" height="22" fill="#B91C1C"/>
+  </g>
+
+  <!-- Secondary Mid-Right Snowy Pine -->
+  <g transform="translate(1152, 98)">
+    <path d="M44 18 L6 134 Q44 142 82 134 Z" fill="url(#opPineDeep)"/>
+    <path d="M44 18 L27 62 Q44 68 61 62 Z" fill="#E0F2FE" opacity="0.82"/>
+    <circle cx="34" cy="96" r="4" fill="#EF4444" class="op-xmas-twinkle"/>
+    <circle cx="56" cy="110" r="4" fill="#FDE047" class="op-xmas-twinkle"/>
+  </g>
+
+  <!-- Foreground Glistening Snow Drifts -->
+  <path d="M0 264 Q240 232 520 266 T1120 258 T1440 250 L1440 300 L0 300 Z" fill="url(#opSnowDriftFront)"/>
+</svg>`;
+
+  return `${starsHtml}${moonAndSleighHtml}${cornerLeftSvg}${cornerRightSvg}${forestPanoramaSvg}`;
+}
+
+/**
+ * Generates authentic festive corner & horizon scenery for Diwali / Navratri, Holi, Eid & New Year.
+ */
+function buildOtherFestivalScenicBgHtml(presetId: FestivalPresetId): string {
+  if (presetId === 'diwali' || presetId === 'navratri') {
+    const lanternSvg = (cls: string) => `<svg class="op-xmas-corner ${cls}" viewBox="0 0 240 290" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <g class="op-xmas-sway-a" style="transform-origin:84px 0px;">
+    <line x1="84" y1="0" x2="84" y2="66" stroke="#D97706" stroke-width="3"/>
+    <polygon points="56,66 112,66 128,118 106,166 62,166 40,118" fill="#F59E0B" stroke="#9A1B2F" stroke-width="3"/>
+    <ellipse cx="84" cy="116" rx="18" ry="26" fill="#FEF9C3" opacity="0.85"/>
+    <line x1="68" y1="166" x2="64" y2="210" stroke="#9A1B2F" stroke-width="3" stroke-linecap="round"/>
+    <line x1="84" y1="166" x2="84" y2="224" stroke="#D97706" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="100" y1="166" x2="104" y2="210" stroke="#9A1B2F" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <g class="op-xmas-sway-b" style="transform-origin:174px 0px;">
+    <line x1="174" y1="0" x2="174" y2="96" stroke="#D97706" stroke-width="2.4"/>
+    <polygon points="154,96 194,96 206,134 190,168 158,168 142,134" fill="#9A1B2F" stroke="#F59E0B" stroke-width="2.6"/>
+    <ellipse cx="174" cy="132" rx="12" ry="18" fill="#FEF08A" opacity="0.85"/>
+    <line x1="174" y1="168" x2="174" y2="206" stroke="#D97706" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>`;
+    const diyaRowSvg = `<svg class="op-xmas-forest" viewBox="0 0 1440 160" preserveAspectRatio="xMidYMax slice" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <path d="M0 132 Q360 100 720 128 T1440 122 L1440 160 L0 160 Z" fill="#9A1B2F" opacity="0.16"/>
+  ${[110, 310, 560, 880, 1130, 1330]
+    .map(
+      (x) => `<g transform="translate(${x}, 54)">
+    <circle cx="34" cy="24" r="30" fill="#FDE047" opacity="0.28"/>
+    <path d="M34 4 C42 18 44 30 39 38 C36 42 32 42 29 38 C24 30 26 18 34 4 Z" fill="#F97316"/>
+    <path d="M34 16 C38 24 38 31 35 35 C34 37 33 37 32 35 C29 31 30 24 34 16 Z" fill="#FFFBEB"/>
+    <path d="M8 44 C12 66 24 74 34 74 C44 74 56 66 60 44 Z" fill="#B45309"/>
+    <ellipse cx="34" cy="44" rx="26" ry="7" fill="#7C2D12"/>
+  </g>`
+    )
+    .join('')}
+</svg>`;
+    return `${lanternSvg('op-xmas-corner-left')}${lanternSvg('op-xmas-corner-right')}${diyaRowSvg}`;
+  }
+
+  if (presetId === 'eid') {
+    const stars = [
+      [10, 10],
+      [22, 16],
+      [38, 9],
+      [54, 14],
+      [68, 8],
+      [88, 12],
+      [94, 22],
+    ]
+      .map(
+        ([x, y], i) =>
+          `<span class="op-xmas-star" style="left:${x}%;top:${y}%;width:10px;height:10px;animation-delay:${(i * 0.4).toFixed(1)}s;"></span>`
+      )
+      .join('');
+    const crescent = `<svg class="op-xmas-corner op-xmas-corner-right" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <circle cx="155" cy="96" r="56" fill="#FDE047" opacity="0.16"/>
+  <path d="M174 44 C138 44 112 72 112 108 C112 144 138 168 174 164 C150 152 140 132 140 108 C140 80 152 56 174 44 Z" fill="#FDE047"/>
+</svg>`;
+    const mosqueHorizon = `<svg class="op-xmas-forest" viewBox="0 0 1440 200" preserveAspectRatio="xMidYMax slice" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <path d="M0 165 Q240 135 480 160 T960 154 T1440 165 L1440 200 L0 200 Z" fill="#041F15" opacity="0.88"/>
+  <path d="M90 168 C90 112 140 86 170 60 C200 86 250 112 250 168 Z" fill="#063424"/>
+  <rect x="64" y="88" width="14" height="84" fill="#063424"/>
+  <path d="M1190 168 C1190 112 1240 86 1270 60 C1300 86 1350 112 1350 168 Z" fill="#063424"/>
+  <rect x="1364" y="88" width="14" height="84" fill="#063424"/>
+</svg>`;
+    return `${stars}${crescent}${mosqueHorizon}`;
+  }
+
+  if (presetId === 'new_year') {
+    const bursts = `<svg class="op-xmas-corner op-xmas-corner-left" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <g stroke="#FDE047" stroke-width="2.5" stroke-linecap="round" opacity="0.72">
+    <line x1="110" y1="110" x2="110" y2="38"/><line x1="110" y1="110" x2="110" y2="182"/>
+    <line x1="110" y1="110" x2="38" y2="110"/><line x1="110" y1="110" x2="182" y2="110"/>
+    <line x1="110" y1="110" x2="58" y2="58"/><line x1="110" y1="110" x2="162" y2="162"/>
+    <line x1="110" y1="110" x2="162" y2="58"/><line x1="110" y1="110" x2="58" y2="162"/>
+  </g>
+</svg>
+<svg class="op-xmas-corner op-xmas-corner-right" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <g stroke="#F59E0B" stroke-width="2.5" stroke-linecap="round" opacity="0.72">
+    <line x1="150" y1="120" x2="150" y2="46"/><line x1="150" y1="120" x2="150" y2="194"/>
+    <line x1="150" y1="120" x2="76" y2="120"/><line x1="150" y1="120" x2="224" y2="120"/>
+    <line x1="150" y1="120" x2="98" y2="68"/><line x1="150" y1="120" x2="202" y2="172"/>
+    <line x1="150" y1="120" x2="202" y2="68"/><line x1="150" y1="120" x2="98" y2="172"/>
+  </g>
+</svg>`;
+    return bursts;
+  }
+
+  return '';
+}
+
+/**
+ * Generates the fixed full-viewport 3D animated festive background canvas HTML
+ * with authentic festival-specific scenery (Christmas Winter Wonderland pine forest,
+ * swaying 3D baubles, Santa sleigh & starry sky; Diwali hanging lanterns & lit diyas; etc.).
+ */
+export function buildFestival3DBackgroundHtml(preset: FestivalThemePreset): string {
+  const spec = getFestival3DBackgroundSpec(preset.id);
+  const scenicLayer =
+    preset.id === 'christmas'
+      ? buildChristmasScenicBgHtml()
+      : buildOtherFestivalScenicBgHtml(preset.id);
+
+  return `<div class="op-bg3d-stage" data-festival-bg="${escapeHtml(preset.id)}" data-dark-canvas="${spec.isDarkCanvas ? '1' : '0'}" style="background:${spec.baseGradient};">
+  <div class="op-bg3d-aurora" style="background:${spec.auroraGradient};"></div>
+  <span class="op-bg3d-orb op-bg3d-orb-1" style="background:${spec.orb1};"></span>
+  <span class="op-bg3d-orb op-bg3d-orb-2" style="background:${spec.orb2};"></span>
+  <span class="op-bg3d-orb op-bg3d-orb-3" style="background:${spec.orb3};"></span>
+  <span class="op-bg3d-orb op-bg3d-orb-4" style="background:${spec.orb4};"></span>
+  ${scenicLayer}
+</div>`;
+}
+
 const FESTIVAL_KEYWORDS: Record<FestivalPresetId, string[]> = {
   christmas: [
     'plum',
@@ -291,7 +911,7 @@ export function getFestivalHeroCopy(
         subheadline: `Handcrafted fresh at ${brand} with festive gift wrapping & fast delivery right to your doorstep.`,
         ctaLabel: 'Shop Christmas Gifts',
         ctaPath: '/collections/all',
-        articleLabel: '3D Christmas Tree, Glowing Ornaments & Gift Boxes',
+        articleLabel: 'Roaming Animated Santa Claus, 3D Christmas Tree, Baubles & Gifts',
       };
     case 'diwali':
       return {
@@ -872,8 +1492,341 @@ export function buildFestivalShowcaseCss(
 ): string {
   if (!config.enabled) return '';
   const p = preset.palette;
+  const bg3d = getFestival3DBackgroundSpec(preset.id);
+  const use3DBg = config.show3DBackground !== false;
 
-  return `
+  const darkCanvasContrastCss = bg3d.isDarkCanvas
+    ? `
+/* High-Contrast Snow-White Typography over Dark Festive Sky + Crisp Dark Ink Inside Frosted Cards */
+main#MainContent h1,
+main#MainContent h2,
+main#MainContent h3,
+main#MainContent .title,
+main#MainContent .collection__title h2,
+main#MainContent .collection__title .title,
+main#MainContent .title-wrapper-with-link h2,
+main#MainContent .title-wrapper-with-link a,
+main#MainContent .collection__view-all a,
+main#MainContent .collection__description,
+main#MainContent .slider-counter,
+main#MainContent .slider-button {
+  color: #FFFDF7 !important;
+  text-shadow: 0 2px 12px rgba(4, 15, 24, 0.58) !important;
+}
+
+main#MainContent .card,
+main#MainContent .card h1,
+main#MainContent .card h2,
+main#MainContent .card h3,
+main#MainContent .card .card__heading,
+main#MainContent .card .card__heading a,
+main#MainContent .card .price,
+main#MainContent .card .price-item,
+main#MainContent .card .caption-with-letter-spacing,
+main#MainContent .card p,
+main#MainContent .card span:not(.badge),
+main#MainContent .multicolumn-card h3,
+main#MainContent .multicolumn-card p,
+main#MainContent .multicolumn-card a,
+main#MainContent .rich-text__blocks h1,
+main#MainContent .rich-text__blocks h2,
+main#MainContent .rich-text__blocks h3,
+main#MainContent .rich-text__blocks p,
+main#MainContent .collection-hero h1,
+main#MainContent .collection-hero p,
+main#MainContent .product__info-wrapper h1,
+main#MainContent .product__info-wrapper .price-item,
+main#MainContent .product__info-wrapper p,
+main#MainContent .product__info-wrapper label {
+  color: ${p.textColor} !important;
+  text-shadow: none !important;
+}
+`
+    : '';
+
+  const bg3dCss = use3DBg
+    ? `
+/* Full-Website 3D Animated Festive Scenic Background & 3D Depth Color Palette */
+@keyframes opBg3dDriftA {
+  0%, 100% { transform: translate3d(0px, 0px, 0px) scale(1); }
+  50% { transform: translate3d(36px, -28px, 32px) scale(1.08); }
+}
+@keyframes opBg3dDriftB {
+  0%, 100% { transform: translate3d(0px, 0px, 0px) scale(1.03); }
+  50% { transform: translate3d(-40px, 26px, 24px) scale(0.94); }
+}
+@keyframes opBg3dDriftC {
+  0%, 100% { transform: translate3d(0px, 0px, 0px) scale(0.96); }
+  50% { transform: translate3d(24px, 30px, 40px) scale(1.1); }
+}
+@keyframes opBg3dAurora {
+  0%, 100% { transform: translate3d(-3%, -1%, 0) scale(1.04); opacity: 0.85; }
+  50% { transform: translate3d(3%, 2%, 0) scale(1.12); opacity: 1; }
+}
+@keyframes opXmasStarTwinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.75); }
+  50% { opacity: 1; transform: scale(1.25); }
+}
+@keyframes opXmasSwayA {
+  0%, 100% { transform: rotate(-3.2deg); }
+  50% { transform: rotate(3.6deg); }
+}
+@keyframes opXmasSwayB {
+  0%, 100% { transform: rotate(3.4deg); }
+  50% { transform: rotate(-3.2deg); }
+}
+@keyframes opXmasSleighGlide {
+  0% { transform: translate3d(-24vw, 16px, 0) rotate(-4deg); opacity: 0; }
+  8% { opacity: 0.92; }
+  50% { transform: translate3d(42vw, -18px, 0) rotate(2deg); opacity: 0.95; }
+  92% { opacity: 0.9; }
+  100% { transform: translate3d(114vw, -4px, 0) rotate(-3deg); opacity: 0; }
+}
+@keyframes opXmasTreeLight {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+:root,
+html,
+body,
+body.gradient {
+  background: ${bg3d.baseGradient} !important;
+  background-color: ${bg3d.isDarkCanvas ? '#081B29' : p.pageBg} !important;
+  --gradient-background: transparent !important;
+}
+
+main#MainContent,
+.content-for-layout,
+main#MainContent .shopify-section,
+main#MainContent .shopify-section > .gradient,
+main#MainContent .shopify-section > .color-scheme-1,
+main#MainContent .shopify-section > .color-scheme-2,
+main#MainContent .color-scheme-1.gradient,
+main#MainContent .color-scheme-2.gradient,
+main#MainContent .collection.gradient,
+main#MainContent .collection-list-wrapper.gradient,
+main#MainContent .rich-text.gradient,
+main#MainContent .multicolumn.gradient,
+main#MainContent .section-template--padding {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  position: relative;
+  z-index: 1;
+}
+
+#orderpulse-festival-bg-3d {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  perspective: 1000px;
+}
+#orderpulse-festival-bg-3d .op-bg3d-stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+#orderpulse-festival-bg-3d .op-bg3d-aurora {
+  position: absolute;
+  inset: -18%;
+  filter: blur(46px);
+  opacity: 0.92;
+  animation: opBg3dAurora 14s ease-in-out infinite;
+}
+#orderpulse-festival-bg-3d .op-bg3d-orb {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(18px);
+  opacity: ${bg3d.isDarkCanvas ? '0.62' : '0.68'};
+}
+#orderpulse-festival-bg-3d .op-bg3d-orb-1 {
+  width: 320px;
+  height: 320px;
+  top: -60px;
+  left: -50px;
+  animation: opBg3dDriftA 13s ease-in-out infinite;
+}
+#orderpulse-festival-bg-3d .op-bg3d-orb-2 {
+  width: 380px;
+  height: 380px;
+  top: 10%;
+  right: -85px;
+  animation: opBg3dDriftB 15s ease-in-out infinite;
+}
+#orderpulse-festival-bg-3d .op-bg3d-orb-3 {
+  width: 280px;
+  height: 280px;
+  bottom: 12%;
+  left: 14%;
+  animation: opBg3dDriftC 11s ease-in-out infinite;
+}
+#orderpulse-festival-bg-3d .op-bg3d-orb-4 {
+  width: 240px;
+  height: 240px;
+  bottom: 18%;
+  right: 16%;
+  animation: opBg3dDriftA 14s ease-in-out infinite reverse;
+}
+
+/* Christmas & Festival Authentic Scenic Layers */
+#orderpulse-festival-bg-3d .op-xmas-star {
+  position: absolute;
+  border-radius: 999px;
+  background: radial-gradient(circle, #FFFFFF 0%, #FEF08A 45%, transparent 72%);
+  box-shadow: 0 0 12px rgba(254, 240, 138, 0.85);
+  animation: opXmasStarTwinkle 2.8s ease-in-out infinite;
+}
+#orderpulse-festival-bg-3d .op-xmas-moon {
+  position: absolute;
+  top: 17%;
+  right: 7%;
+  width: 92px;
+  height: 92px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 36% 34%, #FFFBEB 0%, #FEF08A 58%, #FDE047 100%);
+  box-shadow: 0 0 42px rgba(254, 240, 138, 0.55), 0 0 96px rgba(254, 240, 138, 0.25);
+  opacity: 0.92;
+}
+#orderpulse-festival-bg-3d .op-xmas-sleigh {
+  position: absolute;
+  top: 19%;
+  left: 0;
+  width: 240px;
+  height: 66px;
+  filter: drop-shadow(0 0 12px rgba(254, 240, 138, 0.45));
+  animation: opXmasSleighGlide 26s linear infinite;
+}
+#orderpulse-festival-bg-3d .op-xmas-sleigh svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+#orderpulse-festival-bg-3d .op-xmas-corner {
+  position: absolute;
+  top: clamp(92px, 11vh, 136px);
+  width: clamp(175px, 19vw, 275px);
+  height: auto;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.36));
+  opacity: 0.96;
+}
+#orderpulse-festival-bg-3d .op-xmas-corner-left {
+  left: 0;
+}
+#orderpulse-festival-bg-3d .op-xmas-corner-right {
+  right: 0;
+}
+#orderpulse-festival-bg-3d .op-xmas-sway-a {
+  animation: opXmasSwayA 4.8s ease-in-out infinite;
+}
+#orderpulse-festival-bg-3d .op-xmas-sway-b {
+  animation: opXmasSwayB 5.6s ease-in-out infinite;
+}
+#orderpulse-festival-bg-3d .op-xmas-forest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: clamp(160px, 27vh, 285px);
+  display: block;
+  filter: drop-shadow(0 -8px 24px rgba(0, 0, 0, 0.28));
+}
+#orderpulse-festival-bg-3d .op-xmas-twinkle {
+  animation: opXmasTreeLight 1.9s ease-in-out infinite;
+}
+
+@media (max-width: 768px) {
+  #orderpulse-festival-bg-3d .op-xmas-corner {
+    width: 145px;
+    opacity: 0.85;
+  }
+  #orderpulse-festival-bg-3d .op-xmas-moon {
+    width: 64px;
+    height: 64px;
+    top: 6%;
+    right: 8%;
+  }
+  #orderpulse-festival-bg-3d .op-xmas-forest {
+    height: 155px;
+  }
+}
+
+/* 3D Depth Festive Cards, Glass Surfaces & Glossy 3D Buttons Across Entire Storefront */
+main#MainContent .card,
+main#MainContent .card-wrapper .card,
+main#MainContent .product-card,
+main#MainContent .product-grid-item,
+main#MainContent .multicolumn-card,
+main#MainContent .collection-hero,
+main#MainContent .rich-text__blocks,
+main#MainContent .product__info-wrapper {
+  background: ${bg3d.cardTintBg} !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  border: 1.5px solid ${p.borderColor} !important;
+  border-top: 3px solid ${p.accent} !important;
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  box-shadow: 0 16px 34px -10px ${bg3d.glowShadow}, 0 4px 10px -2px rgba(0, 0, 0, 0.14) !important;
+  transition: transform 0.25s ease, box-shadow 0.25s ease !important;
+}
+main#MainContent .card .card__content,
+main#MainContent .card-wrapper .card .card__content {
+  padding: 12px 14px 14px !important;
+}
+main#MainContent .card:hover,
+main#MainContent .card-wrapper:hover .card,
+main#MainContent .product-card:hover,
+main#MainContent .multicolumn-card:hover {
+  transform: translateY(-6px) scale(1.01) !important;
+  box-shadow: 0 24px 44px -12px ${bg3d.glowShadow}, 0 8px 16px -4px rgba(0, 0, 0, 0.18) !important;
+}
+
+${darkCanvasContrastCss}
+
+.button,
+.button--primary,
+button[name="add"],
+.product-form__submit,
+.cart__checkout-button,
+a.button--primary {
+  background: linear-gradient(180deg, ${p.primary} 0%, ${p.primaryHover} 100%) !important;
+  color: ${p.primaryText} !important;
+  box-shadow: 0 4px 0 ${bg3d.btnDepth}, 0 10px 22px ${bg3d.glowShadow} !important;
+  border-radius: 10px !important;
+}
+.button:hover,
+.button--primary:hover,
+button[name="add"]:hover,
+.product-form__submit:hover,
+.cart__checkout-button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 0 ${bg3d.btnDepth}, 0 14px 26px ${bg3d.glowShadow} !important;
+}
+
+body .header-wrapper,
+body .shopify-section-group-header-group .header-wrapper,
+body .shopify-section-group-header-group .header-wrapper.gradient,
+body header.header {
+  background: linear-gradient(135deg, ${p.headerBg} 0%, ${p.footerBg} 50%, ${p.headerBg} 100%) !important;
+  box-shadow: 0 8px 26px ${bg3d.glowShadow} !important;
+}
+body footer.footer,
+body .shopify-section-group-footer-group,
+body .shopify-section-group-footer-group footer.footer {
+  background: linear-gradient(160deg, ${p.headerBg} 0%, ${p.footerBg} 75%) !important;
+  position: relative;
+  z-index: 1;
+}
+`
+    : '';
+
+  return `${bg3dCss}
 /* OrderPulse 3D Festive Animations, Hanging Lights & Auto-Product Hero Banner */
 @keyframes op3dFloatPrimary {
   0%, 100% { transform: translate3d(0, 0px, 0) rotateY(-8deg) rotateZ(-1.5deg); }
