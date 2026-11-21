@@ -336,5 +336,25 @@ test('Christmas & New Year themes keep crisp 3D card snow caps with ultra-smooth
   assert.ok(previewHtml.includes('data-op-sig'));
 });
 
+test('Festival CSS guarantees crisp readable text inside mobile sidebar drawer, dropdowns, search modal, and cart drawer', () => {
+  const xmas = buildFestivalThemePayload({
+    ...DEFAULT_FESTIVAL_THEME_CONFIG,
+    enabled: true,
+    selectedFestivalId: 'christmas',
+    intensity: 'full',
+  });
+
+  // Sidebar menu drawer inside .header-wrapper must override headerText with crisp dark ink on opaque surface
+  assert.ok(xmas.css.includes('body .header-wrapper #menu-drawer'));
+  assert.ok(xmas.css.includes('body .header-wrapper #menu-drawer .menu-drawer__menu-item'));
+  assert.ok(xmas.css.includes('body .header-wrapper .header__submenu a'));
+  assert.ok(xmas.css.includes('body .header-wrapper .search-modal input'));
+  assert.ok(xmas.css.includes('body cart-drawer .drawer__inner'));
+  assert.ok(xmas.css.includes('body .mobile-facets__inner'));
+  // Santa roamer hides cleanly whenever the mobile menu drawer or cart drawer is open
+  assert.ok(xmas.css.includes('body:has(#Details-menu-drawer-container[open]) #orderpulse-festival-roamer'));
+});
+
+
 
 

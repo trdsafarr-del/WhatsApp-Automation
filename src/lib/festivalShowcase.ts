@@ -1513,7 +1513,7 @@ export function buildFestivalShowcaseCss(
 
   const darkCanvasContrastCss = bg3d.isDarkCanvas
     ? `
-/* High-Contrast Snow-White Typography over Dark Festive Sky + Crisp Dark Ink Inside Frosted Cards */
+/* High-Contrast Snow-White Typography over Dark Festive Sky + Crisp Dark Ink Inside Light Cards & Surfaces */
 main#MainContent h1,
 main#MainContent h2,
 main#MainContent h3,
@@ -1525,9 +1525,35 @@ main#MainContent .title-wrapper-with-link a,
 main#MainContent .collection__view-all a,
 main#MainContent .collection__description,
 main#MainContent .slider-counter,
-main#MainContent .slider-button {
+main#MainContent .slider-button,
+main#MainContent .facets__heading,
+main#MainContent .facets__summary,
+main#MainContent .facets__summary span,
+main#MainContent .facets__summary svg,
+main#MainContent .facet-filters__label,
+main#MainContent .facet-filters__label label,
+main#MainContent .product-count__text,
+main#MainContent .mobile-facets__open,
+main#MainContent .mobile-facets__open span,
+main#MainContent .mobile-facets__open svg,
+main#MainContent .pagination__item,
+main#MainContent .pagination__item svg,
+main#MainContent .breadcrumbs,
+main#MainContent .breadcrumbs a,
+main#MainContent .title-wrapper-with-link p,
+main#MainContent .rte:not(.card .rte):not(.product__info-wrapper .rte):not(.rich-text__blocks .rte) {
   color: #FFFDF7 !important;
   text-shadow: 0 2px 12px rgba(4, 15, 24, 0.58) !important;
+}
+
+main#MainContent .cart__contents,
+main#MainContent .cart__footer,
+main#MainContent .customer,
+main#MainContent .contact {
+  background: ${bg3d.cardTintBg} !important;
+  border: 1.5px solid ${p.borderColor} !important;
+  border-radius: 16px !important;
+  padding: 18px !important;
 }
 
 main#MainContent .card,
@@ -1541,6 +1567,11 @@ main#MainContent .card .price-item,
 main#MainContent .card .caption-with-letter-spacing,
 main#MainContent .card p,
 main#MainContent .card span:not(.badge),
+main#MainContent .banner__box,
+main#MainContent .banner__box h1,
+main#MainContent .banner__box h2,
+main#MainContent .banner__box p,
+main#MainContent .banner__box span,
 main#MainContent .multicolumn-card h3,
 main#MainContent .multicolumn-card p,
 main#MainContent .multicolumn-card a,
@@ -1548,12 +1579,55 @@ main#MainContent .rich-text__blocks h1,
 main#MainContent .rich-text__blocks h2,
 main#MainContent .rich-text__blocks h3,
 main#MainContent .rich-text__blocks p,
+main#MainContent .rich-text__blocks a:not(.button),
 main#MainContent .collection-hero h1,
 main#MainContent .collection-hero p,
+main#MainContent .collection-hero .collection-hero__description,
+main#MainContent .product__info-wrapper,
 main#MainContent .product__info-wrapper h1,
+main#MainContent .product__info-wrapper h2,
+main#MainContent .product__info-wrapper h3,
 main#MainContent .product__info-wrapper .price-item,
+main#MainContent .product__info-wrapper .product__description,
+main#MainContent .product__info-wrapper .product__text,
+main#MainContent .product__info-wrapper .accordion__title,
+main#MainContent .product__info-wrapper .accordion__content,
 main#MainContent .product__info-wrapper p,
-main#MainContent .product__info-wrapper label {
+main#MainContent .product__info-wrapper li,
+main#MainContent .product__info-wrapper label,
+main#MainContent .product__info-wrapper a:not(.button),
+main#MainContent .product__info-wrapper span:not(.badge):not(.button span),
+main#MainContent .product__info-wrapper .quantity__button,
+main#MainContent .product__info-wrapper .quantity__button svg,
+main#MainContent .cart__contents h1,
+main#MainContent .cart__contents h2,
+main#MainContent .cart__contents h3,
+main#MainContent .cart__contents p,
+main#MainContent .cart__contents a:not(.button),
+main#MainContent .cart__contents span:not(.badge):not(.button span),
+main#MainContent .cart__contents td,
+main#MainContent .cart__contents th,
+main#MainContent .cart__contents dt,
+main#MainContent .cart__contents dd,
+main#MainContent .cart__contents label,
+main#MainContent .cart__contents input,
+main#MainContent .cart__contents .quantity__button,
+main#MainContent .cart__contents .quantity__button svg,
+main#MainContent .cart__contents .cart-remove-button,
+main#MainContent .cart__contents .cart-remove-button svg,
+main#MainContent .cart__footer h2,
+main#MainContent .cart__footer p,
+main#MainContent .cart__footer small,
+main#MainContent .cart__footer span:not(.button span),
+main#MainContent .customer h1,
+main#MainContent .customer h2,
+main#MainContent .customer p,
+main#MainContent .customer a:not(.button),
+main#MainContent .customer label,
+main#MainContent .contact h1,
+main#MainContent .contact h2,
+main#MainContent .contact p,
+main#MainContent .contact label {
   color: ${p.textColor} !important;
   text-shadow: none !important;
 }

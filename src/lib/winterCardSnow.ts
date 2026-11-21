@@ -321,6 +321,17 @@ export function buildWinterCardSnowRuntimeJs(): string {
     }
   }
 
+  function hasDirectSnowCap(card) {
+    if (!card || !card.children) return false;
+    for (var c = 0; c < card.children.length; c++) {
+      var child = card.children[c];
+      if (child && child.classList && child.classList.contains('op-winter-snow-cap')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function decorateSnowCardsNow() {
     if (!opSnowActive || !document.body || opSnowMutating) return;
     var candidates;
@@ -335,7 +346,7 @@ export function buildWinterCardSnowRuntimeJs(): string {
       for (var i = 0; i < candidates.length; i++) {
         var card = candidates[i];
         if (!card || card.nodeType !== 1) continue;
-        if (card.getAttribute('data-op-snow-capped') === '1' && card.querySelector(':scope > .op-winter-snow-cap')) {
+        if (card.getAttribute('data-op-snow-capped') === '1' && hasDirectSnowCap(card)) {
           idx++;
           continue;
         }
@@ -350,7 +361,7 @@ export function buildWinterCardSnowRuntimeJs(): string {
         idx++;
         card.setAttribute('data-op-snow-capped', '1');
 
-        if (!card.querySelector(':scope > .op-winter-snow-cap')) {
+        if (!hasDirectSnowCap(card)) {
           var cap = document.createElement('div');
           cap.className = 'op-winter-snow-cap';
           cap.setAttribute('data-snow-variant', String(variant));

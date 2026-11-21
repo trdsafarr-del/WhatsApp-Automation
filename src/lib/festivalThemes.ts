@@ -928,6 +928,213 @@ body .site-header a {
   color: ${p.headerText} !important;
 }
 
+body .header-wrapper .cart-count-bubble,
+body .header-wrapper .cart-count-bubble span {
+  background-color: ${p.primary} !important;
+  color: ${p.primaryText} !important;
+}
+
+/* Global High-Contrast Guarantee for Sidebar Menu Drawer, Dropdowns, Search Modal, Cart Drawer & Filter Drawers
+   (In Shopify Dawn, #menu-drawer, .header__submenu, .mega-menu__content, .search-modal & .predictive-search
+   live INSIDE .header-wrapper, so they must explicitly override light header text with crisp dark ink.) */
+body .header-wrapper #menu-drawer,
+body .header-wrapper .menu-drawer,
+body .header-wrapper .menu-drawer__inner-container,
+body .header-wrapper .menu-drawer__navigation-container,
+body .header-wrapper .menu-drawer__navigation,
+body .header-wrapper .menu-drawer__submenu,
+body .header-wrapper .menu-drawer__inner-submenu,
+body .header-wrapper .menu-drawer__utility-links,
+body .header-wrapper .header__submenu,
+body .header-wrapper .mega-menu__content,
+body .header-wrapper .list-menu--disclosure,
+body .header-wrapper .search-modal,
+body .header-wrapper .search-modal__content,
+body .header-wrapper .predictive-search,
+body .header-wrapper .predictive-search__results-groups-wrapper,
+body .header-wrapper .disclosure__list-wrapper,
+body .cart-notification,
+body .cart-notification__header,
+body cart-drawer .drawer__inner,
+body .cart-drawer .drawer__inner,
+body .cart-drawer__empty-content,
+body .mobile-facets__inner,
+body .mobile-facets__submenu,
+body .mobile-facets__header,
+body .mobile-facets__footer,
+body .facets__display,
+body .quick-add-modal__content,
+body .product-popup-modal__content {
+  background-color: ${p.surfaceBg} !important;
+  background-image: none !important;
+  color: ${p.textColor} !important;
+  --color-foreground: ${textRgb} !important;
+  --color-background: ${pageBgRgb} !important;
+}
+
+body .header-wrapper #menu-drawer a,
+body .header-wrapper #menu-drawer span,
+body .header-wrapper #menu-drawer p,
+body .header-wrapper #menu-drawer li,
+body .header-wrapper #menu-drawer summary,
+body .header-wrapper #menu-drawer button,
+body .header-wrapper #menu-drawer svg,
+body .header-wrapper #menu-drawer .menu-drawer__menu-item,
+body .header-wrapper #menu-drawer .menu-drawer__close-button,
+body .header-wrapper #menu-drawer .menu-drawer__account,
+body .header-wrapper #menu-drawer .list-social__link,
+body .header-wrapper .menu-drawer a,
+body .header-wrapper .menu-drawer span,
+body .header-wrapper .menu-drawer summary,
+body .header-wrapper .menu-drawer button,
+body .header-wrapper .menu-drawer svg,
+body .header-wrapper .header__submenu a,
+body .header-wrapper .header__submenu span,
+body .header-wrapper .header__submenu summary,
+body .header-wrapper .header__submenu svg,
+body .header-wrapper .mega-menu__content a,
+body .header-wrapper .mega-menu__content span,
+body .header-wrapper .mega-menu__content p,
+body .header-wrapper .mega-menu__content h2,
+body .header-wrapper .mega-menu__content h3,
+body .header-wrapper .mega-menu__content svg,
+body .header-wrapper .list-menu--disclosure a,
+body .header-wrapper .list-menu--disclosure span,
+body .header-wrapper .disclosure__list-wrapper a,
+body .header-wrapper .disclosure__list-wrapper span,
+body .header-wrapper .search-modal label,
+body .header-wrapper .search-modal input,
+body .header-wrapper .search-modal button,
+body .header-wrapper .search-modal svg,
+body .header-wrapper .search-modal a,
+body .header-wrapper .search-modal span,
+body .header-wrapper .predictive-search a,
+body .header-wrapper .predictive-search span,
+body .header-wrapper .predictive-search p,
+body .header-wrapper .predictive-search h2,
+body .header-wrapper .predictive-search h3,
+body .header-wrapper .predictive-search svg,
+body .cart-notification h2,
+body .cart-notification h3,
+body .cart-notification p,
+body .cart-notification a:not(.button),
+body .cart-notification span:not(.button span),
+body .cart-notification button:not(.button),
+body .cart-notification svg,
+body cart-drawer .drawer__inner h2,
+body cart-drawer .drawer__inner h3,
+body cart-drawer .drawer__inner p,
+body cart-drawer .drawer__inner a:not(.button),
+body cart-drawer .drawer__inner span:not(.badge),
+body cart-drawer .drawer__inner label,
+body cart-drawer .drawer__inner td,
+body cart-drawer .drawer__inner th,
+body cart-drawer .drawer__inner input,
+body cart-drawer .drawer__inner .drawer__close,
+body cart-drawer .drawer__inner .drawer__close svg,
+body cart-drawer .drawer__inner .quantity__button,
+body cart-drawer .drawer__inner .quantity__button svg,
+body cart-drawer .drawer__inner .cart-remove-button,
+body cart-drawer .drawer__inner .cart-remove-button svg,
+body .mobile-facets__inner h2,
+body .mobile-facets__inner p,
+body .mobile-facets__inner a,
+body .mobile-facets__inner span,
+body .mobile-facets__inner label,
+body .mobile-facets__inner summary,
+body .mobile-facets__inner button:not(.button),
+body .mobile-facets__inner svg,
+body .facets__display span,
+body .facets__display label,
+body .facets__display a,
+body .facets__display p,
+body .facets__display input,
+body .quick-add-modal__content h1,
+body .quick-add-modal__content h2,
+body .quick-add-modal__content p,
+body .quick-add-modal__content span:not(.badge),
+body .quick-add-modal__content label,
+body .quick-add-modal__content a:not(.button),
+body .quick-add-modal__content .quick-add-modal__toggle,
+body .quick-add-modal__content .quick-add-modal__toggle svg,
+body .product-popup-modal__content h1,
+body .product-popup-modal__content h2,
+body .product-popup-modal__content p,
+body .product-popup-modal__content a:not(.button) {
+  color: ${p.textColor} !important;
+  text-shadow: none !important;
+}
+
+body .header-wrapper #menu-drawer .menu-drawer__menu-item {
+  border-bottom: 1px solid ${p.borderColor} !important;
+  font-weight: 600 !important;
+}
+
+body .header-wrapper #menu-drawer .menu-drawer__menu-item--active,
+body .header-wrapper #menu-drawer .menu-drawer__menu-item:hover,
+body .header-wrapper #menu-drawer .menu-drawer__menu-item:focus,
+body .header-wrapper .header__submenu .header__menu-item:hover {
+  background-color: ${p.surfaceAltBg} !important;
+  color: ${p.primary} !important;
+}
+
+body .header-wrapper #menu-drawer .menu-drawer__utility-links {
+  background-color: ${p.surfaceAltBg} !important;
+  border-top: 1px solid ${p.borderColor} !important;
+}
+
+body .header-wrapper .header__submenu,
+body .header-wrapper .mega-menu__content,
+body .header-wrapper .list-menu--disclosure,
+body .header-wrapper .predictive-search,
+body .cart-notification {
+  border: 1px solid ${p.borderColor} !important;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16) !important;
+}
+
+/* Primary Buttons always keep readable button text & icons even inside drawers/modals */
+body .button,
+body .button span,
+body .button svg,
+body .button--primary,
+body .button--primary span,
+body .button--primary svg,
+body .cart__checkout-button,
+body .cart__checkout-button span,
+body button[name="add"],
+body button[name="add"] span {
+  color: ${p.primaryText} !important;
+}
+
+/* Form inputs & selects stay crisp dark ink on white background everywhere */
+body input:not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+body textarea,
+body select {
+  background-color: #FFFFFF !important;
+  color: ${p.textColor} !important;
+  border-color: ${p.borderColor} !important;
+}
+body input::placeholder,
+body textarea::placeholder {
+  color: ${p.mutedTextColor} !important;
+  opacity: 0.9 !important;
+}
+body .field__label,
+body .customer .field label {
+  color: ${p.mutedTextColor} !important;
+}
+
+/* Keep Santa Roamer out of the way while a customer has the sidebar menu, cart drawer, or search open */
+body:has(#Details-menu-drawer-container[open]) #orderpulse-festival-roamer,
+body:has(.menu-drawer-container[open]) #orderpulse-festival-roamer,
+body:has(cart-drawer.active) #orderpulse-festival-roamer,
+body:has(details-modal details[open]) #orderpulse-festival-roamer,
+body:has(.mobile-facets__disclosure[open]) #orderpulse-festival-roamer {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.2s ease !important;
+}
+
 ${
   isFull
     ? `
@@ -948,8 +1155,21 @@ body footer.footer h2,
 body footer.footer p,
 body footer.footer span,
 body footer.footer li,
+body footer.footer svg,
 body .site-footer a {
   color: ${p.footerText} !important;
+}
+
+body footer.footer input:not([type="submit"]):not([type="button"]) {
+  background-color: #FFFFFF !important;
+  color: ${p.textColor} !important;
+}
+body footer.footer .field__label {
+  color: ${p.mutedTextColor} !important;
+}
+body footer.footer .newsletter-form__button,
+body footer.footer .newsletter-form__button svg {
+  color: ${p.textColor} !important;
 }
 `
     : ''

@@ -127,6 +127,7 @@ export function isPublicApiPath(pathname: string): boolean {
   if (clean === '/api/shopify-proxy' || clean.startsWith('/api/shopify-proxy/')) return true;
   if (
     clean === '/api/storefront/widget.js' ||
+    clean === '/api/storefront/theme' ||
     clean === '/api/storefront/auto-pincode' ||
     clean === '/api/storefront/reverse-pincode' ||
     clean === '/api/storefront/pincode-check' ||

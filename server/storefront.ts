@@ -1180,16 +1180,43 @@ ${buildWinterCardSnowRuntimeJs()}
         existingFx.parentNode.removeChild(existingFx);
       }
 
-      mountFestivalRoamer(ft);
-      mountWinterCardSnow(ft);
+      try { mountFestivalRoamer(ft); } catch (e) {}
+      try { mountWinterCardSnow(ft); } catch (e) {}
     } finally {
       isUpdatingOrderPulseDom = false;
     }
   }
 
+  function fetchFestivalThemeNow(attempt) {
+    var retryNum = typeof attempt === 'number' ? attempt : 0;
+    var themeUrl = APP_ORIGIN + '/api/storefront/theme?_t=' + Date.now();
+    fetch(themeUrl, { cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (data && data.ok && Object.prototype.hasOwnProperty.call(data, 'festivalThemePayload')) {
+          applyFestivalTheme(data.festivalThemePayload, false);
+        }
+      })
+      .catch(function () {
+        if (retryNum < 2) {
+          setTimeout(function () {
+            fetchFestivalThemeNow(retryNum + 1);
+          }, retryNum === 0 ? 800 : 2000);
+        }
+      });
+  }
+
   function runCheck(pincode, isInitialBoot) {
-    var url = APP_ORIGIN + '/api/storefront/pincode-check?pincode=' + encodeURIComponent(pincode || '');
-    fetch(url)
+    var url =
+      APP_ORIGIN +
+      '/api/storefront/pincode-check?pincode=' +
+      encodeURIComponent(pincode || '') +
+      '&_t=' +
+      Date.now();
+    fetch(url, { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data || !data.ok) return;
@@ -1239,6 +1266,9 @@ ${buildWinterCardSnowRuntimeJs()}
     if (cachedTheme) {
       applyFestivalTheme(cachedTheme, true);
     }
+
+    // Fetch live festival theme via ultra-fast dedicated endpoint in parallel (never blocked by Delhivery/catalog)
+    fetchFestivalThemeNow(0);
 
     var savedPin = getSavedPin();
     if (savedPin) {
@@ -1382,10 +1412,34 @@ export function registerStorefrontRoutes(app: Express) {
     } satisfies PincodeAutoDetectResult);
   });
 
+  // Ultra-fast dedicated Festival Theme endpoint (never blocked by Delhivery/IndiaPost or 280KB catalog JSON-LD)
+  app.get('/api/storefront/theme', async (_req: Request, res: Response) => {
+    setPublicCors(res);
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    await store.ensureHydrated(true);
+    const settings = store.getSettings();
+    const storefrontConfig = store.getStorefrontConfig();
+    const products = store.getProducts();
+    const festivalTheme = normalizeFestivalThemeConfig(storefrontConfig.festivalTheme);
+    const liveCatalog = festivalTheme.enabled
+      ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, products)
+      : [];
+    const festivalThemePayload = buildFestivalThemePayload(festivalTheme, {
+      catalogProducts: liveCatalog,
+      shopName: settings.shopName,
+    });
+    res.json({
+      ok: true,
+      updatedAt: festivalTheme.updatedAt || null,
+      festivalThemePayload,
+    });
+  });
+
   // Public Storefront Pincode Check & Product Filter API (CORS-enabled for Shopify theme)
   app.get('/api/storefront/pincode-check', async (req: Request, res: Response) => {
     setPublicCors(res);
-    await store.ensureHydrated();
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    await store.ensureHydrated(true);
     const rawPin = String(req.query.pincode || '');
     const pincode = normalizeIndianPincode(rawPin);
     const settings = store.getSettings();
@@ -1607,7 +1661,7 @@ export function registerStorefrontRoutes(app: Express) {
       req.protocol
     );
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
     res.send(buildStorefrontWidgetScript(origin));
   });
 
