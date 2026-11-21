@@ -888,6 +888,13 @@ main#MainContent h2,
 main#MainContent h3 {
   color: ${p.textColor} !important;
 }
+
+main#MainContent .product__info-wrapper,
+main#MainContent .product__info-wrapper.scroll-trigger,
+main#MainContent .scroll-trigger.animate--slide-in,
+main#MainContent .scroll-trigger.animate--fade-in {
+  opacity: 1 !important;
+}
 `
     : '';
 

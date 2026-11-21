@@ -355,6 +355,10 @@ test('Festival CSS guarantees crisp readable text inside mobile sidebar drawer, 
   assert.ok(xmas.css.includes('body .mobile-facets__inner'));
   // Santa roamer hides cleanly whenever the mobile menu drawer or cart drawer is open
   assert.ok(xmas.css.includes('body:has(#Details-menu-drawer-container[open]) #orderpulse-festival-roamer'));
+  // Product details panel (.product__info-wrapper) must never freeze at Dawn scroll-trigger opacity: 0.01
+  assert.ok(xmas.css.includes('main#MainContent .product__info-wrapper.scroll-trigger'));
+  assert.ok(xmas.css.includes('opacity: 1 !important;'));
+  assert.equal(xmas.css.includes('animation: none !important;\n  transition: transform'), false);
 });
 
 test('0ms Shopify theme.liquid pre-baker generates valid Liquid+JS snippet and cleanly injects/removes markers', () => {

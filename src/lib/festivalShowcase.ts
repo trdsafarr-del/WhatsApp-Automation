@@ -1590,15 +1590,30 @@ main#MainContent .product__info-wrapper h3,
 main#MainContent .product__info-wrapper .price-item,
 main#MainContent .product__info-wrapper .product__description,
 main#MainContent .product__info-wrapper .product__text,
+main#MainContent .product__info-wrapper .product__tax,
+main#MainContent .product__info-wrapper .broomies-usp,
+main#MainContent .product__info-wrapper .broomies-usp span,
+main#MainContent .product__info-wrapper .cake-offer-box,
+main#MainContent .product__info-wrapper .cake-offer-box b,
+main#MainContent .product__info-wrapper .benefits-grid,
+main#MainContent .product__info-wrapper .benefits-grid *,
 main#MainContent .product__info-wrapper .accordion__title,
 main#MainContent .product__info-wrapper .accordion__content,
+main#MainContent .product__info-wrapper .product-description-toggle,
+main#MainContent .product__info-wrapper .share-button__button,
 main#MainContent .product__info-wrapper p,
 main#MainContent .product__info-wrapper li,
+main#MainContent .product__info-wrapper b,
+main#MainContent .product__info-wrapper strong,
+main#MainContent .product__info-wrapper i,
+main#MainContent .product__info-wrapper em,
+main#MainContent .product__info-wrapper small,
 main#MainContent .product__info-wrapper label,
 main#MainContent .product__info-wrapper a:not(.button),
 main#MainContent .product__info-wrapper span:not(.badge):not(.button span),
 main#MainContent .product__info-wrapper .quantity__button,
 main#MainContent .product__info-wrapper .quantity__button svg,
+main#MainContent .product__info-wrapper .share-button__button svg,
 main#MainContent .cart__contents h1,
 main#MainContent .cart__contents h2,
 main#MainContent .cart__contents h3,
@@ -1630,6 +1645,23 @@ main#MainContent .contact p,
 main#MainContent .contact label {
   color: ${p.textColor} !important;
   text-shadow: none !important;
+}
+main#MainContent .product__info-wrapper .product-form__input input[type="radio"] + label {
+  background: #FFFFFF !important;
+  color: ${p.textColor} !important;
+  border-color: ${p.borderColor} !important;
+}
+main#MainContent .product__info-wrapper .product-form__input input[type="radio"]:checked + label {
+  background: ${p.primary} !important;
+  color: ${p.primaryText} !important;
+  border-color: ${p.primary} !important;
+}
+main#MainContent .product__info-wrapper .quantity__input,
+main#MainContent .product__info-wrapper input:not([type="checkbox"]):not([type="radio"]),
+main#MainContent .product__info-wrapper select,
+main#MainContent .product__info-wrapper textarea {
+  color: ${p.textColor} !important;
+  background-color: #FFFFFF !important;
 }
 `
     : '';
@@ -1875,8 +1907,19 @@ main#MainContent .product__info-wrapper {
   border-top: 3px solid ${p.accent} !important;
   border-radius: 16px !important;
   overflow: hidden !important;
+  opacity: 1 !important;
   box-shadow: 0 12px 26px -10px ${bg3d.glowShadow}, 0 3px 8px -2px rgba(0, 0, 0, 0.12) !important;
   transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+main#MainContent .product__info-wrapper {
+  background: rgba(255, 253, 250, 0.98) !important;
+  padding: 22px 24px !important;
+  opacity: 1 !important;
+}
+@media (max-width: 768px) {
+  main#MainContent .product__info-wrapper {
+    padding: 16px !important;
+  }
 }
 main#MainContent .card .card__content,
 main#MainContent .card-wrapper .card .card__content {

@@ -156,13 +156,23 @@ main#MainContent .banner__box,
 #orderpulse-festival-hero .op-fest-prod-card {
   position: relative !important;
   overflow: visible !important;
+  opacity: 1 !important;
   border-top: 2px solid rgba(255, 255, 255, 0.96) !important;
   border-color: rgba(186, 230, 253, 0.78) !important;
   box-shadow:
     0 12px 26px -10px rgba(4, 18, 32, 0.36),
     0 0 0 1px rgba(224, 242, 254, 0.65) !important;
-  animation: none !important;
   transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+/* Never let Shopify Dawn .scroll-trigger.animate--slide-in / .animate--fade-in freeze product details at opacity: 0.01 */
+main#MainContent .product__info-wrapper,
+main#MainContent .product__info-wrapper.scroll-trigger,
+main#MainContent .product__info-wrapper.animate--slide-in,
+main#MainContent .scroll-trigger.animate--slide-in,
+main#MainContent .scroll-trigger.animate--fade-in {
+  opacity: 1 !important;
+  transform: none !important;
 }
 
 /* Keep product media corners crisp inside overflow:visible snow-capped cards */
