@@ -5,7 +5,7 @@ import {
   stripUndefinedDeep,
   toSafeFirestoreDocId,
 } from './firestorePayload';
-import { hasConfiguredShopify } from './orderRules';
+import { hasConfiguredShopify, mergeProgressedOrderRecords } from './orderRules';
 import {
   rtdb,
   rtdbAuth,
@@ -45,6 +45,7 @@ export interface RtdbSyncTracker {
   configSignature: string | null;
   whatsappLiveSignature: string | null;
   remoteWhatsappMeta: RtdbWhatsAppMeta | null;
+  remoteOrdersById: Map<string, OrderRecord>;
   orderSignatures: Map<string, string>;
   productSignatures: Map<string, string>;
   permissionBlocked: boolean;
@@ -57,6 +58,7 @@ export function createRtdbSyncTracker(): RtdbSyncTracker {
     configSignature: null,
     whatsappLiveSignature: null,
     remoteWhatsappMeta: null,
+    remoteOrdersById: new Map<string, OrderRecord>(),
     orderSignatures: new Map<string, string>(),
     productSignatures: new Map<string, string>(),
     permissionBlocked: false,
@@ -293,11 +295,13 @@ export function subscribeToRtdbCloudData(
 
       const ordersList: OrderRecord[] = [];
       tracker.orderSignatures.clear();
+      tracker.remoteOrdersById.clear();
       if (raw.orders && typeof raw.orders === 'object') {
         for (const [key, item] of Object.entries(raw.orders)) {
           if (item && typeof item === 'object' && item.orderNumber) {
             const cleanOrder = sanitizeOrderForRtdb(item);
             ordersList.push(cleanOrder);
+            tracker.remoteOrdersById.set(key, cleanOrder);
             tracker.orderSignatures.set(key, computeContentSignature(cleanOrder));
           }
         }
@@ -402,13 +406,19 @@ export async function syncDeltaToRtdb(
     }
   }
 
+  const nextRemoteOrders: Array<[string, OrderRecord]> = [];
   for (const order of state.orders) {
     const cleanOrder = sanitizeOrderForRtdb(order);
     const key = cleanOrder.id;
-    const sig = computeContentSignature(cleanOrder);
+    const remoteOrder = tracker.remoteOrdersById.get(key);
+    const safeOrder = remoteOrder
+      ? sanitizeOrderForRtdb(mergeProgressedOrderRecords(cleanOrder, remoteOrder))
+      : cleanOrder;
+    const sig = computeContentSignature(safeOrder);
     if (tracker.orderSignatures.get(key) === sig) continue;
-    patch[`orders/${key}`] = cleanOrder;
+    patch[`orders/${key}`] = safeOrder;
     nextOrderSigs.push([key, sig]);
+    nextRemoteOrders.push([key, safeOrder]);
   }
 
   for (const product of state.products) {
@@ -441,6 +451,9 @@ export async function syncDeltaToRtdb(
     }
     for (const [key, sig] of nextOrderSigs) {
       tracker.orderSignatures.set(key, sig);
+    }
+    for (const [key, savedOrder] of nextRemoteOrders) {
+      tracker.remoteOrdersById.set(key, savedOrder);
     }
     for (const [key, sig] of nextProductSigs) {
       tracker.productSignatures.set(key, sig);

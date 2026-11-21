@@ -2,7 +2,7 @@ import type {
   FestivalPresetId,
   FestivalThemeConfig,
   FestivalThemePreset,
-} from './festivalThemes';
+} from './festivalThemes.js';
 
 export interface FestivalFeaturedProduct {
   id: string;
@@ -1362,21 +1362,36 @@ export function buildFestivalGarlandHtml(preset: FestivalThemePreset): string {
  */
 export function buildFestivalParticlesHtml(preset: FestivalThemePreset): string {
   const p = preset.palette;
-  const count = 18;
+  const count = preset.effectStyle === 'snow' ? 36 : 18;
   const items: string[] = [];
 
   for (let i = 0; i < count; i += 1) {
-    const left = Math.round(((i * 5.7 + 3) % 94) + 3);
-    const dur = (7.5 + (i % 6) * 1.5).toFixed(1);
-    const delay = ((i % 7) * 0.85).toFixed(1);
+    const left = Math.round(((i * 7.3 + 2.5) % 95) + 2);
+    const dur = (7.2 + (i % 7) * 1.45).toFixed(1);
+    const delay = ((i % 9) * 0.72).toFixed(1);
 
     if (preset.effectStyle === 'snow') {
-      const size = 14 + (i % 4) * 5;
-      items.push(
-        `<span class="op-fest-particle op-fest-snow" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${dur}s;animation-delay:${delay}s;">` +
-          `<svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9L4.9 19.1"/></svg>` +
-        `</span>`
-      );
+      const layer = i % 3; // 0 = foreground 3D crystal, 1 = mid crystal, 2 = distant frost orb
+      if (layer === 0) {
+        const size = 18 + (i % 3) * 5;
+        items.push(
+          `<span class="op-fest-particle op-fest-snow op-snow-layer-near" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${(6.8 + (i % 4) * 1.3).toFixed(1)}s;animation-delay:${delay}s;">` +
+            `<svg viewBox="0 0 28 28" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"><path d="M14 2v24M2 14h24M5.5 5.5l17 17M22.5 5.5l-17 17M14 6l-2.6-2.2M14 6l2.6-2.2M14 22l-2.6 2.2M14 22l2.6 2.2M6 14l-2.2-2.6M6 14l-2.2 2.6M22 14l2.2-2.6M22 14l2.2 2.6"/><circle cx="14" cy="14" r="2.2" fill="#E0F2FE" stroke="none"/></svg>` +
+          `</span>`
+        );
+      } else if (layer === 1) {
+        const size = 12 + (i % 4) * 3;
+        items.push(
+          `<span class="op-fest-particle op-fest-snow op-snow-layer-mid" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${dur}s;animation-delay:${delay}s;">` +
+            `<svg viewBox="0 0 24 24" fill="none" stroke="#E0F2FE" stroke-width="2" stroke-linecap="round"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9L4.9 19.1"/></svg>` +
+          `</span>`
+        );
+      } else {
+        const size = 5 + (i % 3) * 2.5;
+        items.push(
+          `<span class="op-fest-particle op-fest-snow-orb" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${(10.5 + (i % 5) * 1.6).toFixed(1)}s;animation-delay:${delay}s;"></span>`
+        );
+      }
     } else if (preset.id === 'valentine' || preset.id === 'mothers_day') {
       const size = 12 + (i % 4) * 4;
       const col = i % 2 === 0 ? '#FB7185' : p.accent;
@@ -1850,11 +1865,26 @@ body .shopify-section-group-footer-group footer.footer {
   50% { opacity: 1; transform: scale(1.18); }
 }
 @keyframes opSnowDrift {
-  0% { transform: translate3d(0, -24px, 0) rotate(0deg); opacity: 0; }
-  12% { opacity: 0.92; }
-  50% { transform: translate3d(18px, 50vh, 0) rotate(180deg); opacity: 0.85; }
-  88% { opacity: 0.72; }
-  100% { transform: translate3d(-14px, 106vh, 0) rotate(360deg); opacity: 0; }
+  0% { transform: translate3d(0, -28px, 0) rotate(0deg) scale(0.92); opacity: 0; }
+  12% { opacity: 0.94; }
+  35% { transform: translate3d(24px, 34vh, 0) rotate(125deg) scale(1.04); opacity: 0.9; }
+  68% { transform: translate3d(-20px, 70vh, 0) rotate(250deg) scale(0.96); opacity: 0.82; }
+  90% { opacity: 0.65; }
+  100% { transform: translate3d(12px, 108vh, 0) rotate(360deg) scale(0.88); opacity: 0; }
+}
+@keyframes opSnowDriftNear {
+  0% { transform: translate3d(0, -34px, 0) rotate(0deg) rotateY(0deg); opacity: 0; }
+  10% { opacity: 0.96; }
+  45% { transform: translate3d(-28px, 46vh, 0) rotate(170deg) rotateY(180deg); opacity: 0.92; }
+  85% { opacity: 0.78; }
+  100% { transform: translate3d(24px, 108vh, 0) rotate(360deg) rotateY(360deg); opacity: 0; }
+}
+@keyframes opSnowOrbDrift {
+  0% { transform: translate3d(0, -18px, 0) scale(0.8); opacity: 0; }
+  15% { opacity: 0.72; }
+  50% { transform: translate3d(16px, 52vh, 0) scale(1.1); opacity: 0.65; }
+  90% { opacity: 0.45; }
+  100% { transform: translate3d(-12px, 106vh, 0) scale(0.85); opacity: 0; }
 }
 
 #orderpulse-festival-garland {
@@ -2125,6 +2155,20 @@ body .shopify-section-group-footer-group footer.footer {
   background: transparent !important;
   box-shadow: none !important;
   animation-name: opSnowDrift !important;
+  filter: drop-shadow(0 0 6px rgba(224, 242, 254, 0.78));
+}
+.op-fest-snow.op-snow-layer-near {
+  animation-name: opSnowDriftNear !important;
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.92));
+}
+.op-fest-snow.op-snow-layer-mid {
+  opacity: 0.85;
+}
+.op-fest-snow-orb {
+  border-radius: 999px !important;
+  background: radial-gradient(circle at 35% 35%, #FFFFFF 0%, #DBEAFE 65%, rgba(186, 230, 253, 0) 100%) !important;
+  box-shadow: 0 0 8px rgba(224, 242, 254, 0.68) !important;
+  animation-name: opSnowOrbDrift !important;
 }
 .op-fest-snow svg,
 .op-fest-shape svg {

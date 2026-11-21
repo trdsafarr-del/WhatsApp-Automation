@@ -9,6 +9,7 @@ import {
   sanitizePreviewPath,
 } from '../src/lib/festivalThemes.js';
 import { buildSantaRoamerRuntimeJs } from '../src/lib/santaRoamer.js';
+import { buildWinterCardSnowRuntimeJs } from '../src/lib/winterCardSnow.js';
 import { buildBakeryStorefrontSchema } from '../src/lib/geoSeo.js';
 import {
   buildProductJsonLd,
@@ -866,9 +867,11 @@ function buildStorefrontWidgetScript(origin: string): string {
 
   var autoAttempted = false;
 ${buildSantaRoamerRuntimeJs()}
+${buildWinterCardSnowRuntimeJs()}
 
   function removeFestivalTheme() {
     stopSantaRoamer();
+    removeWinterCardSnow();
     var ids = [
       'orderpulse-festival-theme-css',
       'orderpulse-festival-bg-3d',
@@ -1015,6 +1018,7 @@ ${buildSantaRoamerRuntimeJs()}
     }
 
     mountFestivalRoamer(ft);
+    mountWinterCardSnow(ft);
   }
 
   function runCheck(pincode, isInitialBoot) {
@@ -1306,6 +1310,7 @@ export function registerStorefrontRoutes(app: Express) {
     const heroParam = req.query.hero;
     const art3dParam = req.query.art3d;
     const bg3dParam = req.query.bg3d;
+    const snowCardsParam = req.query.snowcards;
     const picksParam =
       typeof req.query.picks === 'string' && req.query.picks.trim()
         ? req.query.picks
@@ -1336,6 +1341,8 @@ export function registerStorefrontRoutes(app: Express) {
         art3dParam === '0' ? false : art3dParam === '1' ? true : savedTheme.show3DArticles,
       show3DBackground:
         bg3dParam === '0' ? false : bg3dParam === '1' ? true : savedTheme.show3DBackground,
+      show3DCardSnow:
+        snowCardsParam === '0' ? false : snowCardsParam === '1' ? true : savedTheme.show3DCardSnow,
       featuredProductHandles:
         picksParam !== undefined ? picksParam : savedTheme.featuredProductHandles,
       customBannerText: bannerTextParam !== undefined ? bannerTextParam : savedTheme.customBannerText,

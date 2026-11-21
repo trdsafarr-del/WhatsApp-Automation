@@ -296,6 +296,21 @@ export function ThemeStudioView({
     );
   };
 
+  const handleToggle3DCardSnow = () => {
+    const nextShow = draft.show3DCardSnow === false;
+    const nextConfig: FestivalThemeConfig = {
+      ...draft,
+      show3DCardSnow: nextShow,
+    };
+    setPreviewMode('festive');
+    void persistFestivalTheme(
+      nextConfig,
+      nextShow
+        ? '3D sculpted snow buildup, icicles & frost animations enabled on all storefront cards.'
+        : '3D snow accumulation on cards turned off.'
+    );
+  };
+
   const handleToggleFeaturedProduct = (handle: string) => {
     const clean = handle.trim();
     if (!clean) return;
@@ -841,6 +856,36 @@ export function ThemeStudioView({
                       <span
                         className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                           draft.show3DArticles !== false ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 border-t border-slate-800/80 pt-2.5">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-200">
+                        3D Snow &amp; Icicles on All Cards
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        3D snowdrift caps, icicles &amp; frost hover sheen
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      data-testid="toggle-festival-3d-card-snow"
+                      aria-checked={draft.show3DCardSnow !== false}
+                      aria-label="Toggle 3D Snow and Icicles on All Storefront Cards"
+                      disabled={isSaving}
+                      onClick={handleToggle3DCardSnow}
+                      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors ${
+                        draft.show3DCardSnow !== false
+                          ? 'border-emerald-400/60 bg-emerald-600'
+                          : 'border-slate-700 bg-slate-800'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          draft.show3DCardSnow !== false ? 'translate-x-5' : 'translate-x-1'
                         }`}
                       />
                     </button>

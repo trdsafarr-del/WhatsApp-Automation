@@ -24,24 +24,53 @@ export function DashboardLockScreen({ onUnlocked }: DashboardLockScreenProps) {
     setSubmitting(true);
     setErrorMsg(null);
     try {
-      const res = await dashboardFetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: trimmed }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        token?: string;
-        error?: string;
-      };
+      const attemptLogin = () =>
+        dashboardFetch('/api/auth/login', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passcode: trimmed }),
+        });
+
+      let res: Response;
+      try {
+        res = await attemptLogin();
+      } catch {
+        await new Promise((r) => setTimeout(r, 700));
+        res = await attemptLogin();
+      }
+      if (res.status >= 500 && res.status <= 504) {
+        await new Promise((r) => setTimeout(r, 700));
+        res = await attemptLogin();
+      }
+
+      const rawText = await res.text();
+      let data: { ok?: boolean; token?: string; error?: string } = {};
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText) as { ok?: boolean; token?: string; error?: string };
+        } catch {
+          data = {};
+        }
+      }
+
       if (!res.ok || !data.ok) {
-        setErrorMsg(data.error || 'Incorrect password. Please try again.');
+        if (res.status === 401) {
+          setErrorMsg(data.error || 'Incorrect password. Please try again.');
+        } else if (res.status >= 500) {
+          setErrorMsg(
+            data.error ||
+              `Server error (${res.status}) while verifying password. Please wait a few seconds and try again.`
+          );
+        } else {
+          setErrorMsg(data.error || 'Incorrect password. Please try again.');
+        }
         return;
       }
       setPasscode('');
       onUnlocked(data.token || '');
     } catch {
-      setErrorMsg('Unable to verify password right now. Please try again.');
+      setErrorMsg('Unable to reach server to verify password. Please check your connection and try again.');
     } finally {
       setSubmitting(false);
     }

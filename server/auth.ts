@@ -157,7 +157,7 @@ function buildSessionCookieString(token: string, maxAgeSeconds: number, isHttps:
     `Max-Age=${Math.max(0, maxAgeSeconds)}`,
   ];
   if (isHttps) {
-    parts.push('SameSite=None', 'Secure');
+    parts.push('SameSite=None', 'Secure', 'Partitioned');
   } else {
     parts.push('SameSite=Lax');
   }
@@ -170,7 +170,36 @@ function isRequestHttps(req: Request): boolean {
   return fwd.includes('https');
 }
 
+export function extractPasscodeFromBody(body: unknown): string {
+  if (!body) return '';
+  if (typeof body === 'string') {
+    const trimmed = body.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed) as { passcode?: unknown; password?: unknown };
+        const val = parsed.passcode ?? parsed.password;
+        if (typeof val === 'string' || typeof val === 'number') {
+          return String(val).trim();
+        }
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  }
+  if (typeof body === 'object') {
+    const record = body as { passcode?: unknown; password?: unknown };
+    const val = record.passcode ?? record.password;
+    if (typeof val === 'string' || typeof val === 'number') {
+      return String(val).trim();
+    }
+  }
+  return '';
+}
+
 export function registerDashboardAuth(app: Express): void {
+  app.set('trust proxy', 1);
+
   // Status check (always public)
   app.get('/api/auth/status', (req: Request, res: Response) => {
     const token = extractRequestDashboardToken(req);
@@ -181,7 +210,7 @@ export function registerDashboardAuth(app: Express): void {
 
   // Unlock with dashboard password
   app.post('/api/auth/login', async (req: Request, res: Response) => {
-    const submitted = typeof req.body?.passcode === 'string' ? req.body.passcode : '';
+    const submitted = extractPasscodeFromBody(req.body);
     const expected = getConfiguredDashboardPasscode();
 
     if (!verifyPasscodeMatch(submitted, expected)) {

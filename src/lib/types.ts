@@ -38,6 +38,7 @@ export interface OrderRecord {
   financialStatus: string;
   fulfillmentStatus?: string | null;
   shipmentStatus?: string | null;
+  shopifyShipmentSyncedAt?: string | null;
   fulfilledAt?: string | null;
   shopifyCancelledAt?: string | null;
   paymentMethod?: string;

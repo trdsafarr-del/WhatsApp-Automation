@@ -93,8 +93,8 @@ export function WhatsAppQrView({
               </p>
               <p className="mt-0.5 leading-relaxed">
                 {display.isRemoteLinked
-                  ? 'Your WhatsApp login session is synced from Cloud Redis—no QR re-scan is needed here. Vercel serverless stops functions between requests, so keep your persistent Node host (Railway / Render / AI Studio) active for 24/7 message sending & listening.'
-                  : <>Vercel stops serverless functions after each request, so live WhatsApp QR pairing and 24/7 message listening cannot stay open on <span className="font-mono text-white">vercel.app</span> alone. Run this app on Railway, Render, Fly.io, or a VPS (<span className="font-mono text-white">npm start</span>) to link WhatsApp QR permanently.</>}
+                  ? 'Your WhatsApp login session is synced live from Railway via Firebase RTDB — no QR re-scan or socket action is needed on Vercel. Keep your 24/7 Railway host running for uninterrupted poll sending & confirmation detection.'
+                  : <>Vercel serverless runs in read-only mode for WhatsApp so it never competes with or logs out your 24/7 Railway session. Open your persistent Railway / Node host (<span className="font-mono text-white">npm start</span>) to link WhatsApp QR once.</>}
               </p>
             </div>
           </div>

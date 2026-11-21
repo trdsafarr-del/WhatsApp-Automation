@@ -45,6 +45,7 @@ async function startServer() {
   await store.ensureHydrated(true);
 
   const app = express();
+  app.set('trust proxy', 1);
 
   app.use(
     express.json({
@@ -473,8 +474,14 @@ async function startServer() {
     if (!shouldPreserveRecentLocalNote(existing) && payload.note !== undefined) {
       existing.orderNote = parsed.orderNote;
     }
-    if (parsed.fulfillmentStatus !== undefined) existing.fulfillmentStatus = parsed.fulfillmentStatus;
-    if (parsed.shipmentStatus !== undefined) existing.shipmentStatus = parsed.shipmentStatus;
+    existing.fulfillmentStatus = parsed.fulfillmentStatus ?? null;
+    existing.shipmentStatus = parsed.shipmentStatus ?? null;
+    existing.shopifyShipmentSyncedAt = new Date().toISOString();
+    if ((parsed.shipmentStatus || '').trim().toLowerCase() !== 'delivered') {
+      existing.deliveredAt = null;
+    } else if (!existing.deliveredAt) {
+      existing.deliveredAt = parsed.deliveredAt || parsed.fulfilledAt || new Date().toISOString();
+    }
     if (parsed.fulfilledAt) existing.fulfilledAt = parsed.fulfilledAt;
     if (parsed.trackingUrl) existing.trackingUrl = parsed.trackingUrl;
     if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;

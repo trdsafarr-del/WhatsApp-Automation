@@ -382,12 +382,17 @@ class PersistentStore {
   private lastAuthBackupAtMs = 0;
   private lastAuthBackupDigest: string | null = null;
   private lastCredsBackupDigest: string | null = null;
+  private authBackupQueue: Promise<void> = Promise.resolve();
   private rtdbConfigSig: string | null = null;
   private rtdbOrderSigs = new Map<string, string>();
   private rtdbProductSigs = new Map<string, string>();
 
   constructor() {
-    ensureDataDir();
+    try {
+      ensureDataDir();
+    } catch {
+      // Allow serverless cold starts to proceed in memory if local disk is read-only/unavailable
+    }
     this.state = this.loadState();
     this.pollMessages = this.loadPollCache();
   }
@@ -529,8 +534,8 @@ class PersistentStore {
   async ensureHydrated(force = false): Promise<void> {
     if (!this.isCloudSyncEnabled()) return;
     const now = Date.now();
-    // Lightweight ~150-byte revision + live WhatsApp check every 15s on Vercel, 20s on persistent servers
-    const ttlMs = process.env.VERCEL ? 15_000 : 20_000;
+    // Lightweight ~150-byte revision + live WhatsApp check every 5s on Vercel, 15s on persistent servers
+    const ttlMs = process.env.VERCEL ? 5_000 : 15_000;
     if (!force && this.lastHydratedAtMs > 0 && now - this.lastHydratedAtMs < ttlMs) {
       return;
     }
@@ -698,7 +703,7 @@ class PersistentStore {
               'orderpulse_server/polls'
             );
             if (remotePolls && typeof remotePolls === 'object') {
-              this.pollMessages = remotePolls;
+              this.pollMessages = { ...remotePolls, ...this.pollMessages };
               this.writeLocalPollCache();
             } else if (Object.keys(this.pollMessages).length > 0) {
               await rtdbRestPut('orderpulse_server/polls', stripUndefinedDeep(this.pollMessages));
@@ -981,15 +986,19 @@ class PersistentStore {
   }
 
   private writeLocalState(nextState: DatabaseState) {
-    ensureDataDir();
-    const serialized = JSON.stringify(nextState, null, 2);
-    const tmp = `${DB_PATH}.tmp`;
-    fs.writeFileSync(tmp, serialized, 'utf8');
-    fs.renameSync(tmp, DB_PATH);
+    try {
+      ensureDataDir();
+      const serialized = JSON.stringify(nextState, null, 2);
+      const tmp = `${DB_PATH}.tmp`;
+      fs.writeFileSync(tmp, serialized, 'utf8');
+      fs.renameSync(tmp, DB_PATH);
 
-    const backupTmp = `${DB_BACKUP_PATH}.tmp`;
-    fs.writeFileSync(backupTmp, serialized, 'utf8');
-    fs.renameSync(backupTmp, DB_BACKUP_PATH);
+      const backupTmp = `${DB_BACKUP_PATH}.tmp`;
+      fs.writeFileSync(backupTmp, serialized, 'utf8');
+      fs.renameSync(backupTmp, DB_BACKUP_PATH);
+    } catch {
+      // Non-fatal on ephemeral/read-only serverless containers
+    }
   }
 
   private persistState(nextState: DatabaseState) {
@@ -1021,21 +1030,25 @@ class PersistentStore {
   }
 
   private writeLocalPollCache() {
-    ensureDataDir();
-    const serialized = JSON.stringify(this.pollMessages);
-    const tmp = `${POLL_CACHE_PATH}.tmp`;
-    fs.writeFileSync(tmp, serialized, 'utf8');
-    fs.renameSync(tmp, POLL_CACHE_PATH);
+    try {
+      ensureDataDir();
+      const serialized = JSON.stringify(this.pollMessages);
+      const tmp = `${POLL_CACHE_PATH}.tmp`;
+      fs.writeFileSync(tmp, serialized, 'utf8');
+      fs.renameSync(tmp, POLL_CACHE_PATH);
 
-    const backupTmp = `${POLL_BACKUP_PATH}.tmp`;
-    fs.writeFileSync(backupTmp, serialized, 'utf8');
-    fs.renameSync(backupTmp, POLL_BACKUP_PATH);
+      const backupTmp = `${POLL_BACKUP_PATH}.tmp`;
+      fs.writeFileSync(backupTmp, serialized, 'utf8');
+      fs.renameSync(backupTmp, POLL_BACKUP_PATH);
+    } catch {
+      // Non-fatal on ephemeral containers
+    }
   }
 
-  private persistPollCache() {
+  private persistPollCache(flushNow = false) {
     this.writeLocalPollCache();
     if (!this.isCloudSyncEnabled()) return;
-    if (process.env.VERCEL) {
+    if (process.env.VERCEL || flushNow) {
       this.flushPendingPollsNow();
       return;
     }
@@ -1095,82 +1108,102 @@ class PersistentStore {
    * bursts do not consume gigabytes of Redis bandwidth.
    */
   async backupAuthFiles(authDir: string, options?: { force?: boolean }): Promise<void> {
-    if (!this.isCloudSyncEnabled() || !fs.existsSync(authDir)) return;
-    const isRtdb = getRtdbServerConfig() !== null;
-    const allowFullBundle =
-      isRtdb ||
-      shouldBackupWhatsAppAuth({
-        lastBackupAtMs: this.lastAuthBackupAtMs,
-        force: options?.force,
-      });
-    try {
-      const credsPath = path.join(authDir, 'creds.json');
-      const credsContent = fs.existsSync(credsPath) ? fs.readFileSync(credsPath, 'utf8') : '';
-      if (!credsContent) return;
+    if (process.env.VERCEL || !this.isCloudSyncEnabled() || !fs.existsSync(authDir)) return;
+    const runBackup = async () => {
+      const isRtdb = getRtdbServerConfig() !== null;
+      const allowFullBundle =
+        isRtdb ||
+        shouldBackupWhatsAppAuth({
+          lastBackupAtMs: this.lastAuthBackupAtMs,
+          force: options?.force,
+        });
+      try {
+        const credsPath = path.join(authDir, 'creds.json');
+        const credsContent = fs.existsSync(credsPath) ? fs.readFileSync(credsPath, 'utf8') : '';
+        if (!credsContent) return;
+        // Validate creds.json is complete valid JSON before backing up (never upload a truncated write)
+        JSON.parse(credsContent);
 
-      const credsDigest = crypto.createHash('sha256').update(credsContent).digest('hex');
+        const credsDigest = crypto.createHash('sha256').update(credsContent).digest('hex');
 
-      // On Upstash free tier, always keep tiny creds.json (~2 KB) fresh even between 15m full bundle windows
-      if (!allowFullBundle) {
-        if (credsDigest === this.lastCredsBackupDigest) return;
-        await upstashSet(REDIS_WA_CREDS_KEY, credsContent);
-        this.lastCredsBackupDigest = credsDigest;
-        return;
-      }
-
-      const entries = fs.readdirSync(authDir);
-      const fileEntries: Array<{ name: string; size: number }> = [];
-      for (const name of entries) {
-        const fullPath = path.join(authDir, name);
-        const stat = fs.statSync(fullPath);
-        if (stat.isFile()) {
-          fileEntries.push({ name, size: stat.size });
+        // On Upstash free tier, always keep tiny creds.json (~2 KB) fresh even between 15m full bundle windows
+        if (!allowFullBundle) {
+          if (credsDigest === this.lastCredsBackupDigest) return;
+          await upstashSet(REDIS_WA_CREDS_KEY, credsContent);
+          this.lastCredsBackupDigest = credsDigest;
+          return;
         }
-      }
 
-      const maxBytes = isRtdb ? 2_500_000 : 650_000;
-      const pickedNames = selectPriorityAuthFiles(fileEntries, maxBytes);
-      const bundle: Record<string, string> = {};
-      for (const name of pickedNames) {
-        bundle[name] = fs.readFileSync(path.join(authDir, name), 'utf8');
-      }
-      const bundleJson = Object.keys(bundle).length > 0 ? JSON.stringify(bundle) : '';
-      if (!credsContent && !bundleJson) return;
+        const entries = fs.readdirSync(authDir);
+        const fileEntries: Array<{ name: string; size: number }> = [];
+        for (const name of entries) {
+          if (name.endsWith('.tmp')) continue;
+          const fullPath = path.join(authDir, name);
+          try {
+            const stat = fs.statSync(fullPath);
+            if (stat.isFile()) {
+              fileEntries.push({ name, size: stat.size });
+            }
+          } catch {
+            // Skip files removed mid-rotation
+          }
+        }
 
-      const digest = crypto
-        .createHash('sha256')
-        .update(credsContent)
-        .update('|')
-        .update(bundleJson)
-        .digest('hex');
+        const maxBytes = isRtdb ? 4_000_000 : 650_000;
+        const pickedNames = selectPriorityAuthFiles(fileEntries, maxBytes);
+        const bundle: Record<string, string> = {};
+        for (const name of pickedNames) {
+          try {
+            const content = fs.readFileSync(path.join(authDir, name), 'utf8');
+            if (name.endsWith('.json')) {
+              JSON.parse(content);
+            }
+            bundle[name] = content;
+          } catch {
+            // Skip files modified or removed mid-read rather than aborting backup
+          }
+        }
+        const bundleJson = Object.keys(bundle).length > 0 ? JSON.stringify(bundle) : '';
+        if (!credsContent && !bundleJson) return;
 
-      if (digest === this.lastAuthBackupDigest) {
+        const digest = crypto
+          .createHash('sha256')
+          .update(credsContent)
+          .update('|')
+          .update(bundleJson)
+          .digest('hex');
+
+        if (digest === this.lastAuthBackupDigest) {
+          this.lastAuthBackupAtMs = Date.now();
+          return;
+        }
+
+        if (isRtdb) {
+          const authPatch: Record<string, unknown> = {};
+          if (credsContent) authPatch['wa_creds'] = credsContent;
+          if (bundleJson) authPatch['wa_auth'] = bundleJson;
+          await rtdbRestPatch('orderpulse_server', authPatch);
+        } else {
+          const pairs: Array<[string, string]> = [];
+          if (credsContent) pairs.push([REDIS_WA_CREDS_KEY, credsContent]);
+          if (bundleJson) pairs.push([REDIS_WA_AUTH_KEY, bundleJson]);
+
+          await upstashPipelineSet(pairs);
+        }
         this.lastAuthBackupAtMs = Date.now();
-        return;
+        this.lastAuthBackupDigest = digest;
+        this.lastCredsBackupDigest = credsDigest;
+      } catch {
+        // Ignore transient backup error
       }
+    };
 
-      if (isRtdb) {
-        const authPatch: Record<string, unknown> = {};
-        if (credsContent) authPatch['wa_creds'] = credsContent;
-        if (bundleJson) authPatch['wa_auth'] = bundleJson;
-        await rtdbRestPatch('orderpulse_server', authPatch);
-      } else {
-        const pairs: Array<[string, string]> = [];
-        if (credsContent) pairs.push([REDIS_WA_CREDS_KEY, credsContent]);
-        if (bundleJson) pairs.push([REDIS_WA_AUTH_KEY, bundleJson]);
-
-        await upstashPipelineSet(pairs);
-      }
-      this.lastAuthBackupAtMs = Date.now();
-      this.lastAuthBackupDigest = digest;
-      this.lastCredsBackupDigest = credsDigest;
-    } catch {
-      // Ignore transient backup error
-    }
+    this.authBackupQueue = this.authBackupQueue.then(runBackup, runBackup);
+    return this.authBackupQueue;
   }
 
   async restoreAuthFiles(authDir: string): Promise<boolean> {
-    if (!this.isCloudSyncEnabled()) return false;
+    if (process.env.VERCEL || !this.isCloudSyncEnabled()) return false;
     try {
       const [rawBundle, rawCreds] =
         getRtdbServerConfig() !== null
@@ -1202,6 +1235,8 @@ class PersistentStore {
   }
 
   async clearRemoteAuth(): Promise<void> {
+    // Hard invariant: Vercel serverless containers NEVER wipe shared 24/7 Railway WhatsApp auth
+    if (process.env.VERCEL) return;
     this.lastAuthBackupAtMs = 0;
     this.lastAuthBackupDigest = null;
     this.lastCredsBackupDigest = null;
@@ -1327,7 +1362,11 @@ class PersistentStore {
     }
   }
 
-  savePollMessage(messageId: string, messagePayload: unknown) {
+  savePollMessage(
+    messageId: string,
+    messagePayload: unknown,
+    options?: { flushNow?: boolean }
+  ) {
     this.pollMessages[messageId] = messagePayload;
     const keys = Object.keys(this.pollMessages);
     if (keys.length > 500) {
@@ -1335,7 +1374,7 @@ class PersistentStore {
         delete this.pollMessages[oldKey];
       }
     }
-    this.persistPollCache();
+    this.persistPollCache(Boolean(options?.flushNow));
   }
 
   getPollMessage(messageId: string): unknown | undefined {

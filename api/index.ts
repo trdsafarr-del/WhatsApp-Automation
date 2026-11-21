@@ -35,6 +35,7 @@ interface RawBodyRequest extends Request {
 }
 
 const app = express();
+app.set('trust proxy', 1);
 
 app.use(
   express.json({
@@ -105,8 +106,15 @@ app.post('/api/sync/restore-from-cloud', async (req: Request, res: Response) => 
 registerStorefrontRoutes(app);
 registerGeoSeoRoutes(app);
 
+const SERVERLESS_WA_NOTICE =
+  'WhatsApp runs 24/7 on your Railway server. Manage QR linking on your Railway URL so Vercel does not log out the live device.';
+
 app.post('/api/whatsapp/connect', async (req: Request, res: Response) => {
-  await store.ensureHydrated();
+  await store.ensureHydrated(true);
+  if (process.env.VERCEL) {
+    res.status(200).json({ ok: false, error: SERVERLESS_WA_NOTICE, whatsapp: whatsappManager.getState() });
+    return;
+  }
   const mode = req.body?.mode as AppSettings['whatsappMode'] | undefined;
   const fresh = Boolean(req.body?.fresh);
   const state = await whatsappManager.connect(mode, { fresh, waitForQr: true });
@@ -114,25 +122,43 @@ app.post('/api/whatsapp/connect', async (req: Request, res: Response) => {
 });
 
 app.post('/api/whatsapp/pairing-code', async (req: Request, res: Response) => {
-  await store.ensureHydrated();
+  await store.ensureHydrated(true);
+  if (process.env.VERCEL) {
+    res.status(400).json({ ok: false, error: SERVERLESS_WA_NOTICE, whatsapp: whatsappManager.getState() });
+    return;
+  }
   const phoneNumber = String(req.body?.phoneNumber || '');
   const state = await whatsappManager.requestPairingCode(phoneNumber);
   res.status(state.lastError ? 400 : 200).json({ whatsapp: state });
 });
 
 app.post('/api/whatsapp/restart', async (_req: Request, res: Response) => {
-  await store.ensureHydrated();
+  await store.ensureHydrated(true);
+  if (process.env.VERCEL) {
+    res.status(200).json({ ok: false, error: SERVERLESS_WA_NOTICE, whatsapp: whatsappManager.getState() });
+    return;
+  }
   const currentMode = store.getWhatsAppMeta().mode;
   const state = await whatsappManager.connect(currentMode, { waitForQr: true });
   res.json({ whatsapp: state });
 });
 
 app.post('/api/whatsapp/disconnect', async (_req: Request, res: Response) => {
+  await store.ensureHydrated(true);
+  if (process.env.VERCEL) {
+    res.status(200).json({ ok: false, error: SERVERLESS_WA_NOTICE, whatsapp: whatsappManager.getState() });
+    return;
+  }
   const state = await whatsappManager.disconnect(true);
   res.json({ whatsapp: state });
 });
 
 app.post('/api/whatsapp/pause', async (_req: Request, res: Response) => {
+  await store.ensureHydrated(true);
+  if (process.env.VERCEL) {
+    res.status(200).json({ ok: false, error: SERVERLESS_WA_NOTICE, whatsapp: whatsappManager.getState() });
+    return;
+  }
   const state = await whatsappManager.disconnect(false);
   res.json({ whatsapp: state });
 });
@@ -430,8 +456,14 @@ app.post('/api/webhooks/shopify/orders-updated', async (req: RawBodyRequest, res
   if (!shouldPreserveRecentLocalNote(existing) && payload.note !== undefined) {
     existing.orderNote = parsed.orderNote;
   }
-  if (parsed.fulfillmentStatus !== undefined) existing.fulfillmentStatus = parsed.fulfillmentStatus;
-  if (parsed.shipmentStatus !== undefined) existing.shipmentStatus = parsed.shipmentStatus;
+  existing.fulfillmentStatus = parsed.fulfillmentStatus ?? null;
+  existing.shipmentStatus = parsed.shipmentStatus ?? null;
+  existing.shopifyShipmentSyncedAt = new Date().toISOString();
+  if ((parsed.shipmentStatus || '').trim().toLowerCase() !== 'delivered') {
+    existing.deliveredAt = null;
+  } else if (!existing.deliveredAt) {
+    existing.deliveredAt = parsed.deliveredAt || parsed.fulfilledAt || new Date().toISOString();
+  }
   if (parsed.fulfilledAt) existing.fulfilledAt = parsed.fulfilledAt;
   if (parsed.trackingUrl) existing.trackingUrl = parsed.trackingUrl;
   if (parsed.trackingNumber) existing.trackingNumber = parsed.trackingNumber;

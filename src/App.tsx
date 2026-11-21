@@ -47,8 +47,10 @@ import {
 import { DEFAULT_GEO_SEO_CONFIG } from './lib/geoSeo';
 import {
   computeOrderMetrics,
+  computeOrdersProgressFingerprint,
   DEFAULT_SETTINGS,
   getWhatsAppDisplayState,
+  hasCloudOrderChanges,
   hasConfiguredShopify,
   hasHighRtoTag,
   mergeProgressedOrderRecords,
@@ -310,17 +312,25 @@ export default function App() {
         return;
       }
 
-      const mergedOrders =
-        data.orders.length > 0 || current.orders.length === 0
-          ? cloud && cloud.orders.length > 0 && data.orders.length < cloud.orders.length
-            ? mergeOrderLists(data.orders, cloud.orders)
-            : data.orders
-          : current.orders;
+      let mergedOrders: OrderRecord[];
+      if (data.orders.length > 0 || current.orders.length === 0) {
+        let baseOrders = data.orders;
+        if (cloud && cloud.orders.length > 0) {
+          baseOrders = mergeOrderLists(baseOrders, cloud.orders);
+        }
+        mergedOrders =
+          current.orders.length > 0
+            ? mergeOrderLists(baseOrders, current.orders)
+            : baseOrders;
+      } else {
+        mergedOrders =
+          cloud && cloud.orders.length > 0
+            ? mergeOrderLists(current.orders, cloud.orders)
+            : current.orders;
+      }
 
       setOrders(mergedOrders);
-      setMetrics(
-        mergedOrders === data.orders ? data.metrics : computeOrderMetrics(mergedOrders)
-      );
+      setMetrics(computeOrderMetrics(mergedOrders));
       setWhatsapp(mergeWithCloudWa(data.whatsapp));
       if (Array.isArray(data.products) && (data.products.length > 0 || current.products.length === 0)) {
         setProducts(data.products);
@@ -440,7 +450,7 @@ export default function App() {
 
       const current = latestStateRef.current;
       const serverHasShopify = hasConfiguredShopify(current.settings);
-      const cloudHasMoreOrders = cloud.orders.length > current.orders.length;
+      const cloudHasOrderUpdates = hasCloudOrderChanges(current.orders, cloud.orders);
       const cloudHasMoreProducts = cloud.products.length > current.products.length;
 
       const cloudWa = cloud.whatsappMeta;
@@ -472,7 +482,7 @@ export default function App() {
 
       const needsRestore =
         (cloudHasShopify && !serverHasShopify) ||
-        cloudHasMoreOrders ||
+        cloudHasOrderUpdates ||
         cloudHasMoreProducts ||
         cloudWaChanged ||
         cloudHasNewerFestivalTheme;
@@ -481,7 +491,7 @@ export default function App() {
       if (cloudHasShopify && !serverHasShopify && cloud.settings) {
         setSettings(cloud.settings);
       }
-      if (cloudHasMoreOrders) {
+      if (cloudHasOrderUpdates) {
         const merged = mergeOrderLists(current.orders, cloud.orders);
         setOrders(merged);
         setMetrics(computeOrderMetrics(merged));
@@ -522,8 +532,7 @@ export default function App() {
         cloudHasShopify ? '1' : '0',
         cloud.orders.length,
         cloud.products.length,
-        cloud.orders[0]?.id || '',
-        cloud.orders[0]?.respondedAt || '',
+        computeOrdersProgressFingerprint(cloud.orders),
         cloudWa?.phoneNumber || '',
         cloudWa?.activeHostKind || '',
         cloudWa?.connectedAt || '',
@@ -887,8 +896,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, fresh }),
       });
-      if (res.ok) {
-        const data = (await res.json()) as { whatsapp: WhatsAppState };
+      const data = (await res.json().catch(() => ({}))) as { whatsapp?: WhatsAppState };
+      if (data.whatsapp) {
         setWhatsapp(data.whatsapp);
       }
     } finally {
@@ -904,7 +913,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber }),
       });
-      const data = (await res.json()) as { whatsapp?: WhatsAppState };
+      const data = (await res.json().catch(() => ({}))) as { whatsapp?: WhatsAppState };
       if (data.whatsapp) {
         setWhatsapp(data.whatsapp);
       }
@@ -917,8 +926,8 @@ export default function App() {
     setWhatsappBusy(true);
     try {
       const res = await dashboardFetch('/api/whatsapp/restart', { method: 'POST' });
-      if (res.ok) {
-        const data = (await res.json()) as { whatsapp: WhatsAppState };
+      const data = (await res.json().catch(() => ({}))) as { whatsapp?: WhatsAppState };
+      if (data.whatsapp) {
         setWhatsapp(data.whatsapp);
       }
     } finally {
@@ -930,8 +939,8 @@ export default function App() {
     setWhatsappBusy(true);
     try {
       const res = await dashboardFetch('/api/whatsapp/disconnect', { method: 'POST' });
-      if (res.ok) {
-        const data = (await res.json()) as { whatsapp: WhatsAppState };
+      const data = (await res.json().catch(() => ({}))) as { whatsapp?: WhatsAppState };
+      if (data.whatsapp) {
         setWhatsapp(data.whatsapp);
       }
     } finally {
@@ -943,8 +952,8 @@ export default function App() {
     setWhatsappBusy(true);
     try {
       const res = await dashboardFetch('/api/whatsapp/pause', { method: 'POST' });
-      if (res.ok) {
-        const data = (await res.json()) as { whatsapp: WhatsAppState };
+      const data = (await res.json().catch(() => ({}))) as { whatsapp?: WhatsAppState };
+      if (data.whatsapp) {
         setWhatsapp(data.whatsapp);
       }
     } finally {

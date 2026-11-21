@@ -288,3 +288,40 @@ test('buildFestivalThemePayload renders 3D Christmas/Diwali articles, auto-produ
   assert.equal(offPayload.particlesHtml, '');
 });
 
+test('Christmas & New Year themes include 3D sculpted card snow accumulation, icicles, hover sheen, and 3-layer 3D snowfall', () => {
+  const xmasSnow = buildFestivalThemePayload({
+    ...DEFAULT_FESTIVAL_THEME_CONFIG,
+    enabled: true,
+    selectedFestivalId: 'christmas',
+    show3DCardSnow: true,
+    enableFestiveEffects: true,
+  });
+
+  assert.equal(xmasSnow.show3DCardSnow, true);
+  assert.ok(xmasSnow.css.includes('.op-winter-snow-cap'));
+  assert.ok(xmasSnow.css.includes('opIcicleShimmer'));
+  assert.ok(xmasSnow.css.includes('opCardIceSheenSweep'));
+  assert.ok(xmasSnow.css.includes('opSnowDustPuff'));
+  assert.ok(xmasSnow.particlesHtml.includes('op-snow-layer-near'));
+  assert.ok(xmasSnow.particlesHtml.includes('op-snow-layer-mid'));
+  assert.ok(xmasSnow.particlesHtml.includes('op-fest-snow-orb'));
+
+  const snowDisabled = buildFestivalThemePayload({
+    ...DEFAULT_FESTIVAL_THEME_CONFIG,
+    enabled: true,
+    selectedFestivalId: 'christmas',
+    show3DCardSnow: false,
+  });
+  assert.equal(snowDisabled.show3DCardSnow, false);
+  assert.equal(snowDisabled.css.includes('.op-winter-snow-cap'), false);
+
+  const previewHtml = rewriteShopifyHtmlForFestivalPreview(
+    '<!doctype html><html><head></head><body><main id="MainContent"><div class="card">Cake</div></main></body></html>',
+    'https://broomiesbakery.in',
+    { mode: 'festive', payload: xmasSnow }
+  );
+  assert.ok(previewHtml.includes('mountWinterCardSnow'));
+  assert.ok(previewHtml.includes('op-winter-snow-cap'));
+});
+
+

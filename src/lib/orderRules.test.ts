@@ -16,6 +16,7 @@ import {
   computeMetaAdDateKeysInRange,
   computeMetaAdDaysInRange,
   computeOrderMetrics,
+  computeOrdersProgressFingerprint,
   detectHostRuntimeKind,
   extractCleanIndianPincode,
   extractShopifyCustomerPhone,
@@ -32,6 +33,7 @@ import {
   getOrderSettlementInfo,
   getSyncStartCutoffIso,
   getWhatsAppDisplayState,
+  hasCloudOrderChanges,
   hasConfiguredShopify,
   hasHighRtoTag,
   hasOrderTrackingAdded,
@@ -2112,3 +2114,96 @@ test('getWhatsAppDisplayState mirrors live Railway session on AI Studio Dev Prev
   assert.equal(sharedAppMirror.remoteHostLabel, 'Railway');
   assert.equal(sharedAppMirror.statusLabel, 'Connected on Host · Live');
 });
+
+test('mergeProgressedOrderRecords auto-heals fake delivered status from fresher Shopify sync and clears deliveredAt', () => {
+  const pollutedLocal: OrderRecord = {
+    id: 'ord-heal-1',
+    shopifyOrderId: '701',
+    orderNumber: '#1701',
+    customerName: 'Riya',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '1050.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cookies Tin',
+    financialStatus: 'pending',
+    fulfillmentStatus: 'fulfilled',
+    shipmentStatus: 'delivered',
+    deliveredAt: '2026-11-20T09:00:00.000Z',
+    shopifyShipmentSyncedAt: null,
+    shopifyTags: 'cod, confirm',
+    pollStatus: 'confirmed',
+    whatsappMessageId: 'msg-701',
+    pollQuestion: 'Confirm?',
+    pollSentAt: '2026-11-19T10:00:00.000Z',
+    respondedAt: '2026-11-19T10:05:00.000Z',
+    responseChannel: 'whatsapp_poll',
+    shopifySynced: true,
+    createdAt: '2026-11-19T09:50:00.000Z',
+    events: [],
+  };
+
+  const shopifyFresh: OrderRecord = {
+    ...pollutedLocal,
+    shipmentStatus: 'in_transit',
+    deliveredAt: null,
+    shopifyShipmentSyncedAt: '2026-11-21T08:00:00.000Z',
+  };
+
+  const healed = mergeProgressedOrderRecords(pollutedLocal, shopifyFresh);
+  assert.equal(healed.shipmentStatus, 'in_transit');
+  assert.equal(healed.deliveredAt, null);
+  assert.equal(healed.shopifyShipmentSyncedAt, '2026-11-21T08:00:00.000Z');
+  assert.equal(isOrderDelivered(healed), false);
+  assert.equal(isOrderInTransit(healed), true);
+});
+
+test('hasCloudOrderChanges and computeOrdersProgressFingerprint detect Pending to Confirmed updates on same-length order lists', () => {
+  const order1: OrderRecord = {
+    id: 'ord-sync-1',
+    shopifyOrderId: '801',
+    orderNumber: '#1801',
+    customerName: 'A',
+    customerPhone: '+919876543210',
+    customerEmail: '',
+    totalPrice: '900.00',
+    currency: 'INR',
+    lineItemsSummary: '1x Cake',
+    financialStatus: 'pending',
+    shopifyTags: 'cod, confirm',
+    pollStatus: 'confirmed',
+    whatsappMessageId: 'm1',
+    pollQuestion: 'Q',
+    pollSentAt: '2026-11-21T06:00:00.000Z',
+    respondedAt: '2026-11-21T06:02:00.000Z',
+    responseChannel: 'whatsapp_poll',
+    shopifySynced: true,
+    createdAt: '2026-11-21T06:00:00.000Z',
+    events: [],
+  };
+  const order2Pending: OrderRecord = {
+    ...order1,
+    id: 'ord-sync-2',
+    shopifyOrderId: '802',
+    orderNumber: '#1802',
+    shopifyTags: 'cod, waiting for confirmation',
+    pollStatus: 'poll_sent',
+    respondedAt: null,
+    responseChannel: null,
+  };
+  const order2Confirmed: OrderRecord = {
+    ...order2Pending,
+    shopifyTags: 'cod, confirm',
+    pollStatus: 'confirmed',
+    respondedAt: '2026-11-21T07:15:00.000Z',
+    responseChannel: 'whatsapp_poll',
+  };
+
+  assert.equal(hasCloudOrderChanges([order1, order2Pending], [order1, order2Pending]), false);
+  assert.equal(hasCloudOrderChanges([order1, order2Pending], [order1, order2Confirmed]), true);
+  assert.notEqual(
+    computeOrdersProgressFingerprint([order1, order2Pending]),
+    computeOrdersProgressFingerprint([order1, order2Confirmed])
+  );
+});
+

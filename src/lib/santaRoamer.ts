@@ -1,4 +1,4 @@
-import type { FestivalPresetId, FestivalThemeConfig } from './festivalThemes';
+import type { FestivalPresetId, FestivalThemeConfig } from './festivalThemes.js';
 
 export type SantaRoamSceneId =
   | 'walk_ltr'

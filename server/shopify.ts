@@ -219,7 +219,12 @@ export function parseShopifyRawOrder(
     financialStatus: raw.financial_status || 'pending',
     fulfillmentStatus: raw.fulfillment_status || null,
     shipmentStatus: tracking.shipmentStatus || null,
+    shopifyShipmentSyncedAt: now,
     fulfilledAt: tracking.fulfilledAt || null,
+    deliveredAt:
+      (tracking.shipmentStatus || '').trim().toLowerCase() === 'delivered'
+        ? tracking.fulfilledAt || now
+        : null,
     shopifyCancelledAt: raw.cancelled_at || null,
     paymentMethod,
     deliverySummary,

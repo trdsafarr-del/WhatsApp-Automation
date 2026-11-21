@@ -199,12 +199,27 @@ export async function syncShopifyOrdersNow(
             existing.financialStatus = parsed.financialStatus;
             changed = true;
           }
-          if (existing.fulfillmentStatus !== parsed.fulfillmentStatus) {
-            existing.fulfillmentStatus = parsed.fulfillmentStatus;
+          const nextFulfillmentStatus = parsed.fulfillmentStatus ?? null;
+          const nextShipmentStatus = parsed.shipmentStatus ?? null;
+          const isShopifyDelivered =
+            (nextShipmentStatus || '').trim().toLowerCase() === 'delivered';
+          if ((existing.fulfillmentStatus ?? null) !== nextFulfillmentStatus) {
+            existing.fulfillmentStatus = nextFulfillmentStatus;
             changed = true;
           }
-          if ((existing.shipmentStatus ?? null) !== (parsed.shipmentStatus ?? null)) {
-            existing.shipmentStatus = parsed.shipmentStatus ?? null;
+          if ((existing.shipmentStatus ?? null) !== nextShipmentStatus) {
+            existing.shipmentStatus = nextShipmentStatus;
+            changed = true;
+          }
+          if (!isShopifyDelivered && existing.deliveredAt) {
+            existing.deliveredAt = null;
+            changed = true;
+          } else if (isShopifyDelivered && !existing.deliveredAt) {
+            existing.deliveredAt = parsed.deliveredAt || parsed.fulfilledAt || new Date().toISOString();
+            changed = true;
+          }
+          if (changed || !existing.shopifyShipmentSyncedAt) {
+            existing.shopifyShipmentSyncedAt = new Date().toISOString();
             changed = true;
           }
           if (parsed.fulfilledAt && existing.fulfilledAt !== parsed.fulfilledAt) {

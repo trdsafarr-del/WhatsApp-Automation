@@ -5,7 +5,7 @@ import type {
   ProductCatalogItem,
   StorefrontConfig,
   WhatsAppState,
-} from './types';
+} from './types.js';
 
 export const BLUEPRINT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 export const BLUEPRINT_DATE_PATTERN = /^(\d{4}-\d{2}-\d{2})?$/;

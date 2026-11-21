@@ -1666,6 +1666,38 @@ export function mergeProgressedOrderRecords(
     Number.isFinite(loserNoteMs) &&
     loserNoteMs > (Number.isFinite(winnerNoteMs) ? winnerNoteMs : 0);
 
+  const winnerShipMs = winner.shopifyShipmentSyncedAt
+    ? Date.parse(winner.shopifyShipmentSyncedAt)
+    : 0;
+  const loserShipMs = loser.shopifyShipmentSyncedAt
+    ? Date.parse(loser.shopifyShipmentSyncedAt)
+    : 0;
+  const hasWinnerShipSync = Number.isFinite(winnerShipMs) && winnerShipMs > 0;
+  const hasLoserShipSync = Number.isFinite(loserShipMs) && loserShipMs > 0;
+
+  let resolvedFulfillmentStatus: string | null;
+  let resolvedShipmentStatus: string | null;
+  let resolvedShopifyShipmentSyncedAt: string | null;
+  let resolvedDeliveredAt: string | null;
+
+  if (hasWinnerShipSync || hasLoserShipSync) {
+    const shipSource =
+      hasLoserShipSync && (!hasWinnerShipSync || loserShipMs > winnerShipMs) ? loser : winner;
+    resolvedFulfillmentStatus = shipSource.fulfillmentStatus ?? null;
+    resolvedShipmentStatus = shipSource.shipmentStatus ?? null;
+    resolvedShopifyShipmentSyncedAt = shipSource.shopifyShipmentSyncedAt ?? null;
+    const isAuthoritativelyDelivered =
+      (resolvedShipmentStatus || '').trim().toLowerCase() === 'delivered';
+    resolvedDeliveredAt = isAuthoritativelyDelivered
+      ? shipSource.deliveredAt || winner.deliveredAt || loser.deliveredAt || null
+      : null;
+  } else {
+    resolvedFulfillmentStatus = winner.fulfillmentStatus || loser.fulfillmentStatus || null;
+    resolvedShipmentStatus = winner.shipmentStatus || loser.shipmentStatus || null;
+    resolvedShopifyShipmentSyncedAt = null;
+    resolvedDeliveredAt = winner.deliveredAt || loser.deliveredAt || null;
+  }
+
   return {
     ...winner,
     orderNote: preferLoserNote
@@ -1678,8 +1710,9 @@ export function mergeProgressedOrderRecords(
       winner.shopifyTags && winner.shopifyTags.length >= (loser.shopifyTags?.length || 0)
         ? winner.shopifyTags
         : loser.shopifyTags || winner.shopifyTags,
-    fulfillmentStatus: winner.fulfillmentStatus || loser.fulfillmentStatus || null,
-    shipmentStatus: winner.shipmentStatus || loser.shipmentStatus || null,
+    fulfillmentStatus: resolvedFulfillmentStatus,
+    shipmentStatus: resolvedShipmentStatus,
+    shopifyShipmentSyncedAt: resolvedShopifyShipmentSyncedAt,
     fulfilledAt: winner.fulfilledAt || loser.fulfilledAt || null,
     shopifyCancelledAt: winner.shopifyCancelledAt || loser.shopifyCancelledAt || null,
     trackingUrl: winner.trackingUrl || loser.trackingUrl || '',
@@ -1708,7 +1741,7 @@ export function mergeProgressedOrderRecords(
     settlementReference: winner.settlementReference || loser.settlementReference || null,
     pickedUpAt: winner.pickedUpAt || loser.pickedUpAt || null,
     expectedDeliveryAt: winner.expectedDeliveryAt || loser.expectedDeliveryAt || null,
-    deliveredAt: winner.deliveredAt || loser.deliveredAt || null,
+    deliveredAt: resolvedDeliveredAt,
     deliveryAttemptsCount:
       Math.max(winner.deliveryAttemptsCount ?? 0, loser.deliveryAttemptsCount ?? 0) || null,
     lastCourierScanLocation:
@@ -1723,6 +1756,81 @@ export function mergeProgressedOrderRecords(
     responseChannel: winner.responseChannel || loser.responseChannel || null,
     events: mergedEvents,
   };
+}
+
+function buildOrderSyncStateKey(order: OrderRecord): string {
+  return [
+    order.pollStatus,
+    order.respondedAt || '',
+    order.pollSentAt || '',
+    order.shopifyTags || '',
+    order.fulfillmentStatus || '',
+    order.shipmentStatus || '',
+    order.shopifyShipmentSyncedAt || '',
+    order.deliveredAt || '',
+    order.trackingNumber || '',
+    order.trackingUrl || '',
+    order.trackingSentAt || '',
+    order.shopifyCancelledAt || '',
+    order.orderNote || '',
+    order.settlementStatus || '',
+    order.events?.length || 0,
+  ].join('|');
+}
+
+/**
+ * Detects whether an incoming cloud RTDB order list adds new orders OR updates any existing
+ * order (e.g. Pending -> Confirmed from WhatsApp poll, or healed Shopify shipment status),
+ * even when both lists have the exact same number of orders.
+ */
+export function hasCloudOrderChanges(
+  localOrders: OrderRecord[],
+  cloudOrders: OrderRecord[]
+): boolean {
+  if (cloudOrders.length === 0) return false;
+  if (cloudOrders.length > localOrders.length) return true;
+
+  const localByKey = new Map<string, OrderRecord>();
+  for (const order of localOrders) {
+    localByKey.set(order.id, order);
+    if (order.shopifyOrderId) {
+      localByKey.set(`shopify:${order.shopifyOrderId}`, order);
+    }
+  }
+
+  for (const cloudOrder of cloudOrders) {
+    const localOrder =
+      localByKey.get(cloudOrder.id) ||
+      (cloudOrder.shopifyOrderId
+        ? localByKey.get(`shopify:${cloudOrder.shopifyOrderId}`)
+        : undefined);
+    if (!localOrder) return true;
+
+    const merged = mergeProgressedOrderRecords(localOrder, cloudOrder);
+    if (buildOrderSyncStateKey(merged) !== buildOrderSyncStateKey(localOrder)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Builds a compact deterministic fingerprint across ALL orders' live progression states so
+ * cloud-to-server restore triggers whenever ANY order changes (not only orders[0]).
+ */
+export function computeOrdersProgressFingerprint(orders: OrderRecord[]): string {
+  if (orders.length === 0) return 'empty';
+  let hash = 2166136261;
+  const sorted = [...orders].sort((a, b) => a.id.localeCompare(b.id));
+  for (const order of sorted) {
+    const chunk = `${order.id}=${buildOrderSyncStateKey(order)};`;
+    for (let i = 0; i < chunk.length; i += 1) {
+      hash ^= chunk.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+  }
+  return `${orders.length}-${(hash >>> 0).toString(36)}`;
 }
 
 /**

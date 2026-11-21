@@ -29,6 +29,7 @@ export function mapDelhiveryStatusToShipmentStatus(
   statusCode?: string | null,
   instructions?: string | null
 ): string | null {
+  const statusOnly = (statusText || '').trim().toLowerCase();
   const combined = `${statusText || ''} ${instructions || ''}`.trim().toLowerCase();
   const code = (statusCode || '').trim().toUpperCase();
 
@@ -41,14 +42,17 @@ export function mapDelhiveryStatusToShipmentStatus(
   ) {
     return 'rto_initiated';
   }
-  if (combined.includes('delivered') || code === 'DL') {
-    return 'delivered';
-  }
-  if (combined.includes('out for delivery') || combined.includes('dispatched') && combined.includes('delivery') || code === 'OFD') {
+  if (
+    combined.includes('out for delivery') ||
+    (combined.includes('dispatched') && combined.includes('delivery')) ||
+    code === 'OFD'
+  ) {
     return 'out_for_delivery';
   }
   if (
     combined.includes('undelivered') ||
+    combined.includes('not delivered') ||
+    combined.includes('could not be delivered') ||
     combined.includes('delivery attempted') ||
     combined.includes('not available') ||
     combined.includes('door closed') ||
@@ -56,9 +60,6 @@ export function mapDelhiveryStatusToShipmentStatus(
     code === 'UD'
   ) {
     return 'attempted_delivery';
-  }
-  if (combined.includes('picked up')) {
-    return 'picked_up';
   }
   if (
     combined.includes('in transit') ||
@@ -69,8 +70,23 @@ export function mapDelhiveryStatusToShipmentStatus(
   ) {
     return 'in_transit';
   }
+  if (combined.includes('picked up')) {
+    return 'picked_up';
+  }
   if (combined.includes('manifested') || combined.includes('pending')) {
     return 'confirmed';
+  }
+  // Only match "delivered" on explicit statusCode === 'DL' or standalone word in Status (never "undelivered" or instructions like "to be delivered")
+  if (
+    code === 'DL' ||
+    (statusOnly &&
+      /\bdelivered\b/.test(statusOnly) &&
+      !statusOnly.includes('undelivered') &&
+      !statusOnly.includes('not delivered') &&
+      !statusOnly.includes('to be delivered') &&
+      !statusOnly.includes('out for delivery'))
+  ) {
+    return 'delivered';
   }
   return null;
 }
@@ -506,10 +522,7 @@ export async function syncDelhiveryOrdersNow(
 
     if (track) {
       trackedCount += 1;
-      if (track.shipmentStatus && order.shipmentStatus !== track.shipmentStatus) {
-        order.shipmentStatus = track.shipmentStatus;
-        modified = true;
-      }
+      // Delivery status mirrors Shopify Admin ONLY — Delhivery never overrides order.shipmentStatus or order.deliveredAt
       if (track.destinationPincode && !order.destinationPincode) {
         order.destinationPincode = track.destinationPincode;
         modified = true;
@@ -524,10 +537,6 @@ export async function syncDelhiveryOrdersNow(
       }
       if (track.expectedDeliveryAt && order.expectedDeliveryAt !== track.expectedDeliveryAt) {
         order.expectedDeliveryAt = track.expectedDeliveryAt;
-        modified = true;
-      }
-      if (track.deliveredAt && order.deliveredAt !== track.deliveredAt) {
-        order.deliveredAt = track.deliveredAt;
         modified = true;
       }
       if (

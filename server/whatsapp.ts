@@ -20,10 +20,26 @@ import type { OrderRecord, WhatsAppEngineMode, WhatsAppState } from '../src/lib/
 import { hasLiveShopifyCredentials, updateShopifyOrderTags } from './shopify.js';
 import { store } from './store.js';
 
-function decodeBinaryBuffer(val: unknown): Buffer | null {
+export interface StoredPollRecord {
+  key?: WAMessage['key'];
+  message?: WAMessage['message'];
+  messageSecretBase64?: string | null;
+  options?: string[];
+  question?: string;
+  orderId?: string;
+  targetJid?: string | null;
+  creatorJid?: string | null;
+  creatorLid?: string | null;
+  sentAt?: string;
+}
+
+export function decodeBinaryBuffer(val: unknown): Buffer | null {
   if (!val) return null;
   if (Buffer.isBuffer(val)) return val;
   if (val instanceof Uint8Array) return Buffer.from(val);
+  if (Array.isArray(val) && val.every((n) => typeof n === 'number')) {
+    return Buffer.from(val);
+  }
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed) return null;
@@ -42,6 +58,66 @@ function decodeBinaryBuffer(val: unknown): Buffer | null {
     }
   }
   return null;
+}
+
+export function extractPollSecretFromMessage(msg: unknown): Buffer | null {
+  if (!msg || typeof msg !== 'object') return null;
+  const rec = msg as StoredPollRecord & {
+    messageContextInfo?: { messageSecret?: unknown };
+    pollCreationMessage?: { contextInfo?: { messageSecret?: unknown } };
+    pollCreationMessageV2?: { contextInfo?: { messageSecret?: unknown } };
+    pollCreationMessageV3?: { contextInfo?: { messageSecret?: unknown } };
+  };
+  if (rec.messageSecretBase64) {
+    const fromB64 = decodeBinaryBuffer(rec.messageSecretBase64);
+    if (fromB64 && fromB64.length > 0) return fromB64;
+  }
+  const inner = (rec.message || rec) as {
+    messageContextInfo?: { messageSecret?: unknown };
+    pollCreationMessage?: { contextInfo?: { messageSecret?: unknown } };
+    pollCreationMessageV2?: { contextInfo?: { messageSecret?: unknown } };
+    pollCreationMessageV3?: { contextInfo?: { messageSecret?: unknown } };
+  };
+  const rawSecret =
+    inner?.messageContextInfo?.messageSecret ||
+    inner?.pollCreationMessageV3?.contextInfo?.messageSecret ||
+    inner?.pollCreationMessageV2?.contextInfo?.messageSecret ||
+    inner?.pollCreationMessage?.contextInfo?.messageSecret;
+  return decodeBinaryBuffer(rawSecret);
+}
+
+export function serializePollCacheEntry(params: {
+  sent: WAMessage | undefined;
+  options: string[];
+  question: string;
+  orderId: string;
+  targetJid: string;
+  creatorJid?: string | null;
+  creatorLid?: string | null;
+}): StoredPollRecord {
+  const secretBuf = extractPollSecretFromMessage(params.sent);
+  return {
+    key: params.sent?.key,
+    message: params.sent?.message,
+    messageSecretBase64: secretBuf ? secretBuf.toString('base64') : null,
+    options: [...params.options],
+    question: params.question,
+    orderId: params.orderId,
+    targetJid: params.targetJid,
+    creatorJid: params.creatorJid || null,
+    creatorLid: params.creatorLid || null,
+    sentAt: new Date().toISOString(),
+  };
+}
+
+function stripJidDevice(jid: string): string {
+  const trimmed = jid.trim();
+  if (!trimmed) return '';
+  const atIdx = trimmed.indexOf('@');
+  if (atIdx < 0) return trimmed;
+  const userPart = trimmed.slice(0, atIdx).split(':')[0];
+  const domainPart = trimmed.slice(atIdx + 1);
+  return userPart && domainPart ? `${userPart}@${domainPart}` : trimmed;
 }
 
 const AUTH_DIR = process.env.VERCEL
@@ -69,12 +145,15 @@ class WhatsAppManager {
   private isInitializing = false;
   private initPromise: Promise<void> | null = null;
   private initialWaiters: Array<() => void> = [];
+  private cachedWaVersion: [number, number, number] | undefined = undefined;
 
   private inFlightDispatches = new Set<string>();
   private inFlightTracking = new Set<string>();
 
   constructor() {
-    void this.restorePersistedSession();
+    if (!process.env.VERCEL) {
+      void this.restorePersistedSession();
+    }
   }
 
   isConnected(): boolean {
@@ -182,8 +261,8 @@ class WhatsAppManager {
         lastHeartbeatAt: meta.lastHeartbeatAt,
       }) ||
       (currentHost === 'dev_preview' &&
-        meta.activeHostKind === 'railway' &&
-        Boolean(meta.phoneNumber && meta.connectedAt))
+        (meta.activeHostKind === 'railway' || meta.activeHostKind === 'cloud') &&
+        Boolean(meta.phoneNumber && (meta.connectedAt || meta.lastHeartbeatAt)))
     ) {
       // Leave the 24/7 Railway / cloud production WhatsApp socket undisturbed
       return;
@@ -207,11 +286,11 @@ class WhatsAppManager {
   }
 
   private scheduleAuthBackup(force = false) {
-    if (!store.isCloudSyncEnabled()) return;
+    if (process.env.VERCEL || !store.isCloudSyncEnabled()) return;
     if (this.authBackupTimer) clearTimeout(this.authBackupTimer);
     this.authBackupTimer = setTimeout(() => {
-      void store.backupAuthFiles(AUTH_DIR, { force });
-    }, force ? 1500 : 8_000);
+      void this.credsSaveQueue.then(() => store.backupAuthFiles(AUTH_DIR, { force }));
+    }, force ? 1500 : 5_000);
   }
 
   private startHeartbeat() {
@@ -281,6 +360,13 @@ class WhatsAppManager {
     requestedMode?: WhatsAppEngineMode,
     options?: { fresh?: boolean; waitForQr?: boolean; fromReconnect?: boolean }
   ): Promise<WhatsAppState> {
+    // Hard invariant: Vercel serverless NEVER opens a competing Baileys socket or clears shared cloud auth
+    if (process.env.VERCEL) {
+      this.lastError =
+        'WhatsApp runs 24/7 on your Railway server. Manage QR linking on your Railway URL so Vercel does not log out the live device.';
+      return this.getState();
+    }
+
     const mode: WhatsAppEngineMode = requestedMode || 'baileys_qr';
     store.updateWhatsAppMeta({ mode });
     store.updateSettings({ whatsappMode: mode });
@@ -371,41 +457,55 @@ class WhatsAppManager {
       const QRCode = qrMod.default;
 
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-      let version: [number, number, number] | undefined;
-      try {
-        // Prefer live WhatsApp Web version directly from web.whatsapp.com (avoids stale Baileys manifest causing QR handshake failures)
-        const waWeb = await Promise.race([
-          fetchLatestWaWebVersion({}),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('WA Web version timeout')), 4000)
-          ),
-        ]);
-        if (Array.isArray(waWeb?.version) && waWeb.version.length === 3) {
-          version = waWeb.version;
-        }
-      } catch {
-        // Fall through to Baileys manifest fallback
-      }
+      let version: [number, number, number] | undefined = this.cachedWaVersion;
       if (!version) {
         try {
-          const fetched = await Promise.race([
-            fetchLatestBaileysVersion(),
+          // Prefer live WhatsApp Web version directly from web.whatsapp.com (avoids stale Baileys manifest causing QR handshake failures)
+          const waWeb = await Promise.race([
+            fetchLatestWaWebVersion({}),
             new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Version check timeout')), 4000)
+              setTimeout(() => reject(new Error('WA Web version timeout')), 4000)
             ),
           ]);
-          version = fetched.version;
+          if (Array.isArray(waWeb?.version) && waWeb.version.length === 3) {
+            version = waWeb.version;
+          }
         } catch {
-          // Fallback to Baileys default version if version check endpoints are unreachable
+          // Fall through to Baileys manifest fallback
+        }
+        if (!version) {
+          try {
+            const fetched = await Promise.race([
+              fetchLatestBaileysVersion(),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Version check timeout')), 4000)
+              ),
+            ]);
+            version = fetched.version;
+          } catch {
+            // Fallback to Baileys default version if version check endpoints are unreachable
+          }
+        }
+        if (version) {
+          this.cachedWaVersion = version;
         }
       }
+
+      // Hook Signal key mutations (session-*, lid-mapping-*, app-state-sync-*, device-list-*) so cloud backup stays in sync with creds.json
+      const trackedSignalKeys: typeof state.keys = {
+        get: (type, ids) => state.keys.get(type, ids),
+        set: async (data) => {
+          await state.keys.set(data);
+          this.scheduleAuthBackup(false);
+        },
+      };
 
       const sock = makeWASocket({
         version,
         logger,
         auth: {
           creds: state.creds,
-          keys: makeCacheableSignalKeyStore(state.keys, logger),
+          keys: makeCacheableSignalKeyStore(trackedSignalKeys, logger),
         },
         markOnlineOnConnect: false,
         syncFullHistory: false,
@@ -416,7 +516,7 @@ class WhatsAppManager {
         retryRequestDelayMs: 500,
         getMessage: async (key) => {
           if (!key.id) return undefined;
-          const cached = store.getPollMessage(key.id) as WAMessage | undefined;
+          const cached = store.getPollMessage(key.id) as StoredPollRecord | undefined;
           return cached?.message || undefined;
         },
       });
@@ -498,8 +598,15 @@ class WhatsAppManager {
 
           if (action === 'logout_clear_auth') {
             this.consecutiveBadSessions = 0;
+            const currentHost = detectHostRuntimeKind();
+            const meta = store.getWhatsAppMeta();
+            const isActiveOwnerHost =
+              currentHost !== 'serverless' &&
+              (!meta.activeHostKind || meta.activeHostKind === currentHost);
             this.clearAuthFiles();
-            void store.clearRemoteAuth();
+            if (isActiveOwnerHost) {
+              void store.clearRemoteAuth();
+            }
             this.status = 'disconnected';
             this.qrDataUrl = null;
             this.qrRaw = null;
@@ -508,12 +615,14 @@ class WhatsAppManager {
               statusCode === DisconnectReason.loggedOut
                 ? 'Device logged out from WhatsApp phone. Click Generate WhatsApp QR to link again.'
                 : 'Session expired or mismatched. Click Generate WhatsApp QR to link fresh.';
-            store.updateWhatsAppMeta({
-              connectedAt: null,
-              lastHeartbeatAt: null,
-              phoneNumber: null,
-              pushName: null,
-            });
+            if (isActiveOwnerHost) {
+              store.updateWhatsAppMeta({
+                connectedAt: null,
+                lastHeartbeatAt: null,
+                phoneNumber: null,
+                pushName: null,
+              });
+            }
             this.notifyWaiters();
           } else if (action === 'pause_keep_auth') {
             // Another persistent host (e.g. Railway / preview tab) took over this WhatsApp session; pause without wiping auth
@@ -621,9 +730,16 @@ class WhatsAppManager {
         for (const msg of messages) {
           if (!msg.message || !msg.key.remoteJid) continue;
           const normalizedContent = normalizeMessageContent(msg.message);
+          const nestedPollUpdate =
+            normalizedContent?.pollUpdateMessage ||
+            msg.message.pollUpdateMessage ||
+            msg.message.ephemeralMessage?.message?.pollUpdateMessage ||
+            msg.message.deviceSentMessage?.message?.pollUpdateMessage ||
+            msg.message.viewOnceMessage?.message?.pollUpdateMessage ||
+            msg.message.viewOnceMessageV2?.message?.pollUpdateMessage;
 
-          if (normalizedContent?.pollUpdateMessage) {
-            await this.handleIncomingPollUpdate(sock, msg, normalizedContent.pollUpdateMessage, {
+          if (nestedPollUpdate) {
+            await this.handleIncomingPollUpdate(sock, msg, nestedPollUpdate, {
               decryptPollVote,
               getAggregateVotesInPollMessage,
               jidNormalizedUser,
@@ -696,6 +812,12 @@ class WhatsAppManager {
    * when camera QR scanning is inconvenient or failing.
    */
   async requestPairingCode(rawPhoneNumber: string): Promise<WhatsAppState> {
+    if (process.env.VERCEL) {
+      this.lastError =
+        'WhatsApp pairing runs on your 24/7 Railway server. Open your Railway URL to link a device.';
+      return this.getState();
+    }
+
     const settings = store.getSettings();
     const jid = normalizePhoneToWhatsAppJid(rawPhoneNumber, settings.defaultCountryCode);
     if (!jid) {
@@ -783,6 +905,11 @@ class WhatsAppManager {
   }
 
   async disconnect(clearAuth = true): Promise<WhatsAppState> {
+    if (process.env.VERCEL) {
+      this.lastError =
+        'WhatsApp is hosted on your 24/7 Railway server. Disconnect from Railway if you want to unlink the device.';
+      return this.getState();
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -850,10 +977,31 @@ class WhatsAppManager {
     const pollMsgId = pollCreationKey?.id;
     if (!pollMsgId || !pollUpdate.vote) return;
 
-    const pollCreationMsg = store.getPollMessage(pollMsgId) as WAMessage | undefined;
-    if (!pollCreationMsg?.message) return;
+    const pollCreationRecord = store.getPollMessage(pollMsgId) as StoredPollRecord | undefined;
+    const keyWithAlt = msg.key as typeof msg.key & {
+      remoteJidAlt?: string;
+      participantAlt?: string;
+    };
+    const resolvedAlt =
+      keyWithAlt.remoteJidAlt || keyWithAlt.participantAlt || msg.key.remoteJid || '';
+    const senderDigits = resolvedAlt.split('@')[0].split(':')[0].replace(/\D/g, '');
+    const order =
+      store.getOrderByWhatsAppMessageId(pollMsgId) ||
+      (pollCreationRecord?.orderId ? store.getOrderById(pollCreationRecord.orderId) : undefined) ||
+      (senderDigits ? store.findLatestPendingOrderByPhone(senderDigits) : undefined);
 
-    const creationMsgAny = pollCreationMsg.message as {
+    if (!pollCreationRecord) {
+      if (order) {
+        store.appendOrderEvent(order.id, {
+          actor: 'system',
+          message: `Received WhatsApp poll update (${pollMsgId}) but poll secret was missing from cache — ask customer to reply "Confirm" or resend poll.`,
+        });
+        void store.flushRemote();
+      }
+      return;
+    }
+
+    const creationMsgAny = (pollCreationRecord.message || {}) as {
       messageContextInfo?: { messageSecret?: unknown };
       pollCreationMessage?: {
         options?: Array<{ optionName?: string | null }>;
@@ -869,48 +1017,102 @@ class WhatsAppManager {
       };
     };
 
-    const rawSecret =
-      creationMsgAny.messageContextInfo?.messageSecret ||
-      creationMsgAny.pollCreationMessageV3?.contextInfo?.messageSecret ||
-      creationMsgAny.pollCreationMessageV2?.contextInfo?.messageSecret ||
-      creationMsgAny.pollCreationMessage?.contextInfo?.messageSecret;
-
-    const pollEncKey = decodeBinaryBuffer(rawSecret);
+    const pollEncKey = extractPollSecretFromMessage(pollCreationRecord);
     const encPayload = decodeBinaryBuffer(pollUpdate.vote.encPayload);
     const encIv = decodeBinaryBuffer(pollUpdate.vote.encIv);
-    if (!pollEncKey || !encPayload || !encIv) return;
+    if (!pollEncKey || !encPayload || !encIv) {
+      if (order) {
+        store.appendOrderEvent(order.id, {
+          actor: 'system',
+          message: `Received WhatsApp poll vote for ${order.orderNumber} but encryption key/payload was incomplete.`,
+        });
+        void store.flushRemote();
+      }
+      return;
+    }
 
     const { decryptPollVote, getAggregateVotesInPollMessage, jidNormalizedUser } = helpers;
-    const keyWithAlt = msg.key as typeof msg.key & {
-      remoteJidAlt?: string;
-      participantAlt?: string;
+    const settings = store.getSettings();
+    const orderPhoneJid = order?.customerPhone
+      ? normalizePhoneToWhatsAppJid(order.customerPhone, settings.defaultCountryCode)
+      : null;
+
+    const lidMapping = (
+      sock as unknown as {
+        signalRepository?: {
+          lidMapping?: {
+            getLIDForPN?: (pn: string) => Promise<string | null | undefined>;
+            getPNForLID?: (lid: string) => Promise<string | null | undefined>;
+          };
+        };
+      }
+    ).signalRepository?.lidMapping;
+
+    const expandJidSet = async (rawList: Array<string | null | undefined>): Promise<string[]> => {
+      const set = new Set<string>();
+      const addOne = (val?: string | null) => {
+        if (!val || typeof val !== 'string') return;
+        const trimmed = val.trim();
+        if (!trimmed) return;
+        set.add(trimmed);
+        const stripped = stripJidDevice(trimmed);
+        if (stripped) set.add(stripped);
+        try {
+          const norm = jidNormalizedUser(trimmed);
+          if (norm) set.add(norm);
+        } catch {
+          // Ignore malformed JID
+        }
+      };
+
+      for (const item of rawList) {
+        addOne(item);
+      }
+
+      if (lidMapping) {
+        const snapshot = Array.from(set);
+        for (const candidate of snapshot) {
+          try {
+            if (candidate.endsWith('@s.whatsapp.net') && lidMapping.getLIDForPN) {
+              const mappedLid = await lidMapping.getLIDForPN(candidate);
+              addOne(mappedLid);
+            } else if (candidate.endsWith('@lid') && lidMapping.getPNForLID) {
+              const mappedPn = await lidMapping.getPNForLID(candidate);
+              addOne(mappedPn);
+            }
+          } catch {
+            // Non-fatal LID mapping lookup error
+          }
+        }
+      }
+
+      return Array.from(set);
     };
 
-    const creatorCandidates = Array.from(
-      new Set(
-        [
-          sock.user?.id ? jidNormalizedUser(sock.user.id) : '',
-          sock.user?.lid ? jidNormalizedUser(sock.user.lid) : '',
-          pollCreationMsg.key?.participant ? jidNormalizedUser(pollCreationMsg.key.participant) : '',
-          pollCreationMsg.key?.remoteJid ? jidNormalizedUser(pollCreationMsg.key.remoteJid) : '',
-        ].filter(Boolean)
-      )
-    );
+    const creatorCandidates = await expandJidSet([
+      sock.user?.id,
+      sock.user?.lid,
+      pollCreationRecord.creatorJid,
+      pollCreationRecord.creatorLid,
+      pollCreationKey?.participant,
+      pollCreationRecord.key?.participant,
+      pollCreationKey?.remoteJid,
+      pollCreationRecord.key?.remoteJid,
+    ]);
 
-    const voterCandidates = Array.from(
-      new Set(
-        [
-          msg.key.remoteJid ? jidNormalizedUser(msg.key.remoteJid) : '',
-          keyWithAlt.remoteJidAlt ? jidNormalizedUser(keyWithAlt.remoteJidAlt) : '',
-          msg.key.participant ? jidNormalizedUser(msg.key.participant) : '',
-          keyWithAlt.participantAlt ? jidNormalizedUser(keyWithAlt.participantAlt) : '',
-          pollCreationKey?.remoteJid ? jidNormalizedUser(pollCreationKey.remoteJid) : '',
-          pollCreationMsg.key?.remoteJid ? jidNormalizedUser(pollCreationMsg.key.remoteJid) : '',
-          sock.user?.id ? jidNormalizedUser(sock.user.id) : '',
-          sock.user?.lid ? jidNormalizedUser(sock.user.lid) : '',
-        ].filter(Boolean)
-      )
-    );
+    const voterCandidates = await expandJidSet([
+      msg.key.remoteJid,
+      keyWithAlt.remoteJidAlt,
+      msg.key.participant,
+      keyWithAlt.participantAlt,
+      pollCreationRecord.targetJid,
+      order?.whatsappTargetJid,
+      orderPhoneJid,
+      pollCreationKey?.remoteJid,
+      pollCreationRecord.key?.remoteJid,
+      sock.user?.id,
+      sock.user?.lid,
+    ]);
 
     let decryptedVote: { selectedOptions?: Uint8Array[] | null } | null = null;
     outer: for (const pollCreatorJid of creatorCandidates) {
@@ -928,22 +1130,44 @@ class WhatsAppManager {
     }
 
     if (!decryptedVote?.selectedOptions || decryptedVote.selectedOptions.length === 0) {
+      if (order && order.pollStatus === 'poll_sent') {
+        store.appendOrderEvent(order.id, {
+          actor: 'system',
+          message: `Received WhatsApp poll update for ${order.orderNumber} but could not decrypt vote (${creatorCandidates.length}x${voterCandidates.length} JID pairs tried).`,
+        });
+        void store.flushRemote();
+      }
       return;
     }
 
-    const pollOptions =
+    const optionNames: string[] = [];
+    if (Array.isArray(pollCreationRecord.options)) {
+      for (const opt of pollCreationRecord.options) {
+        if (typeof opt === 'string' && opt.trim()) optionNames.push(opt);
+      }
+    }
+    const rawMsgOptions =
       creationMsgAny.pollCreationMessageV3?.options ||
       creationMsgAny.pollCreationMessageV2?.options ||
       creationMsgAny.pollCreationMessage?.options ||
       [];
+    for (const opt of rawMsgOptions) {
+      if (opt.optionName && !optionNames.includes(opt.optionName)) {
+        optionNames.push(opt.optionName);
+      }
+    }
+    if (optionNames.length === 0) {
+      optionNames.push(
+        settings.confirmOptionLabel.trim() || 'Confirm Order',
+        settings.cancelOptionLabel.trim() || 'Cancel Order'
+      );
+    }
 
     let selectedName = '';
     for (const rawOpt of decryptedVote.selectedOptions) {
       const optBuf = decodeBinaryBuffer(rawOpt);
       if (!optBuf) continue;
-      for (const opt of pollOptions) {
-        const optionName = opt.optionName || '';
-        if (!optionName) continue;
+      for (const optionName of optionNames) {
         const hash = crypto.createHash('sha256').update(Buffer.from(optionName)).digest();
         if (hash.equals(optBuf)) {
           selectedName = optionName;
@@ -953,26 +1177,23 @@ class WhatsAppManager {
       if (selectedName) break;
     }
 
-    if (!selectedName) {
-      const selfNorm = sock.user?.id ? jidNormalizedUser(sock.user.id) : undefined;
-      const votes = getAggregateVotesInPollMessage(
-        {
-          message: pollCreationMsg.message,
-          pollUpdates: [{ pollUpdateMessageKey: msg.key, vote: decryptedVote }],
-        },
-        selfNorm
-      );
-      selectedName = votes.find((v) => v.voters && v.voters.length > 0)?.name || '';
+    if (!selectedName && pollCreationRecord.message) {
+      try {
+        const selfNorm = sock.user?.id ? jidNormalizedUser(sock.user.id) : undefined;
+        const votes = getAggregateVotesInPollMessage(
+          {
+            message: pollCreationRecord.message,
+            pollUpdates: [{ pollUpdateMessageKey: msg.key, vote: decryptedVote }],
+          },
+          selfNorm
+        );
+        selectedName = votes.find((v) => v.voters && v.voters.length > 0)?.name || '';
+      } catch {
+        // Ignore fallback aggregation error
+      }
     }
 
     if (!selectedName) return;
-
-    const resolvedAlt =
-      keyWithAlt.remoteJidAlt || keyWithAlt.participantAlt || msg.key.remoteJid || '';
-    const senderDigits = resolvedAlt.split('@')[0].split(':')[0].replace(/\D/g, '');
-    const order =
-      store.getOrderByWhatsAppMessageId(pollMsgId) ||
-      (senderDigits ? store.findLatestPendingOrderByPhone(senderDigits) : undefined);
 
     if (order) {
       await this.applyVoteToOrder(
@@ -1032,7 +1253,19 @@ class WhatsAppManager {
           });
           const msgId = sent?.key?.id || `WA-${Date.now()}`;
           if (sent && sent.key?.id) {
-            store.savePollMessage(sent.key.id, sent);
+            store.savePollMessage(
+              sent.key.id,
+              serializePollCacheEntry({
+                sent,
+                options,
+                question,
+                orderId: current.id,
+                targetJid,
+                creatorJid: this.sock.user?.id || null,
+                creatorLid: this.sock.user?.lid || null,
+              }),
+              { flushNow: true }
+            );
           }
 
           const waitingTag = (settings.waitingTag || 'waiting for confirmation').trim();
@@ -1076,6 +1309,7 @@ class WhatsAppManager {
                   : `Order tagged with "${waitingTag}"`,
             });
           }
+          await store.flushRemote();
           return store.getOrderById(current.id) || current;
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : 'failed';
@@ -1200,37 +1434,50 @@ class WhatsAppManager {
 
     const shouldCancelInShopify =
       resolution.decision === 'cancel' && settings.autoCancelInShopify;
-
-    const shopifyResult = await updateShopifyOrderTags(
-      settings,
-      order.shopifyOrderId,
-      updatedTags,
-      shouldCancelInShopify
-    );
-
     const hasLiveShopify = hasLiveShopifyCredentials(settings);
-    order.shopifyTags = updatedTags;
-    order.pollStatus = resolution.newStatus;
-    order.respondedAt = new Date().toISOString();
-    order.responseChannel = channel;
-    order.shopifySynced = shopifyResult.synced || !hasLiveShopify;
-    if (shouldCancelInShopify && shopifyResult.cancelledInShopify && !order.shopifyCancelledAt) {
-      order.shopifyCancelledAt = new Date().toISOString();
-    }
-    if (preferredReplyJid) {
-      order.whatsappTargetJid = preferredReplyJid;
-    }
-    store.upsertOrder(order);
 
     const optionDisplay =
       resolution.decision === 'confirm'
         ? settings.confirmOptionLabel
         : settings.cancelOptionLabel;
 
+    // 1. Persist customer decision locally & flush to RTDB IMMEDIATELY so the Vercel dashboard updates in <1s
+    order.shopifyTags = updatedTags;
+    order.pollStatus = resolution.newStatus;
+    order.respondedAt = new Date().toISOString();
+    order.responseChannel = channel;
+    if (preferredReplyJid) {
+      order.whatsappTargetJid = preferredReplyJid;
+    }
+    store.upsertOrder(order);
     store.appendOrderEvent(order.id, {
       actor: 'customer',
       message: `Customer selected "${optionDisplay}" (${channel.replace('_', ' ')})`,
     });
+    await store.flushRemote();
+
+    // 2. Sync tag (and optional cancel) to Shopify Admin API with one automatic retry on transient failures
+    let shopifyResult = await updateShopifyOrderTags(
+      settings,
+      order.shopifyOrderId,
+      updatedTags,
+      shouldCancelInShopify
+    );
+    if (hasLiveShopify && !shopifyResult.synced) {
+      await new Promise((r) => setTimeout(r, 900));
+      shopifyResult = await updateShopifyOrderTags(
+        settings,
+        order.shopifyOrderId,
+        updatedTags,
+        shouldCancelInShopify
+      );
+    }
+
+    order.shopifySynced = shopifyResult.synced || !hasLiveShopify;
+    if (shouldCancelInShopify && shopifyResult.cancelledInShopify && !order.shopifyCancelledAt) {
+      order.shopifyCancelledAt = new Date().toISOString();
+    }
+    store.upsertOrder(order);
 
     store.appendOrderEvent(order.id, {
       actor: 'shopify',
@@ -1251,6 +1498,7 @@ class WhatsAppManager {
           : `Shopify order cancellation failed for ${order.orderNumber}: ${shopifyResult.cancelError || 'unknown error'}`,
       });
     }
+    await store.flushRemote();
 
     if (
       (channel === 'whatsapp_poll' || channel === 'whatsapp_text') &&
@@ -1292,6 +1540,7 @@ class WhatsAppManager {
                 ? `Confirmation WhatsApp message sent to ${order.customerPhone}`
                 : `Cancellation WhatsApp message sent to ${order.customerPhone}`,
           });
+          await store.flushRemote();
         }
       }
     }

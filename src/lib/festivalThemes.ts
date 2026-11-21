@@ -6,12 +6,16 @@ import {
   buildFestivalParticlesHtml,
   buildFestivalShowcaseCss,
   selectBestFestivalProducts,
-} from './festivalShowcase';
+} from './festivalShowcase.js';
 import {
   buildSantaRoamerCss,
   buildSantaRoamerHtml,
   buildSantaRoamerRuntimeJs,
-} from './santaRoamer';
+} from './santaRoamer.js';
+import {
+  buildWinterCardSnowCss,
+  buildWinterCardSnowRuntimeJs,
+} from './winterCardSnow.js';
 
 export type { FestivalFeaturedProduct };
 
@@ -41,6 +45,7 @@ export interface FestivalThemeConfig {
   showHeroBanner?: boolean;
   show3DArticles?: boolean;
   show3DBackground?: boolean;
+  show3DCardSnow?: boolean;
   featuredProductHandles?: string[];
   intensity: FestivalThemeIntensity;
   updatedAt?: string;
@@ -87,6 +92,7 @@ export const DEFAULT_FESTIVAL_THEME_CONFIG: FestivalThemeConfig = {
   showHeroBanner: true,
   show3DArticles: true,
   show3DBackground: true,
+  show3DCardSnow: true,
   featuredProductHandles: [],
   intensity: 'full',
 };
@@ -468,6 +474,10 @@ export function normalizeFestivalThemeConfig(
       typeof src.show3DBackground === 'boolean'
         ? src.show3DBackground
         : DEFAULT_FESTIVAL_THEME_CONFIG.show3DBackground,
+    show3DCardSnow:
+      typeof src.show3DCardSnow === 'boolean'
+        ? src.show3DCardSnow
+        : DEFAULT_FESTIVAL_THEME_CONFIG.show3DCardSnow,
     featuredProductHandles,
     intensity: src.intensity === 'subtle' ? 'subtle' : 'full',
     updatedAt: typeof src.updatedAt === 'string' ? src.updatedAt : undefined,
@@ -609,6 +619,7 @@ export interface FestivalThemeRuntimePayload {
   showHeroBanner: boolean;
   show3DArticles: boolean;
   show3DBackground: boolean;
+  show3DCardSnow: boolean;
   effectStyle: FestivalThemePreset['effectStyle'];
   palette: FestivalPalette;
   featuredProducts: FestivalFeaturedProduct[];
@@ -673,7 +684,10 @@ export function buildFestivalThemePayload(
   const roamerCss = normalized.enabled
     ? buildSantaRoamerCss(resolved.preset.id, normalized)
     : '';
-  const combinedCss = [baseCss, showcaseCss, roamerCss].filter(Boolean).join('\n\n');
+  const cardSnowCss = normalized.enabled
+    ? buildWinterCardSnowCss(resolved.preset.id, normalized)
+    : '';
+  const combinedCss = [baseCss, showcaseCss, roamerCss, cardSnowCss].filter(Boolean).join('\n\n');
 
   return {
     enabled: normalized.enabled,
@@ -686,6 +700,7 @@ export function buildFestivalThemePayload(
     showHeroBanner: normalized.showHeroBanner !== false,
     show3DArticles: normalized.show3DArticles !== false,
     show3DBackground: normalized.show3DBackground !== false,
+    show3DCardSnow: normalized.show3DCardSnow !== false,
     effectStyle: resolved.preset.effectStyle,
     palette: resolved.preset.palette,
     featuredProducts,
@@ -733,6 +748,7 @@ export function buildFestivalPreviewUrl(
   params.set('hero', normalized.showHeroBanner !== false ? '1' : '0');
   params.set('art3d', normalized.show3DArticles !== false ? '1' : '0');
   params.set('bg3d', normalized.show3DBackground !== false ? '1' : '0');
+  params.set('snowcards', normalized.show3DCardSnow !== false ? '1' : '0');
   if ((normalized.featuredProductHandles || []).length > 0) {
     params.set('picks', (normalized.featuredProductHandles || []).slice(0, 3).join(','));
   }
@@ -1072,9 +1088,11 @@ export function rewriteShopifyHtmlForFestivalPreview(
   var INITIAL_PAYLOAD = ${safeJsonForScriptTag(effectivePayload)};
   var STORE_ORIGIN = ${safeJsonForScriptTag(cleanOrigin)};
 ${buildSantaRoamerRuntimeJs()}
+${buildWinterCardSnowRuntimeJs()}
 
   function removeFestivalPreview() {
     stopSantaRoamer();
+    removeWinterCardSnow();
     var ids = [
       'orderpulse-festival-theme-css',
       'orderpulse-festival-bg-3d',
@@ -1198,6 +1216,9 @@ ${buildSantaRoamerRuntimeJs()}
 
     // 5. Roaming Interactive 3D Santa Claus Character
     mountFestivalRoamer(ft);
+
+    // 6. 3D Sculpted Snow Accumulation & Crystal Icicles on Every Card
+    mountWinterCardSnow(ft);
   }
 
   function bootPreview() {
