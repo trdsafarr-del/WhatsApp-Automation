@@ -959,23 +959,39 @@ body .site-footer a {
   const fxRules = normalized.enableFestiveEffects
     ? `
 @keyframes opFestFloat {
-  0% { transform: translateY(-10px) rotate(0deg); opacity: 0; }
+  0% { transform: translate3d(0, -14px, 0) rotate(0deg); opacity: 0; }
   15% { opacity: 0.78; }
   85% { opacity: 0.65; }
-  100% { transform: translateY(105vh) rotate(220deg); opacity: 0; }
+  100% { transform: translate3d(0, 105vh, 0) rotate(220deg); opacity: 0; }
 }
 #orderpulse-festival-fx {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100lvh;
   pointer-events: none;
   z-index: 2147482000;
   overflow: hidden;
+  contain: layout style;
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 .op-fest-particle {
   position: absolute;
   top: -14px;
   border-radius: 999px;
   animation: opFestFloat linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  #orderpulse-festival-fx {
+    display: none !important;
+  }
 }
 `
     : '';
@@ -1090,7 +1106,28 @@ export function rewriteShopifyHtmlForFestivalPreview(
 ${buildSantaRoamerRuntimeJs()}
 ${buildWinterCardSnowRuntimeJs()}
 
+  var opPreviewThemeSig = '';
+
+  function buildThemeSig(ft) {
+    if (!ft || !ft.enabled) return 'off';
+    return [
+      ft.presetId || '',
+      ft.css ? ft.css.length : 0,
+      ft.show3DBackground ? 1 : 0,
+      ft.showAnnouncementBar ? 1 : 0,
+      ft.bannerText || '',
+      ft.badgeText || '',
+      ft.showHeroBanner ? 1 : 0,
+      ft.heroBannerHtml ? ft.heroBannerHtml.length : 0,
+      ft.show3DArticles ? 1 : 0,
+      ft.enableFestiveEffects ? 1 : 0,
+      ft.show3DCardSnow !== false ? 1 : 0,
+      ft.roamerHtml ? ft.roamerHtml.length : 0
+    ].join('|');
+  }
+
   function removeFestivalPreview() {
+    opPreviewThemeSig = 'off';
     stopSantaRoamer();
     removeWinterCardSnow();
     var ids = [
@@ -1114,6 +1151,13 @@ ${buildWinterCardSnowRuntimeJs()}
       removeFestivalPreview();
       return;
     }
+    var nextSig = buildThemeSig(ft);
+    if (nextSig === opPreviewThemeSig && document.getElementById('orderpulse-festival-theme-css')) {
+      mountWinterCardSnow(ft);
+      return;
+    }
+    opPreviewThemeSig = nextSig;
+
     var styleEl = document.getElementById('orderpulse-festival-theme-css');
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -1127,16 +1171,20 @@ ${buildWinterCardSnowRuntimeJs()}
       document.documentElement.setAttribute('data-orderpulse-festival', ft.presetId || 'festive');
     } catch (e) {}
 
-    // 0. Full-Website 3D Animated Festive Background Layer
+    // 0. Full-Website 3D Animated Festive Background Layer (idempotent — zero flicker)
     var existingBg3d = document.getElementById('orderpulse-festival-bg-3d');
     if (ft.show3DBackground && ft.background3DHtml && document.body) {
+      var bgSig = (ft.presetId || '') + ':' + ft.background3DHtml.length;
       if (!existingBg3d) {
         existingBg3d = document.createElement('div');
         existingBg3d.id = 'orderpulse-festival-bg-3d';
         existingBg3d.setAttribute('aria-hidden', 'true');
         document.body.insertBefore(existingBg3d, document.body.firstChild);
       }
-      existingBg3d.innerHTML = ft.background3DHtml;
+      if (existingBg3d.getAttribute('data-op-sig') !== bgSig) {
+        existingBg3d.setAttribute('data-op-sig', bgSig);
+        existingBg3d.innerHTML = ft.background3DHtml;
+      }
     } else if (existingBg3d && existingBg3d.parentNode) {
       existingBg3d.parentNode.removeChild(existingBg3d);
     }
@@ -1144,6 +1192,7 @@ ${buildWinterCardSnowRuntimeJs()}
     // 1. Top Festive Announcement Bar
     var existingBanner = document.getElementById('orderpulse-festival-banner');
     if (ft.showAnnouncementBar && ft.bannerText && document.body) {
+      var bannerSig = (ft.badgeText || '') + '|' + (ft.bannerText || '');
       if (!existingBanner) {
         existingBanner = document.createElement('div');
         existingBanner.id = 'orderpulse-festival-banner';
@@ -1151,15 +1200,18 @@ ${buildWinterCardSnowRuntimeJs()}
           'position:relative;z-index:2147482500;width:100%;padding:9px 38px 9px 14px;text-align:center;font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:600;line-height:1.4;letter-spacing:0.01em;box-sizing:border-box;';
         document.body.insertBefore(existingBanner, document.body.firstChild);
       }
-      var safeBadge = String(ft.badgeText || '').replace(/</g, '&lt;');
-      var safeText = String(ft.bannerText || '').replace(/</g, '&lt;');
-      existingBanner.innerHTML =
-        (safeBadge
-          ? '<span style="display:inline-block;margin-right:8px;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,0.16);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">' +
-            safeBadge +
-            '</span>'
-          : '') +
-        '<span>' + safeText + '</span>';
+      if (existingBanner.getAttribute('data-op-sig') !== bannerSig) {
+        existingBanner.setAttribute('data-op-sig', bannerSig);
+        var safeBadge = String(ft.badgeText || '').replace(/</g, '&lt;');
+        var safeText = String(ft.bannerText || '').replace(/</g, '&lt;');
+        existingBanner.innerHTML =
+          (safeBadge
+            ? '<span style="display:inline-block;margin-right:8px;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,0.16);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">' +
+              safeBadge +
+              '</span>'
+            : '') +
+          '<span>' + safeText + '</span>';
+      }
     } else if (existingBanner && existingBanner.parentNode) {
       existingBanner.parentNode.removeChild(existingBanner);
     }
@@ -1167,6 +1219,7 @@ ${buildWinterCardSnowRuntimeJs()}
     // 2. Hanging 3D Festive Lights / Garland directly below the header
     var existingGarland = document.getElementById('orderpulse-festival-garland');
     if (ft.show3DArticles && ft.garlandHtml && document.body) {
+      var garlandSig = (ft.presetId || '') + ':' + ft.garlandHtml.length;
       if (!existingGarland) {
         existingGarland = document.createElement('div');
         existingGarland.id = 'orderpulse-festival-garland';
@@ -1177,7 +1230,10 @@ ${buildWinterCardSnowRuntimeJs()}
           document.body.insertBefore(existingGarland, document.body.firstChild);
         }
       }
-      existingGarland.innerHTML = ft.garlandHtml;
+      if (existingGarland.getAttribute('data-op-sig') !== garlandSig) {
+        existingGarland.setAttribute('data-op-sig', garlandSig);
+        existingGarland.innerHTML = ft.garlandHtml;
+      }
     } else if (existingGarland && existingGarland.parentNode) {
       existingGarland.parentNode.removeChild(existingGarland);
     }
@@ -1185,6 +1241,7 @@ ${buildWinterCardSnowRuntimeJs()}
     // 3. Auto-Product 3D Festive Hero Showcase Banner at the top of MainContent
     var existingHero = document.getElementById('orderpulse-festival-hero');
     if (ft.showHeroBanner && ft.heroBannerHtml && document.body) {
+      var heroSig = (ft.presetId || '') + ':' + ft.heroBannerHtml.length + ':' + (ft.show3DArticles ? 1 : 0);
       if (!existingHero) {
         existingHero = document.createElement('div');
         existingHero.id = 'orderpulse-festival-hero';
@@ -1195,21 +1252,28 @@ ${buildWinterCardSnowRuntimeJs()}
           document.body.insertBefore(existingHero, document.body.firstChild);
         }
       }
-      existingHero.innerHTML = ft.heroBannerHtml;
+      if (existingHero.getAttribute('data-op-sig') !== heroSig) {
+        existingHero.setAttribute('data-op-sig', heroSig);
+        existingHero.innerHTML = ft.heroBannerHtml;
+      }
     } else if (existingHero && existingHero.parentNode) {
       existingHero.parentNode.removeChild(existingHero);
     }
 
-    // 4. Rich Animated Snowflakes / Sparkles / Gulal / Hearts FX
+    // 4. Smooth Animated Snowflakes / Sparkles / Gulal / Hearts FX
     var existingFx = document.getElementById('orderpulse-festival-fx');
     if (ft.enableFestiveEffects && ft.particlesHtml && document.body) {
+      var fxSig = (ft.presetId || '') + ':' + ft.particlesHtml.length;
       if (!existingFx) {
         existingFx = document.createElement('div');
         existingFx.id = 'orderpulse-festival-fx';
         existingFx.setAttribute('aria-hidden', 'true');
         document.body.appendChild(existingFx);
       }
-      existingFx.innerHTML = ft.particlesHtml;
+      if (existingFx.getAttribute('data-op-sig') !== fxSig) {
+        existingFx.setAttribute('data-op-sig', fxSig);
+        existingFx.innerHTML = ft.particlesHtml;
+      }
     } else if (existingFx && existingFx.parentNode) {
       existingFx.parentNode.removeChild(existingFx);
     }

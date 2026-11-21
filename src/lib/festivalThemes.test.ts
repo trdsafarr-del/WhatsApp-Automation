@@ -288,7 +288,7 @@ test('buildFestivalThemePayload renders 3D Christmas/Diwali articles, auto-produ
   assert.equal(offPayload.particlesHtml, '');
 });
 
-test('Christmas & New Year themes include 3D sculpted card snow accumulation, icicles, hover sheen, and 3-layer 3D snowfall', () => {
+test('Christmas & New Year themes keep crisp 3D card snow caps with ultra-smooth 60fps CSS and no heavy janky card animations', () => {
   const xmasSnow = buildFestivalThemePayload({
     ...DEFAULT_FESTIVAL_THEME_CONFIG,
     enabled: true,
@@ -299,12 +299,23 @@ test('Christmas & New Year themes include 3D sculpted card snow accumulation, ic
 
   assert.equal(xmasSnow.show3DCardSnow, true);
   assert.ok(xmasSnow.css.includes('.op-winter-snow-cap'));
-  assert.ok(xmasSnow.css.includes('opIcicleShimmer'));
-  assert.ok(xmasSnow.css.includes('opCardIceSheenSweep'));
-  assert.ok(xmasSnow.css.includes('opSnowDustPuff'));
+  assert.ok(xmasSnow.css.includes('height: 100lvh;'));
+  assert.ok(xmasSnow.css.includes('(hover: hover) and (pointer: fine)'));
+
+  // Heavy / ugly janky animations and mobile GPU-killing filters must be absent
+  assert.equal(xmasSnow.css.includes('backdrop-filter: blur'), false);
+  assert.equal(xmasSnow.css.includes('opCardFrostPulse'), false);
+  assert.equal(xmasSnow.css.includes('opCardIceSheenSweep'), false);
+  assert.equal(xmasSnow.css.includes('opSnowDustPuff'), false);
+  assert.equal(xmasSnow.css.includes('opIcicleShimmer'), false);
+  assert.equal(xmasSnow.css.includes('op-winter-ice-sheen'), false);
+  assert.equal(xmasSnow.css.includes('op-winter-snow-dust'), false);
+
+  // Smooth GPU-composited snowfall capped for mobile
   assert.ok(xmasSnow.particlesHtml.includes('op-snow-layer-near'));
   assert.ok(xmasSnow.particlesHtml.includes('op-snow-layer-mid'));
   assert.ok(xmasSnow.particlesHtml.includes('op-fest-snow-orb'));
+  assert.ok(xmasSnow.particlesHtml.includes('op-snow-desktop-only'));
 
   const snowDisabled = buildFestivalThemePayload({
     ...DEFAULT_FESTIVAL_THEME_CONFIG,
@@ -322,6 +333,8 @@ test('Christmas & New Year themes include 3D sculpted card snow accumulation, ic
   );
   assert.ok(previewHtml.includes('mountWinterCardSnow'));
   assert.ok(previewHtml.includes('op-winter-snow-cap'));
+  assert.ok(previewHtml.includes('data-op-sig'));
 });
+
 
 

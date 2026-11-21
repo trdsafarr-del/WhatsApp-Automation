@@ -513,6 +513,7 @@ export function buildSantaRoamerCss(
   z-index: 2147482150;
   pointer-events: none;
   overflow: hidden;
+  contain: layout style;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 #orderpulse-festival-roamer .op-santa-stage {
@@ -528,7 +529,8 @@ export function buildSantaRoamerCss(
   user-select: none;
   -webkit-user-select: none;
   will-change: transform, opacity;
-  filter: drop-shadow(0 12px 20px rgba(4, 15, 24, 0.42));
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 #orderpulse-festival-roamer .op-santa-hidden {
   opacity: 0;
@@ -716,7 +718,6 @@ export function buildSantaRoamerCss(
   line-height: 1;
   pointer-events: none;
   animation: opSantaBurstFly 0.95s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.35));
 }
 
 @media (max-width: 768px) {
@@ -737,6 +738,12 @@ export function buildSantaRoamerCss(
   #orderpulse-festival-roamer .op-santa-bubble {
     font-size: 10.5px;
     padding: 4px 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #orderpulse-festival-roamer {
+    display: none !important;
   }
 }
 `.trim();
@@ -875,15 +882,19 @@ export function buildSantaRoamerRuntimeJs(): string {
       actor.style.setProperty('--op-santa-top', skyTop + '%');
     }
 
-    // Force layout reflow before attaching active scene class
-    void actor.offsetWidth;
-
     var extraDir = chosen.id === 'sleigh_swoop' && Math.random() > 0.5 ? ' op-santa-rtl' : '';
-    actor.className = 'op-santa-actor op-scene-' + chosen.id + extraDir;
-    stage.setAttribute('data-active-scene', chosen.id);
+    var startClass = 'op-santa-actor op-scene-' + chosen.id + extraDir;
+    var raf = window.requestAnimationFrame || function (fn) { return setTimeout(fn, 16); };
+    raf(function () {
+      raf(function () {
+        if (!host || !document.body.contains(host)) return;
+        actor.className = startClass;
+        stage.setAttribute('data-active-scene', chosen.id);
+      });
+    });
 
     if (opSantaTimer) clearTimeout(opSantaTimer);
-    var pauseMs = 1500 + Math.floor(Math.random() * 1400);
+    var pauseMs = 1800 + Math.floor(Math.random() * 1600);
     opSantaTimer = setTimeout(function () {
       runSantaScene(host, null);
     }, chosen.durationMs + pauseMs);

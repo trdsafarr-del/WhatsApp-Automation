@@ -1362,34 +1362,35 @@ export function buildFestivalGarlandHtml(preset: FestivalThemePreset): string {
  */
 export function buildFestivalParticlesHtml(preset: FestivalThemePreset): string {
   const p = preset.palette;
-  const count = preset.effectStyle === 'snow' ? 36 : 18;
+  const count = preset.effectStyle === 'snow' ? 20 : 14;
   const items: string[] = [];
 
   for (let i = 0; i < count; i += 1) {
-    const left = Math.round(((i * 7.3 + 2.5) % 95) + 2);
-    const dur = (7.2 + (i % 7) * 1.45).toFixed(1);
-    const delay = ((i % 9) * 0.72).toFixed(1);
+    const left = Math.round(((i * 9.7 + 3.5) % 94) + 3);
+    const dur = (8.5 + (i % 6) * 1.4).toFixed(1);
+    const delay = ((i % 8) * 0.85).toFixed(1);
+    const mobileHiddenCls = i >= 12 ? ' op-snow-desktop-only' : '';
 
     if (preset.effectStyle === 'snow') {
-      const layer = i % 3; // 0 = foreground 3D crystal, 1 = mid crystal, 2 = distant frost orb
+      const layer = i % 3; // 0 = foreground crisp crystal, 1 = mid crystal, 2 = soft snow orb
       if (layer === 0) {
-        const size = 18 + (i % 3) * 5;
+        const size = 16 + (i % 3) * 4;
         items.push(
-          `<span class="op-fest-particle op-fest-snow op-snow-layer-near" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${(6.8 + (i % 4) * 1.3).toFixed(1)}s;animation-delay:${delay}s;">` +
-            `<svg viewBox="0 0 28 28" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"><path d="M14 2v24M2 14h24M5.5 5.5l17 17M22.5 5.5l-17 17M14 6l-2.6-2.2M14 6l2.6-2.2M14 22l-2.6 2.2M14 22l2.6 2.2M6 14l-2.2-2.6M6 14l-2.2 2.6M22 14l2.2-2.6M22 14l2.2 2.6"/><circle cx="14" cy="14" r="2.2" fill="#E0F2FE" stroke="none"/></svg>` +
+          `<span class="op-fest-particle op-fest-snow op-snow-layer-near${mobileHiddenCls}" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${(8.2 + (i % 4) * 1.3).toFixed(1)}s;animation-delay:${delay}s;">` +
+            `<svg viewBox="0 0 28 28" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"><path d="M14 2v24M2 14h24M5.5 5.5l17 17M22.5 5.5l-17 17M14 6l-2.4-2M14 6l2.4-2M14 22l-2.4 2M14 22l2.4 2"/><circle cx="14" cy="14" r="2" fill="#E0F2FE" stroke="none"/></svg>` +
           `</span>`
         );
       } else if (layer === 1) {
-        const size = 12 + (i % 4) * 3;
+        const size = 11 + (i % 3) * 3;
         items.push(
-          `<span class="op-fest-particle op-fest-snow op-snow-layer-mid" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${dur}s;animation-delay:${delay}s;">` +
+          `<span class="op-fest-particle op-fest-snow op-snow-layer-mid${mobileHiddenCls}" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${dur}s;animation-delay:${delay}s;">` +
             `<svg viewBox="0 0 24 24" fill="none" stroke="#E0F2FE" stroke-width="2" stroke-linecap="round"><path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9L4.9 19.1"/></svg>` +
           `</span>`
         );
       } else {
-        const size = 5 + (i % 3) * 2.5;
+        const size = 5 + (i % 3) * 2;
         items.push(
-          `<span class="op-fest-particle op-fest-snow-orb" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${(10.5 + (i % 5) * 1.6).toFixed(1)}s;animation-delay:${delay}s;"></span>`
+          `<span class="op-fest-particle op-fest-snow-orb${mobileHiddenCls}" style="left:${left}%;width:${size}px;height:${size}px;animation-duration:${(11.0 + (i % 5) * 1.5).toFixed(1)}s;animation-delay:${delay}s;"></span>`
         );
       }
     } else if (preset.id === 'valentine' || preset.id === 'mothers_day') {
@@ -1633,59 +1634,65 @@ main#MainContent .section-template--padding {
 
 #orderpulse-festival-bg-3d {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100lvh;
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
-  perspective: 1000px;
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  contain: layout style paint;
 }
 #orderpulse-festival-bg-3d .op-bg3d-stage {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  transform-style: preserve-3d;
 }
 #orderpulse-festival-bg-3d .op-bg3d-aurora {
   position: absolute;
-  inset: -18%;
-  filter: blur(46px);
-  opacity: 0.92;
-  animation: opBg3dAurora 14s ease-in-out infinite;
+  inset: -12%;
+  opacity: 0.78;
+  animation: opBg3dAurora 20s ease-in-out infinite;
+  will-change: transform;
 }
 #orderpulse-festival-bg-3d .op-bg3d-orb {
   position: absolute;
   border-radius: 999px;
-  filter: blur(18px);
-  opacity: ${bg3d.isDarkCanvas ? '0.62' : '0.68'};
+  opacity: ${bg3d.isDarkCanvas ? '0.42' : '0.48'};
 }
 #orderpulse-festival-bg-3d .op-bg3d-orb-1 {
   width: 320px;
   height: 320px;
   top: -60px;
   left: -50px;
-  animation: opBg3dDriftA 13s ease-in-out infinite;
+  animation: opBg3dDriftA 18s ease-in-out infinite;
 }
 #orderpulse-festival-bg-3d .op-bg3d-orb-2 {
   width: 380px;
   height: 380px;
   top: 10%;
   right: -85px;
-  animation: opBg3dDriftB 15s ease-in-out infinite;
+  animation: opBg3dDriftB 20s ease-in-out infinite;
 }
 #orderpulse-festival-bg-3d .op-bg3d-orb-3 {
   width: 280px;
   height: 280px;
   bottom: 12%;
   left: 14%;
-  animation: opBg3dDriftC 11s ease-in-out infinite;
+  animation: opBg3dDriftC 16s ease-in-out infinite;
 }
 #orderpulse-festival-bg-3d .op-bg3d-orb-4 {
   width: 240px;
   height: 240px;
   bottom: 18%;
   right: 16%;
-  animation: opBg3dDriftA 14s ease-in-out infinite reverse;
+  animation: opBg3dDriftA 19s ease-in-out infinite reverse;
 }
 
 /* Christmas & Festival Authentic Scenic Layers */
@@ -1693,8 +1700,7 @@ main#MainContent .section-template--padding {
   position: absolute;
   border-radius: 999px;
   background: radial-gradient(circle, #FFFFFF 0%, #FEF08A 45%, transparent 72%);
-  box-shadow: 0 0 12px rgba(254, 240, 138, 0.85);
-  animation: opXmasStarTwinkle 2.8s ease-in-out infinite;
+  animation: opXmasStarTwinkle 3.4s ease-in-out infinite;
 }
 #orderpulse-festival-bg-3d .op-xmas-moon {
   position: absolute;
@@ -1704,7 +1710,7 @@ main#MainContent .section-template--padding {
   height: 92px;
   border-radius: 999px;
   background: radial-gradient(circle at 36% 34%, #FFFBEB 0%, #FEF08A 58%, #FDE047 100%);
-  box-shadow: 0 0 42px rgba(254, 240, 138, 0.55), 0 0 96px rgba(254, 240, 138, 0.25);
+  box-shadow: 0 0 36px rgba(254, 240, 138, 0.42);
   opacity: 0.92;
 }
 #orderpulse-festival-bg-3d .op-xmas-sleigh {
@@ -1713,8 +1719,8 @@ main#MainContent .section-template--padding {
   left: 0;
   width: 240px;
   height: 66px;
-  filter: drop-shadow(0 0 12px rgba(254, 240, 138, 0.45));
-  animation: opXmasSleighGlide 26s linear infinite;
+  animation: opXmasSleighGlide 28s linear infinite;
+  will-change: transform;
 }
 #orderpulse-festival-bg-3d .op-xmas-sleigh svg {
   width: 100%;
@@ -1726,7 +1732,6 @@ main#MainContent .section-template--padding {
   top: clamp(92px, 11vh, 136px);
   width: clamp(175px, 19vw, 275px);
   height: auto;
-  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.36));
   opacity: 0.96;
 }
 #orderpulse-festival-bg-3d .op-xmas-corner-left {
@@ -1736,10 +1741,10 @@ main#MainContent .section-template--padding {
   right: 0;
 }
 #orderpulse-festival-bg-3d .op-xmas-sway-a {
-  animation: opXmasSwayA 4.8s ease-in-out infinite;
+  animation: opXmasSwayA 5.6s ease-in-out infinite;
 }
 #orderpulse-festival-bg-3d .op-xmas-sway-b {
-  animation: opXmasSwayB 5.6s ease-in-out infinite;
+  animation: opXmasSwayB 6.4s ease-in-out infinite;
 }
 #orderpulse-festival-bg-3d .op-xmas-forest {
   position: absolute;
@@ -1749,29 +1754,40 @@ main#MainContent .section-template--padding {
   width: 100%;
   height: clamp(160px, 27vh, 285px);
   display: block;
-  filter: drop-shadow(0 -8px 24px rgba(0, 0, 0, 0.28));
 }
 #orderpulse-festival-bg-3d .op-xmas-twinkle {
-  animation: opXmasTreeLight 1.9s ease-in-out infinite;
+  animation: opXmasTreeLight 2.4s ease-in-out infinite;
 }
 
 @media (max-width: 768px) {
+  #orderpulse-festival-bg-3d .op-bg3d-aurora,
+  #orderpulse-festival-bg-3d .op-bg3d-orb,
+  #orderpulse-festival-bg-3d .op-xmas-star,
+  #orderpulse-festival-bg-3d .op-xmas-sway-a,
+  #orderpulse-festival-bg-3d .op-xmas-sway-b,
+  #orderpulse-festival-bg-3d .op-xmas-twinkle {
+    animation: none !important;
+    will-change: auto !important;
+  }
+  #orderpulse-festival-bg-3d .op-xmas-sleigh {
+    display: none !important;
+  }
   #orderpulse-festival-bg-3d .op-xmas-corner {
-    width: 145px;
+    width: 138px;
     opacity: 0.85;
   }
   #orderpulse-festival-bg-3d .op-xmas-moon {
-    width: 64px;
-    height: 64px;
+    width: 62px;
+    height: 62px;
     top: 6%;
     right: 8%;
   }
   #orderpulse-festival-bg-3d .op-xmas-forest {
-    height: 155px;
+    height: 150px;
   }
 }
 
-/* 3D Depth Festive Cards, Glass Surfaces & Glossy 3D Buttons Across Entire Storefront */
+/* Crisp 3D Festive Cards & Glossy Buttons (Zero backdrop-filter GPU bottleneck, buttery hover on desktop) */
 main#MainContent .card,
 main#MainContent .card-wrapper .card,
 main#MainContent .product-card,
@@ -1781,25 +1797,24 @@ main#MainContent .collection-hero,
 main#MainContent .rich-text__blocks,
 main#MainContent .product__info-wrapper {
   background: ${bg3d.cardTintBg} !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
   border: 1.5px solid ${p.borderColor} !important;
   border-top: 3px solid ${p.accent} !important;
   border-radius: 16px !important;
   overflow: hidden !important;
-  box-shadow: 0 16px 34px -10px ${bg3d.glowShadow}, 0 4px 10px -2px rgba(0, 0, 0, 0.14) !important;
-  transition: transform 0.25s ease, box-shadow 0.25s ease !important;
+  box-shadow: 0 12px 26px -10px ${bg3d.glowShadow}, 0 3px 8px -2px rgba(0, 0, 0, 0.12) !important;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1) !important;
 }
 main#MainContent .card .card__content,
 main#MainContent .card-wrapper .card .card__content {
   padding: 12px 14px 14px !important;
 }
-main#MainContent .card:hover,
-main#MainContent .card-wrapper:hover .card,
-main#MainContent .product-card:hover,
-main#MainContent .multicolumn-card:hover {
-  transform: translateY(-6px) scale(1.01) !important;
-  box-shadow: 0 24px 44px -12px ${bg3d.glowShadow}, 0 8px 16px -4px rgba(0, 0, 0, 0.18) !important;
+@media (hover: hover) and (pointer: fine) {
+  main#MainContent .card:hover,
+  main#MainContent .card-wrapper:hover .card,
+  main#MainContent .product-card:hover,
+  main#MainContent .multicolumn-card:hover {
+    transform: translate3d(0, -4px, 0) !important;
+  }
 }
 
 ${darkCanvasContrastCss}
@@ -1812,16 +1827,17 @@ button[name="add"],
 a.button--primary {
   background: linear-gradient(180deg, ${p.primary} 0%, ${p.primaryHover} 100%) !important;
   color: ${p.primaryText} !important;
-  box-shadow: 0 4px 0 ${bg3d.btnDepth}, 0 10px 22px ${bg3d.glowShadow} !important;
+  box-shadow: 0 4px 0 ${bg3d.btnDepth}, 0 8px 18px ${bg3d.glowShadow} !important;
   border-radius: 10px !important;
 }
-.button:hover,
-.button--primary:hover,
-button[name="add"]:hover,
-.product-form__submit:hover,
-.cart__checkout-button:hover {
-  transform: translateY(-2px) !important;
-  box-shadow: 0 6px 0 ${bg3d.btnDepth}, 0 14px 26px ${bg3d.glowShadow} !important;
+@media (hover: hover) and (pointer: fine) {
+  .button:hover,
+  .button--primary:hover,
+  button[name="add"]:hover,
+  .product-form__submit:hover,
+  .cart__checkout-button:hover {
+    transform: translate3d(0, -2px, 0) !important;
+  }
 }
 
 body .header-wrapper,
@@ -1829,7 +1845,7 @@ body .shopify-section-group-header-group .header-wrapper,
 body .shopify-section-group-header-group .header-wrapper.gradient,
 body header.header {
   background: linear-gradient(135deg, ${p.headerBg} 0%, ${p.footerBg} 50%, ${p.headerBg} 100%) !important;
-  box-shadow: 0 8px 26px ${bg3d.glowShadow} !important;
+  box-shadow: 0 6px 20px ${bg3d.glowShadow} !important;
 }
 body footer.footer,
 body .shopify-section-group-footer-group,
@@ -1842,49 +1858,47 @@ body .shopify-section-group-footer-group footer.footer {
     : '';
 
   return `${bg3dCss}
-/* OrderPulse 3D Festive Animations, Hanging Lights & Auto-Product Hero Banner */
+/* OrderPulse Silky-Smooth 60fps Festive Animations, Hanging Lights & Hero Banner */
 @keyframes op3dFloatPrimary {
-  0%, 100% { transform: translate3d(0, 0px, 0) rotateY(-8deg) rotateZ(-1.5deg); }
-  50% { transform: translate3d(0, -10px, 18px) rotateY(8deg) rotateZ(2deg); }
+  0%, 100% { transform: translate3d(0, 0px, 0); }
+  50% { transform: translate3d(0, -7px, 0); }
 }
 @keyframes op3dFloatSecondary {
-  0%, 100% { transform: translate3d(0, 2px, 0) rotateY(10deg) rotateZ(2deg); }
-  50% { transform: translate3d(0, -8px, 12px) rotateY(-10deg) rotateZ(-3deg); }
+  0%, 100% { transform: translate3d(0, 1px, 0); }
+  50% { transform: translate3d(0, -6px, 0); }
 }
 @keyframes op3dOrbitBadge {
-  0%, 100% { transform: translate3d(0, 0, 0) rotate(-6deg) scale(1); }
-  50% { transform: translate3d(0, -12px, 20px) rotate(8deg) scale(1.06); }
+  0%, 100% { transform: translate3d(0, 0px, 0); }
+  50% { transform: translate3d(0, -7px, 0); }
 }
 @keyframes opFlameFlicker {
-  0%, 100% { transform: scaleY(1) skewX(0deg); transform-origin: 90px 82px; }
-  35% { transform: scaleY(1.07) skewX(-2.5deg); transform-origin: 90px 82px; }
-  70% { transform: scaleY(0.95) skewX(2.5deg); transform-origin: 90px 82px; }
+  0%, 100% { transform: scaleY(1); transform-origin: 90px 82px; }
+  50% { transform: scaleY(1.06); transform-origin: 90px 82px; }
 }
 @keyframes opLightTwinkle {
-  0%, 100% { opacity: 0.55; transform: scale(0.9); }
-  50% { opacity: 1; transform: scale(1.18); }
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 @keyframes opSnowDrift {
-  0% { transform: translate3d(0, -28px, 0) rotate(0deg) scale(0.92); opacity: 0; }
-  12% { opacity: 0.94; }
-  35% { transform: translate3d(24px, 34vh, 0) rotate(125deg) scale(1.04); opacity: 0.9; }
-  68% { transform: translate3d(-20px, 70vh, 0) rotate(250deg) scale(0.96); opacity: 0.82; }
-  90% { opacity: 0.65; }
-  100% { transform: translate3d(12px, 108vh, 0) rotate(360deg) scale(0.88); opacity: 0; }
+  0% { transform: translate3d(0, -24px, 0) rotate(0deg); opacity: 0; }
+  12% { opacity: 0.88; }
+  50% { transform: translate3d(18px, 52vh, 0) rotate(180deg); opacity: 0.84; }
+  88% { opacity: 0.6; }
+  100% { transform: translate3d(-10px, 106vh, 0) rotate(360deg); opacity: 0; }
 }
 @keyframes opSnowDriftNear {
-  0% { transform: translate3d(0, -34px, 0) rotate(0deg) rotateY(0deg); opacity: 0; }
-  10% { opacity: 0.96; }
-  45% { transform: translate3d(-28px, 46vh, 0) rotate(170deg) rotateY(180deg); opacity: 0.92; }
-  85% { opacity: 0.78; }
-  100% { transform: translate3d(24px, 108vh, 0) rotate(360deg) rotateY(360deg); opacity: 0; }
+  0% { transform: translate3d(0, -28px, 0) rotate(0deg); opacity: 0; }
+  10% { opacity: 0.92; }
+  50% { transform: translate3d(-20px, 52vh, 0) rotate(180deg); opacity: 0.88; }
+  88% { opacity: 0.65; }
+  100% { transform: translate3d(16px, 106vh, 0) rotate(360deg); opacity: 0; }
 }
 @keyframes opSnowOrbDrift {
-  0% { transform: translate3d(0, -18px, 0) scale(0.8); opacity: 0; }
-  15% { opacity: 0.72; }
-  50% { transform: translate3d(16px, 52vh, 0) scale(1.1); opacity: 0.65; }
-  90% { opacity: 0.45; }
-  100% { transform: translate3d(-12px, 106vh, 0) scale(0.85); opacity: 0; }
+  0% { transform: translate3d(0, -16px, 0); opacity: 0; }
+  15% { opacity: 0.68; }
+  50% { transform: translate3d(12px, 52vh, 0); opacity: 0.6; }
+  88% { opacity: 0.4; }
+  100% { transform: translate3d(-10px, 106vh, 0); opacity: 0; }
 }
 
 #orderpulse-festival-garland {
@@ -2031,23 +2045,20 @@ body .shopify-section-group-footer-group footer.footer {
   width: 108px;
   height: 108px;
   flex-shrink: 0;
-  animation: op3dFloatPrimary 5.2s ease-in-out infinite;
-  filter: drop-shadow(0 14px 18px rgba(0, 0, 0, 0.32));
+  animation: op3dFloatPrimary 5.8s ease-in-out infinite;
 }
 #orderpulse-festival-hero .op-3d-prop-secondary {
   width: 74px;
   height: 74px;
   flex-shrink: 0;
-  animation: op3dFloatSecondary 4.4s ease-in-out infinite;
-  filter: drop-shadow(0 12px 14px rgba(0, 0, 0, 0.28));
+  animation: op3dFloatSecondary 5.0s ease-in-out infinite;
 }
 #orderpulse-festival-hero .op-3d-prop-float {
   width: 52px;
   height: 52px;
   flex-shrink: 0;
   margin-bottom: 18px;
-  animation: op3dOrbitBadge 3.8s ease-in-out infinite;
-  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.25));
+  animation: op3dOrbitBadge 4.4s ease-in-out infinite;
 }
 #orderpulse-festival-hero .op-3d-prop-primary svg,
 #orderpulse-festival-hero .op-3d-prop-secondary svg,
@@ -2057,7 +2068,7 @@ body .shopify-section-group-footer-group footer.footer {
   display: block;
 }
 #orderpulse-festival-hero .op-3d-flame {
-  animation: opFlameFlicker 1.3s ease-in-out infinite;
+  animation: opFlameFlicker 1.6s ease-in-out infinite;
 }
 #orderpulse-festival-hero .op-fest-products-label {
   font-size: 11px;
@@ -2072,7 +2083,6 @@ body .shopify-section-group-footer-group footer.footer {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  perspective: 900px;
 }
 #orderpulse-festival-hero .op-fest-prod-card {
   display: flex;
@@ -2083,12 +2093,13 @@ body .shopify-section-group-footer-group footer.footer {
   overflow: hidden;
   border: 1.5px solid rgba(255, 255, 255, 0.35);
   text-decoration: none !important;
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
-#orderpulse-festival-hero .op-fest-prod-card:hover {
-  transform: translateY(-6px) rotateX(3deg) scale(1.02);
-  box-shadow: 0 20px 36px rgba(0, 0, 0, 0.34);
+@media (hover: hover) and (pointer: fine) {
+  #orderpulse-festival-hero .op-fest-prod-card:hover {
+    transform: translate3d(0, -4px, 0);
+  }
 }
 #orderpulse-festival-hero .op-fest-prod-img-wrap {
   position: relative;
@@ -2155,20 +2166,22 @@ body .shopify-section-group-footer-group footer.footer {
   background: transparent !important;
   box-shadow: none !important;
   animation-name: opSnowDrift !important;
-  filter: drop-shadow(0 0 6px rgba(224, 242, 254, 0.78));
+  will-change: transform;
+  backface-visibility: hidden;
 }
 .op-fest-snow.op-snow-layer-near {
   animation-name: opSnowDriftNear !important;
-  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.92));
 }
 .op-fest-snow.op-snow-layer-mid {
-  opacity: 0.85;
+  opacity: 0.82;
 }
 .op-fest-snow-orb {
   border-radius: 999px !important;
-  background: radial-gradient(circle at 35% 35%, #FFFFFF 0%, #DBEAFE 65%, rgba(186, 230, 253, 0) 100%) !important;
-  box-shadow: 0 0 8px rgba(224, 242, 254, 0.68) !important;
+  background: radial-gradient(circle at 35% 35%, #FFFFFF 0%, #DBEAFE 70%, rgba(186, 230, 253, 0) 100%) !important;
+  box-shadow: none !important;
   animation-name: opSnowOrbDrift !important;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 .op-fest-snow svg,
 .op-fest-shape svg {
@@ -2196,6 +2209,16 @@ body .shopify-section-group-footer-group footer.footer {
   #orderpulse-festival-hero .op-3d-prop-secondary {
     width: 52px;
     height: 52px;
+  }
+}
+@media (max-width: 768px) {
+  .op-snow-desktop-only {
+    display: none !important;
+  }
+  #orderpulse-festival-hero .op-3d-prop-primary,
+  #orderpulse-festival-hero .op-3d-prop-secondary,
+  #orderpulse-festival-hero .op-3d-prop-float {
+    animation: none !important;
   }
 }
 @media (max-width: 520px) {

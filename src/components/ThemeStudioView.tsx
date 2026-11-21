@@ -306,7 +306,7 @@ export function ThemeStudioView({
     void persistFestivalTheme(
       nextConfig,
       nextShow
-        ? '3D sculpted snow buildup, icicles & frost animations enabled on all storefront cards.'
+        ? '3D sculpted snow caps & icicles enabled on all storefront cards (60fps smooth mode).'
         : '3D snow accumulation on cards turned off.'
     );
   };
@@ -866,7 +866,7 @@ export function ThemeStudioView({
                         3D Snow &amp; Icicles on All Cards
                       </p>
                       <p className="text-[11px] text-slate-400">
-                        3D snowdrift caps, icicles &amp; frost hover sheen
+                        Crisp 3D snowdrift caps &amp; icicles with smooth 60fps hover lift
                       </p>
                     </div>
                     <button

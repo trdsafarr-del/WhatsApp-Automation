@@ -312,6 +312,8 @@ function buildStorefrontWidgetScript(origin: string): string {
   var activeEditScope = '';
   var observerAttached = false;
   var observerTimer = null;
+  var isUpdatingOrderPulseDom = false;
+  var FESTIVAL_CACHE_KEY = 'orderpulse_festival_cache_v2';
 
   var PIN_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>';
   var PENCIL_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
@@ -514,6 +516,22 @@ function buildStorefrontWidgetScript(origin: string): string {
     var loc = formatLocationLabel(delhivery);
     var isEditing = activeEditScope === scope || !savedPin;
     var isAvailable = opts.available !== false && (!delhivery || delhivery.serviceable !== false);
+
+    var renderKey = [
+      scope,
+      savedPin || '',
+      isEditing ? '1' : '0',
+      isAvailable ? '1' : '0',
+      isDetectingGps ? '1' : '0',
+      opts.subline || '',
+      inlineNote || '',
+      loc || '',
+      config.defaultDeliveryDays || 4
+    ].join('|');
+    if (box.getAttribute('data-op-render-key') === renderKey && box.firstChild) {
+      return;
+    }
+    box.setAttribute('data-op-render-key', renderKey);
 
     var bg = !savedPin
       ? '#f8fafc'
@@ -834,22 +852,87 @@ function buildStorefrontWidgetScript(origin: string): string {
       }
     });
 
-    renderPdpAndCheckoutWidgets(payload);
+    isUpdatingOrderPulseDom = true;
+    try {
+      renderPdpAndCheckoutWidgets(payload);
+    } finally {
+      isUpdatingOrderPulseDom = false;
+    }
+  }
+
+  function isOrderPulseInternalNode(node) {
+    if (!node || node.nodeType !== 1) return false;
+    var id = node.id || '';
+    if (
+      id.indexOf('orderpulse-festival-') === 0 ||
+      id === 'orderpulse-pincode-bar' ||
+      id === 'op-pdp-delivery-note'
+    ) {
+      return true;
+    }
+    var cls = typeof node.className === 'string' ? node.className : '';
+    if (
+      cls.indexOf('op-winter-snow-cap') >= 0 ||
+      cls.indexOf('op-santa-') >= 0 ||
+      cls.indexOf('op-checkout-pincode-box') >= 0 ||
+      cls.indexOf('op-unavail-badge') >= 0 ||
+      cls.indexOf('op-fest-') >= 0
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function isMutationInsideOrderPulse(target) {
+    if (!target || target.nodeType !== 1) return false;
+    if (isOrderPulseInternalNode(target)) return true;
+    if (target.closest) {
+      if (
+        target.closest(
+          '#orderpulse-festival-roamer, #orderpulse-festival-fx, #orderpulse-festival-bg-3d, #orderpulse-festival-hero, #orderpulse-festival-garland, #orderpulse-festival-banner, #orderpulse-pincode-bar, #op-pdp-delivery-note, .op-checkout-pincode-box, .op-winter-snow-cap'
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function ensureDomObserver() {
     if (observerAttached || typeof MutationObserver === 'undefined' || !document.body) return;
     observerAttached = true;
-    var observer = new MutationObserver(function () {
-      if (!lastPayload) return;
+    var observer = new MutationObserver(function (mutations) {
+      if (!lastPayload || isUpdatingOrderPulseDom) return;
+      var hasExternalChange = false;
+      for (var m = 0; m < mutations.length; m++) {
+        var mut = mutations[m];
+        if (isMutationInsideOrderPulse(mut.target)) continue;
+        var added = mut.addedNodes;
+        if (added && added.length) {
+          for (var n = 0; n < added.length; n++) {
+            if (added[n] && added[n].nodeType === 1 && !isOrderPulseInternalNode(added[n])) {
+              hasExternalChange = true;
+              break;
+            }
+          }
+        }
+        if (hasExternalChange) break;
+      }
+      if (!hasExternalChange) return;
       if (observerTimer) clearTimeout(observerTimer);
       observerTimer = setTimeout(function () {
-        if (lastPayload.pincode) {
-          applyCatalogAvailability(lastPayload);
-        } else {
-          renderPdpAndCheckoutWidgets(lastPayload);
+        if (!lastPayload) return;
+        isUpdatingOrderPulseDom = true;
+        try {
+          if (lastPayload.pincode) {
+            applyCatalogAvailability(lastPayload);
+          } else {
+            renderPdpAndCheckoutWidgets(lastPayload);
+          }
+        } finally {
+          isUpdatingOrderPulseDom = false;
         }
-      }, 250);
+      }, 350);
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
@@ -866,159 +949,242 @@ function buildStorefrontWidgetScript(origin: string): string {
   }
 
   var autoAttempted = false;
+  var opAppliedThemeSig = '';
 ${buildSantaRoamerRuntimeJs()}
 ${buildWinterCardSnowRuntimeJs()}
 
-  function removeFestivalTheme() {
-    stopSantaRoamer();
-    removeWinterCardSnow();
-    var ids = [
-      'orderpulse-festival-theme-css',
-      'orderpulse-festival-bg-3d',
-      'orderpulse-festival-banner',
-      'orderpulse-festival-garland',
-      'orderpulse-festival-hero',
-      'orderpulse-festival-fx',
-      'orderpulse-festival-roamer'
-    ];
-    for (var k = 0; k < ids.length; k++) {
-      var node = document.getElementById(ids[k]);
-      if (node && node.parentNode) node.parentNode.removeChild(node);
-    }
+  function buildFestivalThemeSig(ft) {
+    if (!ft || !ft.enabled) return 'off';
+    return [
+      ft.presetId || '',
+      ft.css ? ft.css.length : 0,
+      ft.show3DBackground ? 1 : 0,
+      ft.showAnnouncementBar ? 1 : 0,
+      ft.bannerText || '',
+      ft.badgeText || '',
+      ft.showHeroBanner ? 1 : 0,
+      ft.heroBannerHtml ? ft.heroBannerHtml.length : 0,
+      ft.show3DArticles ? 1 : 0,
+      ft.enableFestiveEffects ? 1 : 0,
+      ft.show3DCardSnow !== false ? 1 : 0,
+      ft.roamerHtml ? ft.roamerHtml.length : 0
+    ].join('|');
+  }
+
+  function saveFestivalCache(ft) {
     try {
-      document.documentElement.removeAttribute('data-orderpulse-festival');
+      if (ft && ft.enabled && ft.css) {
+        sessionStorage.setItem(FESTIVAL_CACHE_KEY, JSON.stringify(ft));
+      } else {
+        sessionStorage.removeItem(FESTIVAL_CACHE_KEY);
+      }
     } catch (e) {}
   }
 
-  function applyFestivalTheme(ft) {
+  function loadFestivalCache() {
+    try {
+      var raw = sessionStorage.getItem(FESTIVAL_CACHE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && parsed.enabled && parsed.css ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function removeFestivalTheme() {
+    opAppliedThemeSig = 'off';
+    isUpdatingOrderPulseDom = true;
+    try {
+      stopSantaRoamer();
+      removeWinterCardSnow();
+      var ids = [
+        'orderpulse-festival-theme-css',
+        'orderpulse-festival-bg-3d',
+        'orderpulse-festival-banner',
+        'orderpulse-festival-garland',
+        'orderpulse-festival-hero',
+        'orderpulse-festival-fx',
+        'orderpulse-festival-roamer'
+      ];
+      for (var k = 0; k < ids.length; k++) {
+        var node = document.getElementById(ids[k]);
+        if (node && node.parentNode) node.parentNode.removeChild(node);
+      }
+      try {
+        document.documentElement.removeAttribute('data-orderpulse-festival');
+      } catch (e) {}
+    } finally {
+      isUpdatingOrderPulseDom = false;
+    }
+  }
+
+  function applyFestivalTheme(ft, fromCache) {
     if (document.querySelector('script[data-op-festival-preview-bridge="1"]')) {
       return;
     }
-    if (!ft || !ft.enabled || !ft.css) {
+    if (!ft) {
+      return;
+    }
+    if (!ft.enabled || !ft.css) {
+      if (!fromCache) saveFestivalCache(null);
       removeFestivalTheme();
       return;
     }
+    if (!fromCache) saveFestivalCache(ft);
 
-    var styleEl = document.getElementById('orderpulse-festival-theme-css');
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = 'orderpulse-festival-theme-css';
-      (document.head || document.documentElement).appendChild(styleEl);
+    var nextSig = buildFestivalThemeSig(ft);
+    if (nextSig === opAppliedThemeSig && document.getElementById('orderpulse-festival-theme-css')) {
+      mountWinterCardSnow(ft);
+      return;
     }
-    if (styleEl.textContent !== ft.css) {
-      styleEl.textContent = ft.css;
-    }
+    opAppliedThemeSig = nextSig;
 
+    isUpdatingOrderPulseDom = true;
     try {
-      document.documentElement.setAttribute('data-orderpulse-festival', ft.presetId || 'festive');
-    } catch (e) {}
-
-    var existingBg3d = document.getElementById('orderpulse-festival-bg-3d');
-    if (ft.show3DBackground && ft.background3DHtml && document.body) {
-      if (!existingBg3d) {
-        existingBg3d = document.createElement('div');
-        existingBg3d.id = 'orderpulse-festival-bg-3d';
-        existingBg3d.setAttribute('aria-hidden', 'true');
-        document.body.insertBefore(existingBg3d, document.body.firstChild);
+      var styleEl = document.getElementById('orderpulse-festival-theme-css');
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'orderpulse-festival-theme-css';
+        (document.head || document.documentElement).appendChild(styleEl);
       }
-      existingBg3d.innerHTML = ft.background3DHtml;
-    } else if (existingBg3d && existingBg3d.parentNode) {
-      existingBg3d.parentNode.removeChild(existingBg3d);
-    }
-
-    var bannerDismissKey = 'op_fest_banner_closed_' + (ft.presetId || 'festive');
-    var bannerDismissed = false;
-    try {
-      bannerDismissed = sessionStorage.getItem(bannerDismissKey) === '1';
-    } catch (e) {}
-
-    var existingBanner = document.getElementById('orderpulse-festival-banner');
-    if (ft.showAnnouncementBar && ft.bannerText && !bannerDismissed && document.body) {
-      if (!existingBanner) {
-        existingBanner = document.createElement('div');
-        existingBanner.id = 'orderpulse-festival-banner';
-        existingBanner.style.cssText =
-          'position:relative;z-index:2147482500;width:100%;padding:9px 38px 9px 14px;text-align:center;font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:600;line-height:1.4;letter-spacing:0.01em;box-sizing:border-box;';
-        document.body.insertBefore(existingBanner, document.body.firstChild);
+      if (styleEl.textContent !== ft.css) {
+        styleEl.textContent = ft.css;
       }
-      var safeBadge = String(ft.badgeText || '').replace(/</g, '&lt;');
-      var safeText = String(ft.bannerText || '').replace(/</g, '&lt;');
-      existingBanner.innerHTML =
-        (safeBadge
-          ? '<span style="display:inline-block;margin-right:8px;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,0.16);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">' +
-            safeBadge +
-            '</span>'
-          : '') +
-        '<span>' +
-        safeText +
-        '</span>' +
-        '<button type="button" id="op-fest-banner-close" aria-label="Close festive banner" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:inherit;font-size:16px;font-weight:700;cursor:pointer;padding:2px 6px;opacity:0.8;">&times;</button>';
-      var closeBtn = document.getElementById('op-fest-banner-close');
-      if (closeBtn) {
-        closeBtn.onclick = function () {
-          try {
-            sessionStorage.setItem(bannerDismissKey, '1');
-          } catch (e) {}
-          if (existingBanner && existingBanner.parentNode) {
-            existingBanner.parentNode.removeChild(existingBanner);
+
+      try {
+        document.documentElement.setAttribute('data-orderpulse-festival', ft.presetId || 'festive');
+      } catch (e) {}
+
+      var existingBg3d = document.getElementById('orderpulse-festival-bg-3d');
+      if (ft.show3DBackground && ft.background3DHtml && document.body) {
+        var bgSig = (ft.presetId || '') + ':' + ft.background3DHtml.length;
+        if (!existingBg3d) {
+          existingBg3d = document.createElement('div');
+          existingBg3d.id = 'orderpulse-festival-bg-3d';
+          existingBg3d.setAttribute('aria-hidden', 'true');
+          document.body.insertBefore(existingBg3d, document.body.firstChild);
+        }
+        if (existingBg3d.getAttribute('data-op-sig') !== bgSig) {
+          existingBg3d.setAttribute('data-op-sig', bgSig);
+          existingBg3d.innerHTML = ft.background3DHtml;
+        }
+      } else if (existingBg3d && existingBg3d.parentNode) {
+        existingBg3d.parentNode.removeChild(existingBg3d);
+      }
+
+      var bannerDismissKey = 'op_fest_banner_closed_' + (ft.presetId || 'festive');
+      var bannerDismissed = false;
+      try {
+        bannerDismissed = sessionStorage.getItem(bannerDismissKey) === '1';
+      } catch (e) {}
+
+      var existingBanner = document.getElementById('orderpulse-festival-banner');
+      if (ft.showAnnouncementBar && ft.bannerText && !bannerDismissed && document.body) {
+        var bannerSig = (ft.badgeText || '') + '|' + (ft.bannerText || '');
+        if (!existingBanner) {
+          existingBanner = document.createElement('div');
+          existingBanner.id = 'orderpulse-festival-banner';
+          existingBanner.style.cssText =
+            'position:relative;z-index:2147482500;width:100%;padding:9px 38px 9px 14px;text-align:center;font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:600;line-height:1.4;letter-spacing:0.01em;box-sizing:border-box;';
+          document.body.insertBefore(existingBanner, document.body.firstChild);
+        }
+        if (existingBanner.getAttribute('data-op-sig') !== bannerSig) {
+          existingBanner.setAttribute('data-op-sig', bannerSig);
+          var safeBadge = String(ft.badgeText || '').replace(/</g, '&lt;');
+          var safeText = String(ft.bannerText || '').replace(/</g, '&lt;');
+          existingBanner.innerHTML =
+            (safeBadge
+              ? '<span style="display:inline-block;margin-right:8px;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,0.16);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">' +
+                safeBadge +
+                '</span>'
+              : '') +
+            '<span>' +
+            safeText +
+            '</span>' +
+            '<button type="button" id="op-fest-banner-close" aria-label="Close festive banner" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:inherit;font-size:16px;font-weight:700;cursor:pointer;padding:2px 6px;opacity:0.8;">&times;</button>';
+          var closeBtn = document.getElementById('op-fest-banner-close');
+          if (closeBtn) {
+            closeBtn.onclick = function () {
+              try {
+                sessionStorage.setItem(bannerDismissKey, '1');
+              } catch (e) {}
+              if (existingBanner && existingBanner.parentNode) {
+                existingBanner.parentNode.removeChild(existingBanner);
+              }
+            };
           }
-        };
-      }
-    } else if (existingBanner && existingBanner.parentNode) {
-      existingBanner.parentNode.removeChild(existingBanner);
-    }
-
-    var existingGarland = document.getElementById('orderpulse-festival-garland');
-    if (ft.show3DArticles && ft.garlandHtml && document.body) {
-      if (!existingGarland) {
-        existingGarland = document.createElement('div');
-        existingGarland.id = 'orderpulse-festival-garland';
-        var headerGroup = document.querySelector('.shopify-section-group-header-group, header.header, .header-wrapper');
-        if (headerGroup && headerGroup.parentNode) {
-          headerGroup.parentNode.insertBefore(existingGarland, headerGroup.nextSibling);
-        } else {
-          document.body.insertBefore(existingGarland, document.body.firstChild);
         }
+      } else if (existingBanner && existingBanner.parentNode) {
+        existingBanner.parentNode.removeChild(existingBanner);
       }
-      existingGarland.innerHTML = ft.garlandHtml;
-    } else if (existingGarland && existingGarland.parentNode) {
-      existingGarland.parentNode.removeChild(existingGarland);
-    }
 
-    // Show Auto-Product 3D Hero Showcase Banner on homepage & collections
-    var isHomeOrCollection = window.location.pathname === '/' || window.location.pathname.indexOf('/collections') === 0;
-    var existingHero = document.getElementById('orderpulse-festival-hero');
-    if (ft.showHeroBanner && ft.heroBannerHtml && isHomeOrCollection && document.body) {
-      if (!existingHero) {
-        existingHero = document.createElement('div');
-        existingHero.id = 'orderpulse-festival-hero';
-        var mainEl = document.querySelector('main#MainContent, main, .content-for-layout');
-        if (mainEl) {
-          mainEl.insertBefore(existingHero, mainEl.firstChild);
-        } else {
-          document.body.insertBefore(existingHero, document.body.firstChild);
+      var existingGarland = document.getElementById('orderpulse-festival-garland');
+      if (ft.show3DArticles && ft.garlandHtml && document.body) {
+        var garlandSig = (ft.presetId || '') + ':' + ft.garlandHtml.length;
+        if (!existingGarland) {
+          existingGarland = document.createElement('div');
+          existingGarland.id = 'orderpulse-festival-garland';
+          var headerGroup = document.querySelector('.shopify-section-group-header-group, header.header, .header-wrapper');
+          if (headerGroup && headerGroup.parentNode) {
+            headerGroup.parentNode.insertBefore(existingGarland, headerGroup.nextSibling);
+          } else {
+            document.body.insertBefore(existingGarland, document.body.firstChild);
+          }
         }
+        if (existingGarland.getAttribute('data-op-sig') !== garlandSig) {
+          existingGarland.setAttribute('data-op-sig', garlandSig);
+          existingGarland.innerHTML = ft.garlandHtml;
+        }
+      } else if (existingGarland && existingGarland.parentNode) {
+        existingGarland.parentNode.removeChild(existingGarland);
       }
-      existingHero.innerHTML = ft.heroBannerHtml;
-    } else if (existingHero && existingHero.parentNode) {
-      existingHero.parentNode.removeChild(existingHero);
-    }
 
-    var existingFx = document.getElementById('orderpulse-festival-fx');
-    if (ft.enableFestiveEffects && ft.particlesHtml && document.body) {
-      if (!existingFx) {
-        existingFx = document.createElement('div');
-        existingFx.id = 'orderpulse-festival-fx';
-        existingFx.setAttribute('aria-hidden', 'true');
-        document.body.appendChild(existingFx);
+      // Show Auto-Product 3D Hero Showcase Banner on homepage & collections
+      var isHomeOrCollection = window.location.pathname === '/' || window.location.pathname.indexOf('/collections') === 0;
+      var existingHero = document.getElementById('orderpulse-festival-hero');
+      if (ft.showHeroBanner && ft.heroBannerHtml && isHomeOrCollection && document.body) {
+        var heroSig = (ft.presetId || '') + ':' + ft.heroBannerHtml.length + ':' + (ft.show3DArticles ? 1 : 0);
+        if (!existingHero) {
+          existingHero = document.createElement('div');
+          existingHero.id = 'orderpulse-festival-hero';
+          var mainEl = document.querySelector('main#MainContent, main, .content-for-layout');
+          if (mainEl) {
+            mainEl.insertBefore(existingHero, mainEl.firstChild);
+          } else {
+            document.body.insertBefore(existingHero, document.body.firstChild);
+          }
+        }
+        if (existingHero.getAttribute('data-op-sig') !== heroSig) {
+          existingHero.setAttribute('data-op-sig', heroSig);
+          existingHero.innerHTML = ft.heroBannerHtml;
+        }
+      } else if (existingHero && existingHero.parentNode) {
+        existingHero.parentNode.removeChild(existingHero);
       }
-      existingFx.innerHTML = ft.particlesHtml;
-    } else if (existingFx && existingFx.parentNode) {
-      existingFx.parentNode.removeChild(existingFx);
-    }
 
-    mountFestivalRoamer(ft);
-    mountWinterCardSnow(ft);
+      var existingFx = document.getElementById('orderpulse-festival-fx');
+      if (ft.enableFestiveEffects && ft.particlesHtml && document.body) {
+        var fxSig = (ft.presetId || '') + ':' + ft.particlesHtml.length;
+        if (!existingFx) {
+          existingFx = document.createElement('div');
+          existingFx.id = 'orderpulse-festival-fx';
+          existingFx.setAttribute('aria-hidden', 'true');
+          document.body.appendChild(existingFx);
+        }
+        if (existingFx.getAttribute('data-op-sig') !== fxSig) {
+          existingFx.setAttribute('data-op-sig', fxSig);
+          existingFx.innerHTML = ft.particlesHtml;
+        }
+      } else if (existingFx && existingFx.parentNode) {
+        existingFx.parentNode.removeChild(existingFx);
+      }
+
+      mountFestivalRoamer(ft);
+      mountWinterCardSnow(ft);
+    } finally {
+      isUpdatingOrderPulseDom = false;
+    }
   }
 
   function runCheck(pincode, isInitialBoot) {
@@ -1029,12 +1195,19 @@ ${buildWinterCardSnowRuntimeJs()}
         if (!data || !data.ok) return;
         lastPayload = data;
         var cfg = data.storefrontConfig || {};
-        applyFestivalTheme(data.festivalThemePayload || null);
+        if (Object.prototype.hasOwnProperty.call(data, 'festivalThemePayload')) {
+          applyFestivalTheme(data.festivalThemePayload, false);
+        }
 
         if (!pincode && isInitialBoot && !autoAttempted && cfg.autoDetectPincode !== false) {
           autoAttempted = true;
           hideTopBanner();
-          renderPdpAndCheckoutWidgets(data);
+          isUpdatingOrderPulseDom = true;
+          try {
+            renderPdpAndCheckoutWidgets(data);
+          } finally {
+            isUpdatingOrderPulseDom = false;
+          }
           ensureDomObserver();
           detectPinViaIp(cfg, true).then(function (found) {
             if (!found) {
@@ -1045,10 +1218,15 @@ ${buildWinterCardSnowRuntimeJs()}
         }
 
         injectBanner(cfg, pincode, data.delhivery);
-        if (pincode) {
-          applyCatalogAvailability(data);
-        } else {
-          renderPdpAndCheckoutWidgets(data);
+        isUpdatingOrderPulseDom = true;
+        try {
+          if (pincode) {
+            applyCatalogAvailability(data);
+          } else {
+            renderPdpAndCheckoutWidgets(data);
+          }
+        } finally {
+          isUpdatingOrderPulseDom = false;
         }
         ensureDomObserver();
       })
@@ -1056,6 +1234,12 @@ ${buildWinterCardSnowRuntimeJs()}
   }
 
   function bootstrapStorefront() {
+    // Apply cached festival theme immediately so mobile navigation never flashes blank
+    var cachedTheme = loadFestivalCache();
+    if (cachedTheme) {
+      applyFestivalTheme(cachedTheme, true);
+    }
+
     var savedPin = getSavedPin();
     if (savedPin) {
       runCheck(savedPin, false);
