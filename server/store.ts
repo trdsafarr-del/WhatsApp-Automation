@@ -1421,6 +1421,44 @@ class PersistentStore {
     return false;
   }
 
+  /**
+   * Ultra-fast (~1 KB) cloud refresh of ONLY storefrontConfig + shop identity from RTDB
+   * so public Shopify endpoints (/widget.js, /theme, /theme.css) respond in ~100ms
+   * without downloading hundreds of orders and products.
+   */
+  async refreshStorefrontConfigFast(): Promise<void> {
+    if (getRtdbServerConfig() !== null) {
+      try {
+        const [sfNode, shopName, shopDomain] = await Promise.all([
+          rtdbRestGet<Partial<StorefrontConfig>>('orderpulse/config/storefrontConfig'),
+          rtdbRestGet<string>('orderpulse/config/settings/shopName'),
+          rtdbRestGet<string>('orderpulse/config/settings/shopifyStoreDomain'),
+        ]);
+        if (sfNode && typeof sfNode === 'object') {
+          const currentSf = this.getStorefrontConfig();
+          this.state.storefrontConfig = {
+            ...currentSf,
+            ...sfNode,
+            festivalTheme:
+              sfNode.festivalTheme !== undefined
+                ? normalizeFestivalThemeConfig(sfNode.festivalTheme)
+                : currentSf.festivalTheme,
+          };
+        }
+        if (typeof shopName === 'string' && shopName.trim()) {
+          this.state.settings.shopName = shopName.trim();
+        }
+        if (typeof shopDomain === 'string' && shopDomain.trim()) {
+          this.state.settings.shopifyStoreDomain = shopDomain.trim();
+        }
+        return;
+      } catch {
+        // Fall through to cached state or standard hydration
+      }
+    }
+    await this.ensureHydrated();
+  }
+
   getStorefrontConfig(): StorefrontConfig {
     const merged = {
       ...DEFAULT_STOREFRONT_CONFIG,

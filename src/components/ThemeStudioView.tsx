@@ -80,6 +80,15 @@ export function ThemeStudioView({
   const [liveCatalog, setLiveCatalog] = useState<FestivalFeaturedProduct[]>([]);
   const [catalogLoading, setCatalogLoading] = useState<boolean>(true);
   const [showProductPicker, setShowProductPicker] = useState<boolean>(false);
+  const [isBakingTheme, setIsBakingTheme] = useState<boolean>(false);
+  const [copiedHeadTag, setCopiedHeadTag] = useState<boolean>(false);
+  const [shopifyThemeSync, setShopifyThemeSync] = useState<{
+    ok: boolean;
+    mode: 'baked' | 'removed' | 'skipped';
+    themeName?: string;
+    missingScope?: boolean;
+    error?: string;
+  } | null>(null);
 
   useEffect(() => {
     setDraft(savedFestival);
@@ -153,16 +162,89 @@ export function ThemeStudioView({
         ok?: boolean;
         error?: string;
         storefrontConfig?: StorefrontConfig;
+        shopifyThemeSync?: {
+          ok: boolean;
+          mode: 'baked' | 'removed' | 'skipped';
+          themeName?: string;
+          missingScope?: boolean;
+          error?: string;
+        } | null;
       };
       if (!res.ok || !data.ok || !data.storefrontConfig) {
         throw new Error(data.error || `Failed to save theme (${res.status})`);
       }
       onStorefrontConfigUpdated(data.storefrontConfig);
-      setStatusMessage(feedbackLabel);
+      if (data.shopifyThemeSync) {
+        setShopifyThemeSync(data.shopifyThemeSync);
+      }
+      const bakeNote = data.shopifyThemeSync?.ok
+        ? data.shopifyThemeSync.mode === 'baked'
+          ? ` Pre-baked directly into Shopify "${data.shopifyThemeSync.themeName || 'Live Theme'}" (0ms instant load).`
+          : ` Cleaned from Shopify "${data.shopifyThemeSync.themeName || 'Live Theme'}" theme.liquid.`
+        : '';
+      setStatusMessage(`${feedbackLabel}${bakeNote}`);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Unable to save festival theme.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSyncShopifyThemeNow = async () => {
+    setIsBakingTheme(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+    try {
+      const res = await dashboardFetch('/api/storefront/sync-shopify-theme', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        shopifyThemeSync?: {
+          ok: boolean;
+          mode: 'baked' | 'removed' | 'skipped';
+          themeName?: string;
+          missingScope?: boolean;
+          error?: string;
+        };
+      };
+      if (data.shopifyThemeSync) {
+        setShopifyThemeSync(data.shopifyThemeSync);
+      }
+      if (!res.ok || !data.ok) {
+        setErrorMessage(
+          data.shopifyThemeSync?.error || 'Could not pre-bake directly into Shopify theme.'
+        );
+        return;
+      }
+      setStatusMessage(
+        data.shopifyThemeSync?.mode === 'baked'
+          ? `Pre-baked directly into Shopify "${data.shopifyThemeSync.themeName || 'Live Theme'}" — customers now see the theme instantly at 0ms!`
+          : `Cleanly removed from Shopify "${data.shopifyThemeSync?.themeName || 'Live Theme'}" theme.liquid.`
+      );
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : 'Unable to reach Shopify Theme API.'
+      );
+    } finally {
+      setIsBakingTheme(false);
+    }
+  };
+
+  const publicAppOrigin = (
+    storefrontConfig.storefrontAppUrl ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
+  ).replace(/\/+$/, '');
+  const instantHeadSnippet = `<link rel="stylesheet" href="${publicAppOrigin}/api/storefront/theme.css" />\n<script src="${publicAppOrigin}/api/storefront/widget.js" defer></script>`;
+
+  const handleCopyHeadSnippet = async () => {
+    try {
+      await navigator.clipboard.writeText(instantHeadSnippet);
+      setCopiedHeadTag(true);
+      setTimeout(() => setCopiedHeadTag(false), 2400);
+    } catch {
+      // Fallback ignored
     }
   };
 
@@ -601,6 +683,65 @@ export function ThemeStudioView({
             </button>
           </div>
         )}
+
+        {/* 0ms Pre-Applied Direct Shopify Theme Sync Bar */}
+        <div className="mt-4 rounded-xl border border-slate-800/90 bg-slate-950/70 p-3.5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-white">
+                  Instant 0ms Shopify Theme Pre-Apply
+                </span>
+                {shopifyThemeSync?.ok && shopifyThemeSync.mode === 'baked' && (
+                  <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30">
+                    Baked in Shopify {shopifyThemeSync.themeName || 'Live Theme'}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] leading-relaxed text-slate-400">
+                Pre-bakes the active theme directly into Shopify&apos;s <code className="text-slate-200">layout/theme.liquid</code> so customers see the theme on first paint (0ms) instead of waiting for Shopify&apos;s <code className="text-slate-200">window.onload</code> ScriptTag.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isSaving || isBakingTheme}
+                onClick={handleSyncShopifyThemeNow}
+                data-testid="btn-sync-shopify-theme-now"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/15 px-3 py-2 text-xs font-semibold text-sky-200 transition-colors hover:bg-sky-500/25 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${isBakingTheme ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                {isBakingTheme ? 'Pushing to Shopify...' : 'Push to Shopify Theme (0ms)'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyHeadSnippet}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:border-slate-600 hover:bg-slate-800"
+              >
+                {copiedHeadTag ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+                {copiedHeadTag ? 'Copied <head> Tag!' : 'Copy Instant <head> Tag'}
+              </button>
+            </div>
+          </div>
+
+          {shopifyThemeSync?.missingScope && (
+            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-200">
+              <p className="font-semibold">
+                One-time setup for 0ms instant load:
+              </p>
+              <p className="mt-0.5 text-amber-100/90">
+                Either enable <code className="font-mono">read_themes</code> + <code className="font-mono">write_themes</code> in your Shopify Custom App and click <strong>Push to Shopify Theme (0ms)</strong>, OR paste the copied 2-line <strong>Instant &lt;head&gt; Tag</strong> right before <code className="font-mono">&lt;/head&gt;</code> in Shopify Admin &rarr; Themes &rarr; Edit code &rarr; <code className="font-mono">layout/theme.liquid</code> (takes 10 seconds once, works forever!).
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main 12-Col Studio: Real Website Preview first on narrow screens, 6/6 side-by-side at lg+ */}

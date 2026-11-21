@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from 'express';
 import {
   type FestivalFeaturedProduct,
+  type FestivalThemeRuntimePayload,
+  buildFestivalStorefrontCss,
   buildFestivalThemePayload,
   isValidFestivalThemeId,
   normalizeFestivalThemeConfig,
@@ -35,6 +37,7 @@ import { checkDelhiveryPincodeServiceability } from './delhivery.js';
 import {
   fetchShopifyProducts,
   installShopifyScriptTag,
+  syncShopifyFestivalThemeAsset,
   updateShopifyProductSeo,
 } from './shopify.js';
 import { store } from './store.js';
@@ -295,10 +298,21 @@ async function detectPincodeFromIp(clientIp: string): Promise<PincodeAutoDetectR
   return miss;
 }
 
-function buildStorefrontWidgetScript(origin: string): string {
+function buildStorefrontWidgetScript(
+  origin: string,
+  preloadedTheme?: FestivalThemeRuntimePayload | null
+): string {
   const safeOrigin = JSON.stringify(origin);
+  const safePreloadedTheme = preloadedTheme
+    ? JSON.stringify(preloadedTheme)
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029')
+    : 'null';
   return `(function () {
   var APP_ORIGIN = ${safeOrigin};
+  var PRELOADED_FESTIVAL_THEME = ${safePreloadedTheme};
   var STORAGE_KEY = 'orderpulse_customer_pincode';
   var SOURCE_KEY = 'orderpulse_customer_pincode_source';
   var rootEl = document.getElementById('orderpulse-pincode-bar');
@@ -313,7 +327,7 @@ function buildStorefrontWidgetScript(origin: string): string {
   var observerAttached = false;
   var observerTimer = null;
   var isUpdatingOrderPulseDom = false;
-  var FESTIVAL_CACHE_KEY = 'orderpulse_festival_cache_v2';
+  var FESTIVAL_CACHE_KEY = 'orderpulse_festival_cache_v3';
 
   var PIN_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>';
   var PENCIL_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
@@ -974,16 +988,23 @@ ${buildWinterCardSnowRuntimeJs()}
   function saveFestivalCache(ft) {
     try {
       if (ft && ft.enabled && ft.css) {
-        sessionStorage.setItem(FESTIVAL_CACHE_KEY, JSON.stringify(ft));
+        var serialized = JSON.stringify(ft);
+        try { localStorage.setItem(FESTIVAL_CACHE_KEY, serialized); } catch (e) {}
+        try { sessionStorage.setItem(FESTIVAL_CACHE_KEY, serialized); } catch (e) {}
       } else {
-        sessionStorage.removeItem(FESTIVAL_CACHE_KEY);
+        try { localStorage.removeItem(FESTIVAL_CACHE_KEY); } catch (e) {}
+        try { sessionStorage.removeItem(FESTIVAL_CACHE_KEY); } catch (e) {}
       }
     } catch (e) {}
   }
 
   function loadFestivalCache() {
     try {
-      var raw = sessionStorage.getItem(FESTIVAL_CACHE_KEY);
+      var raw = null;
+      try { raw = localStorage.getItem(FESTIVAL_CACHE_KEY); } catch (e) {}
+      if (!raw) {
+        try { raw = sessionStorage.getItem(FESTIVAL_CACHE_KEY); } catch (e) {}
+      }
       if (!raw) return null;
       var parsed = JSON.parse(raw);
       return parsed && parsed.enabled && parsed.css ? parsed : null;
@@ -1013,6 +1034,7 @@ ${buildWinterCardSnowRuntimeJs()}
       }
       try {
         document.documentElement.removeAttribute('data-orderpulse-festival');
+        window.__OP_BAKED_THEME_SIG = '';
       } catch (e) {}
     } finally {
       isUpdatingOrderPulseDom = false;
@@ -1034,8 +1056,12 @@ ${buildWinterCardSnowRuntimeJs()}
     if (!fromCache) saveFestivalCache(ft);
 
     var nextSig = buildFestivalThemeSig(ft);
-    if (nextSig === opAppliedThemeSig && document.getElementById('orderpulse-festival-theme-css')) {
-      mountWinterCardSnow(ft);
+    if (
+      (nextSig === opAppliedThemeSig || (window.__OP_BAKED_THEME_SIG && nextSig === window.__OP_BAKED_THEME_SIG)) &&
+      document.getElementById('orderpulse-festival-theme-css')
+    ) {
+      opAppliedThemeSig = nextSig;
+      try { mountWinterCardSnow(ft); } catch (e) {}
       return;
     }
     opAppliedThemeSig = nextSig;
@@ -1261,14 +1287,16 @@ ${buildWinterCardSnowRuntimeJs()}
   }
 
   function bootstrapStorefront() {
-    // Apply cached festival theme immediately so mobile navigation never flashes blank
-    var cachedTheme = loadFestivalCache();
-    if (cachedTheme) {
-      applyFestivalTheme(cachedTheme, true);
+    // 1) If server pre-embedded the active festival theme directly in widget.js, apply SYNCHRONOUSLY at 0ms (zero extra round-trip!)
+    if (PRELOADED_FESTIVAL_THEME && typeof PRELOADED_FESTIVAL_THEME === 'object') {
+      applyFestivalTheme(PRELOADED_FESTIVAL_THEME, false);
+    } else {
+      var cachedTheme = loadFestivalCache();
+      if (cachedTheme) {
+        applyFestivalTheme(cachedTheme, true);
+      }
+      fetchFestivalThemeNow(0);
     }
-
-    // Fetch live festival theme via ultra-fast dedicated endpoint in parallel (never blocked by Delhivery/catalog)
-    fetchFestivalThemeNow(0);
 
     var savedPin = getSavedPin();
     if (savedPin) {
@@ -1412,11 +1440,28 @@ export function registerStorefrontRoutes(app: Express) {
     } satisfies PincodeAutoDetectResult);
   });
 
-  // Ultra-fast dedicated Festival Theme endpoint (never blocked by Delhivery/IndiaPost or 280KB catalog JSON-LD)
+  // Ultra-fast direct CSS stylesheet endpoint for <head> link tag (served from Edge CDN in ~40ms)
+  app.get('/api/storefront/theme.css', async (_req: Request, res: Response) => {
+    setPublicCors(res);
+    await store.refreshStorefrontConfigFast();
+    const storefrontConfig = store.getStorefrontConfig();
+    const festivalTheme = normalizeFestivalThemeConfig(storefrontConfig.festivalTheme);
+    const css = festivalTheme.enabled
+      ? buildFestivalThemePayload(festivalTheme, {
+          catalogProducts: [],
+          shopName: store.getSettings().shopName,
+        }).css || buildFestivalStorefrontCss(festivalTheme)
+      : '';
+    res.setHeader('Content-Type', 'text/css; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=120');
+    res.send(css);
+  });
+
+  // Ultra-fast dedicated Festival Theme endpoint (~100ms fast RTDB config read, never blocked by orders/Delhivery)
   app.get('/api/storefront/theme', async (_req: Request, res: Response) => {
     setPublicCors(res);
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    await store.ensureHydrated(true);
+    await store.refreshStorefrontConfigFast();
     const settings = store.getSettings();
     const storefrontConfig = store.getStorefrontConfig();
     const products = store.getProducts();
@@ -1439,7 +1484,7 @@ export function registerStorefrontRoutes(app: Express) {
   app.get('/api/storefront/pincode-check', async (req: Request, res: Response) => {
     setPublicCors(res);
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    await store.ensureHydrated(true);
+    await store.ensureHydrated();
     const rawPin = String(req.query.pincode || '');
     const pincode = normalizeIndianPincode(rawPin);
     const settings = store.getSettings();
@@ -1650,9 +1695,11 @@ export function registerStorefrontRoutes(app: Express) {
   });
 
   // Public Storefront Bridge Script served directly to the customer's Shopify storefront
+  // Pre-embeds the live Festival Theme payload inside widget.js so applying takes 0ms on arrival (zero 2nd round-trip!)
   app.get('/api/storefront/widget.js', async (req: Request, res: Response) => {
     setPublicCors(res);
-    await store.ensureHydrated();
+    await store.refreshStorefrontConfigFast();
+    const settings = store.getSettings();
     const config = store.getStorefrontConfig();
     const origin = normalizeStorefrontOrigin(
       config.storefrontAppUrl,
@@ -1660,9 +1707,17 @@ export function registerStorefrontRoutes(app: Express) {
       req.headers['x-forwarded-proto'],
       req.protocol
     );
+    const festivalTheme = normalizeFestivalThemeConfig(config.festivalTheme);
+    const liveCatalog = festivalTheme.enabled
+      ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, store.getProducts())
+      : [];
+    const preloadedTheme = buildFestivalThemePayload(festivalTheme, {
+      catalogProducts: liveCatalog,
+      shopName: settings.shopName,
+    });
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
-    res.send(buildStorefrontWidgetScript(origin));
+    res.setHeader('Cache-Control', 'public, max-age=10, s-maxage=20, stale-while-revalidate=60');
+    res.send(buildStorefrontWidgetScript(origin, preloadedTheme));
   });
 
   // Sync live catalog from Shopify Admin GraphQL API (preserving existing local pincode rules)
@@ -2073,7 +2128,44 @@ export function registerStorefrontRoutes(app: Express) {
           : normalizeFestivalThemeConfig(cur.festivalTheme),
     });
     await store.flushRemote();
-    res.json({ ok: true, storefrontConfig: updated });
+
+    // When Festival Theme is saved/toggled, immediately pre-bake it into Shopify's live theme.liquid (0ms load!)
+    let shopifyThemeSync = null;
+    if (body.festivalTheme !== undefined) {
+      const settings = store.getSettings();
+      const savedFestival = normalizeFestivalThemeConfig(updated.festivalTheme);
+      const liveCatalog = savedFestival.enabled
+        ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, store.getProducts())
+        : [];
+      const payload = buildFestivalThemePayload(savedFestival, {
+        catalogProducts: liveCatalog,
+        shopName: settings.shopName,
+      });
+      shopifyThemeSync = await syncShopifyFestivalThemeAsset(settings, payload);
+    }
+
+    res.json({ ok: true, storefrontConfig: updated, shopifyThemeSync });
+  });
+
+  // 1-click direct push / pre-bake of the active Festival Theme into Shopify's live layout/theme.liquid (0ms instant load)
+  app.post('/api/storefront/sync-shopify-theme', async (_req: Request, res: Response) => {
+    await store.ensureHydrated();
+    const settings = store.getSettings();
+    const storefrontConfig = store.getStorefrontConfig();
+    const savedFestival = normalizeFestivalThemeConfig(storefrontConfig.festivalTheme);
+    const liveCatalog = savedFestival.enabled
+      ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, store.getProducts())
+      : [];
+    const payload = buildFestivalThemePayload(savedFestival, {
+      catalogProducts: liveCatalog,
+      shopName: settings.shopName,
+    });
+    const shopifyThemeSync = await syncShopifyFestivalThemeAsset(settings, payload);
+    res.status(shopifyThemeSync.ok ? 200 : 400).json({
+      ok: shopifyThemeSync.ok,
+      shopifyThemeSync,
+      storefrontConfig,
+    });
   });
 
   // Attempt 1-click Shopify ScriptTag installation for the Storefront widget

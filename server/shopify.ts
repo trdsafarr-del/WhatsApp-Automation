@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
 import {
+  ORDERPULSE_FESTIVAL_SNIPPET_KEY,
+  type FestivalThemeRuntimePayload,
+  buildBakedShopifyFestivalSnippet,
+  patchThemeLiquidWithFestivalSnippet,
+} from '../src/lib/festivalThemes.js';
+import {
   DEFAULT_SETTINGS,
   extractCleanIndianPincode,
   extractShopifyCustomerPhone,
@@ -1324,4 +1330,178 @@ export async function upsertShopifyStorePage(
     };
   }
 }
+
+export interface ShopifyThemeBakeResult {
+  ok: boolean;
+  mode: 'baked' | 'removed' | 'skipped';
+  themeId?: string;
+  themeName?: string;
+  missingScope?: boolean;
+  error?: string;
+}
+
+/**
+ * Directly pre-bakes the active Festival Theme CSS & instant DOM boot snippet into
+ * the store's live (`role: "main"`) Shopify Theme (`snippets/orderpulse-festival-theme.liquid`
+ * + `layout/theme.liquid` before `</head>`) so customers see the festive theme at 0ms
+ * with zero flash and zero waiting for Shopify's slow window.onload ScriptTag.
+ * When disabled, cleanly removes the render tag and clears the snippet.
+ */
+export async function syncShopifyFestivalThemeAsset(
+  settings: AppSettings,
+  payload: FestivalThemeRuntimePayload
+): Promise<ShopifyThemeBakeResult> {
+  if (!hasLiveShopifyCredentials(settings)) {
+    return { ok: false, mode: 'skipped', error: 'Shopify credentials not configured.' };
+  }
+  const domain = normalizeShopifyDomain(settings.shopifyStoreDomain);
+  const auth = await resolveShopifyAccessToken(settings);
+  if (!auth.token) {
+    return { ok: false, mode: 'skipped', error: auth.error || 'Shopify auth failed.' };
+  }
+
+  const headers = {
+    'X-Shopify-Access-Token': auth.token,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    // 1. Find the currently published ("main") Shopify theme
+    const themesRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/themes.json`,
+      { headers, signal: AbortSignal.timeout(8000) }
+    );
+    if (!themesRes.ok) {
+      const text = await themesRes.text();
+      if (themesRes.status === 403) {
+        return {
+          ok: false,
+          mode: 'skipped',
+          missingScope: true,
+          error:
+            'Shopify app needs "read_themes" and "write_themes" scopes to pre-bake themes directly into theme.liquid.',
+        };
+      }
+      return {
+        ok: false,
+        mode: 'skipped',
+        error: `Shopify Themes API ${themesRes.status}: ${text.slice(0, 140)}`,
+      };
+    }
+
+    const themesJson = (await themesRes.json()) as {
+      themes?: Array<{ id?: number | string; name?: string; role?: string }>;
+    };
+    const mainTheme =
+      (themesJson.themes || []).find((t) => t.role === 'main') || (themesJson.themes || [])[0];
+    if (!mainTheme?.id) {
+      return { ok: false, mode: 'skipped', error: 'No published Shopify theme found.' };
+    }
+
+    const themeId = String(mainTheme.id);
+    const themeName = String(mainTheme.name || 'Live Theme');
+    const isEnabled = Boolean(payload && payload.enabled && payload.css);
+    const snippetContent = buildBakedShopifyFestivalSnippet(payload);
+
+    // 2. Write snippets/orderpulse-festival-theme.liquid
+    const putSnippetRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/themes/${themeId}/assets.json`,
+      {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          asset: {
+            key: ORDERPULSE_FESTIVAL_SNIPPET_KEY,
+            value: snippetContent,
+          },
+        }),
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+
+    if (!putSnippetRes.ok) {
+      const text = await putSnippetRes.text();
+      if (putSnippetRes.status === 403 || putSnippetRes.status === 404) {
+        return {
+          ok: false,
+          mode: 'skipped',
+          themeId,
+          themeName,
+          missingScope: true,
+          error:
+            'Shopify app needs "write_themes" scope (or Asset API access) to pre-bake directly into Shopify theme files.',
+        };
+      }
+      return {
+        ok: false,
+        mode: 'skipped',
+        themeId,
+        themeName,
+        error: `Shopify snippet upload failed (${putSnippetRes.status}): ${text.slice(0, 150)}`,
+      };
+    }
+
+    // 3. Read & idempotently patch layout/theme.liquid before </head>
+    const getLayoutRes = await fetch(
+      `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/themes/${themeId}/assets.json?asset[key]=layout/theme.liquid`,
+      { headers, signal: AbortSignal.timeout(8000) }
+    );
+    if (!getLayoutRes.ok) {
+      const text = await getLayoutRes.text();
+      return {
+        ok: false,
+        mode: 'skipped',
+        themeId,
+        themeName,
+        error: `Could not read layout/theme.liquid (${getLayoutRes.status}): ${text.slice(0, 140)}`,
+      };
+    }
+
+    const layoutJson = (await getLayoutRes.json()) as { asset?: { value?: string } };
+    const currentLiquid = layoutJson.asset?.value || '';
+    const patched = patchThemeLiquidWithFestivalSnippet(currentLiquid, isEnabled);
+
+    if (patched.changed) {
+      const putLayoutRes = await fetch(
+        `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/themes/${themeId}/assets.json`,
+        {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            asset: {
+              key: 'layout/theme.liquid',
+              value: patched.updated,
+            },
+          }),
+          signal: AbortSignal.timeout(10000),
+        }
+      );
+      if (!putLayoutRes.ok) {
+        const text = await putLayoutRes.text();
+        return {
+          ok: false,
+          mode: 'skipped',
+          themeId,
+          themeName,
+          missingScope: putLayoutRes.status === 403,
+          error: `Could not update layout/theme.liquid (${putLayoutRes.status}): ${text.slice(0, 140)}`,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      mode: isEnabled ? 'baked' : 'removed',
+      themeId,
+      themeName,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      mode: 'skipped',
+      error: err instanceof Error ? err.message : 'Network error syncing Shopify theme asset',
+    };
+  }
+}
+
 

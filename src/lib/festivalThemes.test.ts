@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_FESTIVAL_THEME_CONFIG,
   FESTIVAL_THEME_PRESETS,
+  buildBakedShopifyFestivalSnippet,
   buildFestivalPreviewUrl,
   buildFestivalStorefrontCss,
   buildFestivalThemePayload,
   detectActiveFestivalForDate,
   normalizeFestivalThemeConfig,
   normalizeShopPreviewOrigin,
+  patchThemeLiquidWithFestivalSnippet,
   resolveEffectiveFestivalPreset,
   rewriteShopifyHtmlForFestivalPreview,
   sanitizePreviewPath,
@@ -354,6 +356,47 @@ test('Festival CSS guarantees crisp readable text inside mobile sidebar drawer, 
   // Santa roamer hides cleanly whenever the mobile menu drawer or cart drawer is open
   assert.ok(xmas.css.includes('body:has(#Details-menu-drawer-container[open]) #orderpulse-festival-roamer'));
 });
+
+test('0ms Shopify theme.liquid pre-baker generates valid Liquid+JS snippet and cleanly injects/removes markers', () => {
+  const xmas = buildFestivalThemePayload({
+    ...DEFAULT_FESTIVAL_THEME_CONFIG,
+    enabled: true,
+    selectedFestivalId: 'christmas',
+    intensity: 'full',
+  });
+
+  const snippet = buildBakedShopifyFestivalSnippet(xmas);
+  assert.ok(snippet.includes('{% raw %}'));
+  assert.ok(snippet.includes('{% endraw %}'));
+  assert.ok(snippet.includes('<style id="orderpulse-festival-theme-css" data-op-baked="1">'));
+  assert.ok(snippet.includes('window.__OP_BAKED_THEME_SIG'));
+
+  // Extract inline script and confirm zero JS syntax errors
+  const scriptMatch = snippet.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch && scriptMatch[1]);
+  assert.doesNotThrow(() => new Function(scriptMatch[1]));
+
+  const offSnippet = buildBakedShopifyFestivalSnippet({ ...xmas, enabled: false, css: '' });
+  assert.ok(offSnippet.includes('OrderPulse Festival Theme OFF'));
+  assert.equal(offSnippet.includes('<style'), false);
+
+  const sampleThemeLiquid = '<html><head><title>Broomies</title></head><body>Hi</body></html>';
+  const injected = patchThemeLiquidWithFestivalSnippet(sampleThemeLiquid, true);
+  assert.equal(injected.changed, true);
+  assert.ok(injected.updated.includes("{% render 'orderpulse-festival-theme' %}"));
+  assert.ok(injected.updated.indexOf('ORDERPULSE_FESTIVAL_START') < injected.updated.indexOf('</head>'));
+
+  // Re-applying is idempotent (no duplicate tags)
+  const reInjected = patchThemeLiquidWithFestivalSnippet(injected.updated, true);
+  assert.equal((reInjected.updated.match(/ORDERPULSE_FESTIVAL_START/g) || []).length, 1);
+
+  // Disabling removes the marker cleanly leaving original layout intact
+  const removed = patchThemeLiquidWithFestivalSnippet(injected.updated, false);
+  assert.equal(removed.changed, true);
+  assert.equal(removed.updated.includes('ORDERPULSE_FESTIVAL_START'), false);
+  assert.equal(removed.updated.includes("orderpulse-festival-theme"), false);
+});
+
 
 
 
