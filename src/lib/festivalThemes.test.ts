@@ -19,6 +19,7 @@ import {
   type FestivalFeaturedProduct,
   selectBestFestivalProducts,
 } from './festivalShowcase';
+import { buildChristmasStringLightsRuntimeJs } from './christmasStringLights';
 
 test('detectActiveFestivalForDate resolves exact Indian & global festival windows in IST', () => {
   assert.equal(detectActiveFestivalForDate('2026-11-08T10:00:00+05:30'), 'diwali');
@@ -400,6 +401,64 @@ test('0ms Shopify theme.liquid pre-baker generates valid Liquid+JS snippet and c
   assert.equal(removed.updated.includes('ORDERPULSE_FESTIVAL_START'), false);
   assert.equal(removed.updated.includes("orderpulse-festival-theme"), false);
 });
+
+test('Christmas interactive 3D blown-glass string lights render with brass sockets, GPU-only CSS, and valid Web Audio pop-chime runtime', () => {
+  const xmas = buildFestivalThemePayload({
+    ...DEFAULT_FESTIVAL_THEME_CONFIG,
+    enabled: true,
+    selectedFestivalId: 'christmas',
+    intensity: 'full',
+    show3DArticles: true,
+    show3DBackground: true,
+  });
+
+  // Upgraded royal evergreen + velvet crimson + burnished gold Christmas palette
+  assert.equal(xmas.palette.headerBg, '#0E3B2C');
+  assert.equal(xmas.palette.primary, '#C41E3A');
+  assert.equal(xmas.palette.accent, '#B4690E');
+
+  // 3D blown-glass string lights ("sheeshe ki ladi") markup
+  assert.ok(xmas.garlandHtml.includes('op-ladi-3d'));
+  assert.ok(xmas.garlandHtml.includes('op-ladi-wire-svg'));
+  assert.ok(xmas.garlandHtml.includes('data-op-bulb="0"'));
+  assert.ok(xmas.garlandHtml.includes('data-op-bulb="15"'));
+  assert.ok(xmas.garlandHtml.includes('op-bulb-socket'));
+  assert.ok(xmas.garlandHtml.includes('op-bulb-glass'));
+  assert.ok(xmas.garlandHtml.includes('op-bulb-filament'));
+  assert.ok(xmas.garlandHtml.includes('op-bulb-shine'));
+  assert.ok(xmas.garlandHtml.includes('op-bulb-pop-ring'));
+  assert.ok(xmas.garlandHtml.includes('op-bulb-sparks'));
+
+  // Zero-lag GPU CSS guarantees
+  assert.ok(xmas.css.includes('opBulbPopSwing'));
+  assert.ok(xmas.css.includes('opBulbPopRing'));
+  assert.ok(xmas.css.includes('prefers-reduced-motion: reduce'));
+  assert.equal(xmas.css.includes('backdrop-filter: blur'), false);
+
+  // Web Audio API glass pop-chime runtime compiles cleanly with zero syntax errors
+  const runtimeJs = buildChristmasStringLightsRuntimeJs();
+  assert.doesNotThrow(() => new Function(runtimeJs));
+  assert.ok(runtimeJs.includes('AudioContext'));
+  assert.ok(runtimeJs.includes('playGlassBulbPopSound'));
+  assert.ok(runtimeJs.includes('elementFromPoint'));
+  assert.ok(runtimeJs.includes('mountFestivalStringLights'));
+
+  // Embedded cleanly in both 0ms baked Shopify snippet and live preview bridge
+  const baked = buildBakedShopifyFestivalSnippet(xmas);
+  assert.ok(baked.includes('mountFestivalStringLights(FT)'));
+  const scriptMatch = baked.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch && scriptMatch[1]);
+  assert.doesNotThrow(() => new Function(scriptMatch[1]));
+
+  const previewHtml = rewriteShopifyHtmlForFestivalPreview(
+    '<!doctype html><html><head></head><body><header class="header-wrapper">Broomies</header></body></html>',
+    'https://broomiesbakery.in',
+    { mode: 'festive', payload: xmas }
+  );
+  assert.ok(previewHtml.includes('mountFestivalStringLights(ft)'));
+  assert.ok(previewHtml.includes('playGlassBulbPopSound'));
+});
+
 
 
 

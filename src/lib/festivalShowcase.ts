@@ -1,3 +1,4 @@
+import { buildInteractive3DStringLightsHtml } from './christmasStringLights.js';
 import type {
   FestivalPresetId,
   FestivalThemeConfig,
@@ -46,21 +47,21 @@ export function getFestival3DBackgroundSpec(
   switch (presetId) {
     case 'christmas':
       return {
-        label: '3D Snowy Christmas Pine Forest, Hanging Baubles, Santa Sleigh & Starry Winter Sky',
+        label: '3D Blown-Glass String Lights (Pop Sound), Snowy Pine Forest, Hanging Baubles & Starry Winter Sky',
         isDarkCanvas: true,
         baseGradient:
-          'linear-gradient(180deg, #071928 0%, #0D2E3B 35%, #11433A 70%, #0D2F28 100%)',
+          'linear-gradient(180deg, #061822 0%, #0B2E36 36%, #0E3F33 72%, #07221B 100%)',
         auroraGradient:
-          'radial-gradient(ellipse 75% 45% at 22% 18%, rgba(220,38,38,0.22) 0%, transparent 65%), radial-gradient(ellipse 70% 45% at 78% 22%, rgba(250,204,21,0.18) 0%, transparent 65%), radial-gradient(ellipse 80% 50% at 50% 62%, rgba(16,185,129,0.20) 0%, transparent 70%)',
-        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.55), rgba(245,158,11,0.22) 55%, rgba(245,158,11,0) 100%)',
-        orb2: 'radial-gradient(circle at 30% 28%, rgba(254,202,202,0.48), rgba(220,38,38,0.20) 55%, rgba(136,19,55,0) 100%)',
-        orb3: 'radial-gradient(circle at 32% 28%, rgba(187,247,208,0.45), rgba(16,185,129,0.18) 55%, rgba(6,78,59,0) 100%)',
-        orb4: 'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.50), rgba(186,230,253,0.16) 55%, rgba(14,116,144,0) 100%)',
-        prismColor: 'rgba(254, 240, 138, 0.28)',
+          'radial-gradient(ellipse 75% 45% at 22% 18%, rgba(225,29,72,0.22) 0%, transparent 65%), radial-gradient(ellipse 72% 45% at 78% 20%, rgba(251,191,36,0.22) 0%, transparent 65%), radial-gradient(ellipse 80% 50% at 50% 62%, rgba(16,185,129,0.22) 0%, transparent 70%)',
+        orb1: 'radial-gradient(circle at 30% 28%, rgba(254,240,138,0.62), rgba(245,158,11,0.24) 55%, rgba(245,158,11,0) 100%)',
+        orb2: 'radial-gradient(circle at 30% 28%, rgba(254,205,211,0.52), rgba(225,29,72,0.22) 55%, rgba(136,19,55,0) 100%)',
+        orb3: 'radial-gradient(circle at 32% 28%, rgba(187,247,208,0.48), rgba(16,185,129,0.20) 55%, rgba(6,78,59,0) 100%)',
+        orb4: 'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.54), rgba(186,230,253,0.18) 55%, rgba(14,116,144,0) 100%)',
+        prismColor: 'rgba(254, 240, 138, 0.30)',
         gridColor: 'rgba(255, 255, 255, 0.08)',
-        glowShadow: 'rgba(4, 18, 28, 0.42)',
-        cardTintBg: 'rgba(255, 253, 250, 0.96)',
-        btnDepth: '#6E0D19',
+        glowShadow: 'rgba(5, 22, 26, 0.44)',
+        cardTintBg: 'rgba(255, 253, 249, 0.97)',
+        btnDepth: '#780F22',
       };
     case 'diwali':
       return {
@@ -330,11 +331,14 @@ function buildChristmasScenicBgHtml(): string {
     <ellipse cx="153" cy="131" rx="7" ry="11" transform="rotate(-24 153 131)" fill="#FFFFFF" opacity="0.4"/>
     <path d="M137 142 Q164 155 191 142" stroke="#FFFBEB" stroke-width="2.4" opacity="0.72"/>
   </g>
-  <!-- Swaying Bauble 3 (Small Emerald Star) -->
+  <!-- Swaying Bauble 3 (3D Golden Jingle Bell & Holly Ribbon) -->
   <g class="op-xmas-sway-a" style="transform-origin:24px 66px;">
-    <line x1="24" y1="66" x2="24" y2="224" stroke="#FDE047" stroke-width="1.8" opacity="0.75"/>
-    <circle cx="24" cy="248" r="24" fill="url(#opBgGreenBauble)"/>
-    <ellipse cx="16" cy="239" rx="5" ry="9" transform="rotate(-20 16 239)" fill="#FFFFFF" opacity="0.35"/>
+    <line x1="24" y1="66" x2="24" y2="214" stroke="#FDE047" stroke-width="1.9" opacity="0.82"/>
+    <path d="M12 222 C12 208 36 208 36 222 L43 246 C32 252 16 252 5 246 Z" fill="url(#opBgGoldBauble)"/>
+    <ellipse cx="24" cy="246" rx="18" ry="5" fill="#78350F" opacity="0.78"/>
+    <circle cx="24" cy="250" r="5" fill="#FEF08A"/>
+    <ellipse cx="18" cy="226" rx="3.5" ry="9" transform="rotate(-12 18 226)" fill="#FFFFFF" opacity="0.45"/>
+    <circle cx="24" cy="212" r="4.5" fill="#EF4444"/>
   </g>
 </svg>`;
 
@@ -911,7 +915,7 @@ export function getFestivalHeroCopy(
         subheadline: `Handcrafted fresh at ${brand} with festive gift wrapping & fast delivery right to your doorstep.`,
         ctaLabel: 'Shop Christmas Gifts',
         ctaPath: '/collections/all',
-        articleLabel: 'Roaming Animated Santa Claus, 3D Christmas Tree, Baubles & Gifts',
+        articleLabel: 'Interactive 3D Glass String Lights (Pop Sound), Roaming Santa, 3D Tree & Baubles',
       };
     case 'diwali':
       return {
@@ -1331,29 +1335,7 @@ export function buildFestival3DArtSvgs(presetId: FestivalPresetId): {
  * Diwali marigold & diya toran, Eid crescents, Holi color bunting, etc.).
  */
 export function buildFestivalGarlandHtml(preset: FestivalThemePreset): string {
-  const p = preset.palette;
-  const bulbColors =
-    preset.id === 'christmas'
-      ? ['#EF4444', '#FDE047', '#22C55E', '#38BDF8', '#F43F5E', '#FBBF24']
-      : preset.id === 'holi'
-        ? ['#EC4899', '#F59E0B', '#06B6D4', '#8B5CF6', '#22C55E', '#F43F5E']
-        : preset.id === 'independence_day'
-          ? ['#FF6F00', '#FFFFFF', '#138808']
-          : [p.accent, '#FEF08A', p.primary, '#FFFFFF'];
-
-  const nodes: string[] = [];
-  for (let i = 0; i < 16; i += 1) {
-    const col = bulbColors[i % bulbColors.length];
-    const delay = ((i % 6) * 0.28).toFixed(2);
-    const drop = i % 2 === 0 ? 10 : 16;
-    nodes.push(
-      `<span class="op-garland-drop" style="padding-top:${drop}px;animation-delay:${delay}s;">` +
-        `<span class="op-garland-bulb" style="background:${col};box-shadow:0 0 12px ${col};animation-delay:${delay}s;"></span>` +
-      `</span>`
-    );
-  }
-
-  return `<div class="op-garland-wire" aria-hidden="true">${nodes.join('')}</div>`;
+  return buildInteractive3DStringLightsHtml(preset.id, preset.palette);
 }
 
 /**
@@ -2062,9 +2044,19 @@ body .shopify-section-group-footer-group footer.footer {
   background: radial-gradient(circle at 18% 15%, var(--op-h-primary) 0%, var(--op-h-bg1) 50%, var(--op-h-bg2) 100%);
   color: var(--op-h-text);
   border: 2px solid var(--op-h-accent);
-  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 250, 230, 0.35);
   padding: 26px 28px;
   perspective: 1100px;
+}
+#orderpulse-festival-hero .op-fest-hero-shell::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, rgba(254, 240, 138, 0.85) 50%, transparent 100%);
+  pointer-events: none;
 }
 #orderpulse-festival-hero .op-fest-hero-glow {
   position: absolute;
@@ -2208,14 +2200,15 @@ body .shopify-section-group-footer-group footer.footer {
   color: var(--op-h-ink) !important;
   border-radius: 14px;
   overflow: hidden;
-  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border: 1.5px solid rgba(254, 240, 138, 0.48);
   text-decoration: none !important;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.85);
   transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-style: preserve-3d;
 }
 @media (hover: hover) and (pointer: fine) {
   #orderpulse-festival-hero .op-fest-prod-card:hover {
-    transform: translate3d(0, -4px, 0);
+    transform: translate3d(0, -5px, 0) rotateX(2deg);
   }
 }
 #orderpulse-festival-hero .op-fest-prod-img-wrap {

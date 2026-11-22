@@ -10,6 +10,7 @@ import {
   rewriteShopifyHtmlForFestivalPreview,
   sanitizePreviewPath,
 } from '../src/lib/festivalThemes.js';
+import { buildChristmasStringLightsRuntimeJs } from '../src/lib/christmasStringLights.js';
 import { buildSantaRoamerRuntimeJs } from '../src/lib/santaRoamer.js';
 import { buildWinterCardSnowRuntimeJs } from '../src/lib/winterCardSnow.js';
 import { buildBakeryStorefrontSchema } from '../src/lib/geoSeo.js';
@@ -966,6 +967,7 @@ function buildStorefrontWidgetScript(
   var opAppliedThemeSig = '';
 ${buildSantaRoamerRuntimeJs()}
 ${buildWinterCardSnowRuntimeJs()}
+${buildChristmasStringLightsRuntimeJs()}
 
   function buildFestivalThemeSig(ft) {
     if (!ft || !ft.enabled) return 'off';
@@ -1019,6 +1021,7 @@ ${buildWinterCardSnowRuntimeJs()}
     try {
       stopSantaRoamer();
       removeWinterCardSnow();
+      unmountFestivalStringLights();
       var ids = [
         'orderpulse-festival-theme-css',
         'orderpulse-festival-bg-3d',
@@ -1066,6 +1069,7 @@ ${buildWinterCardSnowRuntimeJs()}
     ) {
       opAppliedThemeSig = nextSig;
       try { mountWinterCardSnow(ft); } catch (e) {}
+      try { mountFestivalStringLights(ft); } catch (e) {}
       return;
     }
     opAppliedThemeSig = nextSig;
@@ -1212,6 +1216,7 @@ ${buildWinterCardSnowRuntimeJs()}
 
       try { mountFestivalRoamer(ft); } catch (e) {}
       try { mountWinterCardSnow(ft); } catch (e) {}
+      try { mountFestivalStringLights(ft); } catch (e) {}
     } finally {
       isUpdatingOrderPulseDom = false;
     }

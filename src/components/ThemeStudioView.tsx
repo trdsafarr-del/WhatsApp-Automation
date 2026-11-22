@@ -974,10 +974,10 @@ export function ThemeStudioView({
                   <div className="flex items-center justify-between gap-2 border-t border-slate-800/80 pt-2.5">
                     <div>
                       <p className="text-xs font-semibold text-slate-200">
-                        3D Articles &amp; Hanging Lights
+                        3D Glass String Lights &amp; Articles
                       </p>
                       <p className="text-[11px] text-slate-400">
-                        3D tree, diyas, gifts &amp; twinkling garland
+                        Interactive 3D glass bulb ladi with pop-chime sound, 3D tree &amp; bells
                       </p>
                     </div>
                     <button
