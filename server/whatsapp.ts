@@ -12,6 +12,7 @@ import {
   isTransientWhatsAppError,
   mergeShopifyTags,
   normalizePhoneToWhatsAppJid,
+  resolvePersistentDataDir,
   resolvePollVoteAction,
   shouldAutoDispatchPoll,
   shouldSkipAutoRestoreForRemoteHost,
@@ -120,11 +121,11 @@ function stripJidDevice(jid: string): string {
   return userPart && domainPart ? `${userPart}@${domainPart}` : trimmed;
 }
 
-const AUTH_DIR = process.env.VERCEL
-  ? '/tmp/orderpulse-data/wa-auth'
-  : process.env.DATA_DIR
-    ? path.resolve(process.env.DATA_DIR, 'wa-auth')
-    : path.resolve(process.cwd(), 'data', 'wa-auth');
+const RESOLVED_WA_DATA = resolvePersistentDataDir(
+  process.env,
+  path.resolve(process.cwd(), 'data')
+);
+const AUTH_DIR = path.join(path.resolve(RESOLVED_WA_DATA.dir), 'wa-auth');
 const CREDS_BACKUP_PATH = path.join(path.dirname(AUTH_DIR), 'wa-auth-creds.backup.json');
 
 class WhatsAppManager {
@@ -136,10 +137,17 @@ class WhatsAppManager {
   private lastHeartbeatAt: string | null = null;
   private reconnectCount = 0;
   private consecutiveBadSessions = 0;
+  private conflictRecoveryAttempts = 0;
+  private manualDisconnect = false;
+  private hasEverConnectedThisBoot = false;
+  private retriedCloudAuthAfter401 = false;
+  private readonly bootStartedAtMs = Date.now();
   private lastError: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private conflictRecoveryTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private queueFlushTimer: NodeJS.Timeout | null = null;
+  private watchdogTimer: NodeJS.Timeout | null = null;
   private authBackupTimer: NodeJS.Timeout | null = null;
   private credsSaveQueue: Promise<void> = Promise.resolve();
   private isInitializing = false;
@@ -153,6 +161,7 @@ class WhatsAppManager {
   constructor() {
     if (!process.env.VERCEL) {
       void this.restorePersistedSession();
+      this.startWatchdog();
     }
   }
 
@@ -269,12 +278,12 @@ class WhatsAppManager {
     }
 
     this.recoverCredsFromBackupIfCorrupt();
-    if (!this.isAuthRegistered() && store.isCloudSyncEnabled()) {
+    if (!this.isAuthRegistered() && store.isPrivateAuthCloudSyncEnabled()) {
       await store.restoreAuthFiles(AUTH_DIR);
     }
     if (this.hasSavedAuth() && this.isAuthRegistered()) {
       this.writeAtomicCredsBackup();
-      if (store.isCloudSyncEnabled()) {
+      if (store.isPrivateAuthCloudSyncEnabled()) {
         void store.backupAuthFiles(AUTH_DIR, { force: true });
       }
       // Auto-restore 24/7 WhatsApp Web QR session without requiring re-scan
@@ -286,11 +295,59 @@ class WhatsAppManager {
   }
 
   private scheduleAuthBackup(force = false) {
-    if (process.env.VERCEL || !store.isCloudSyncEnabled()) return;
+    if (process.env.VERCEL || !store.isPrivateAuthCloudSyncEnabled()) return;
     if (this.authBackupTimer) clearTimeout(this.authBackupTimer);
     this.authBackupTimer = setTimeout(() => {
       void this.credsSaveQueue.then(() => store.backupAuthFiles(AUTH_DIR, { force }));
     }, force ? 1500 : 5_000);
+  }
+
+  /**
+   * 24/7 Socket Health & Auto-Revive Watchdog:
+   * Detects half-open/zombie WebSockets overnight and automatically revives a registered
+   * session on Railway/cloud if a transient error ever left the socket disconnected.
+   */
+  private startWatchdog() {
+    if (process.env.VERCEL) return;
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+    this.watchdogTimer = setInterval(() => {
+      if (this.manualDisconnect || this.isInitializing) return;
+
+      if (this.status === 'connected' && this.sock) {
+        const ws = (this.sock as unknown as { ws?: { readyState?: number; isClosed?: boolean } })?.ws;
+        const isDead =
+          ws?.isClosed === true || ws?.readyState === 2 || ws?.readyState === 3;
+        if (isDead) {
+          this.cachedWaVersion = undefined;
+          void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
+        }
+        return;
+      }
+
+      if (
+        this.status === 'disconnected' &&
+        !this.reconnectTimer &&
+        !this.conflictRecoveryTimer &&
+        this.isAuthRegistered()
+      ) {
+        const currentHost = detectHostRuntimeKind();
+        const meta = store.getWhatsAppMeta();
+        if (
+          shouldSkipAutoRestoreForRemoteHost({
+            currentHost,
+            activeHostKind: meta.activeHostKind,
+            lastHeartbeatAt: meta.lastHeartbeatAt,
+          })
+        ) {
+          return;
+        }
+        if (currentHost === 'railway' || currentHost === 'cloud') {
+          this.cachedWaVersion = undefined;
+          void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
+        }
+      }
+    }, 60_000);
+    this.watchdogTimer.unref?.();
   }
 
   private startHeartbeat() {
@@ -348,7 +405,9 @@ class WhatsAppManager {
         this.lastHeartbeatAt || (localRegistered || remoteSessionActive ? meta.lastHeartbeatAt : null) || null,
       reconnectCount: this.reconnectCount,
       sessionPersisted: localRegistered || remoteSessionActive,
-      cloudAuthBackupEnabled: store.isCloudSyncEnabled(),
+      cloudAuthBackupEnabled: store.isPrivateAuthCloudSyncEnabled(),
+      volumeMounted: store.isVolumeMounted(),
+      uptimeSeconds: Math.floor((Date.now() - this.bootStartedAtMs) / 1000),
       remoteSessionActive,
       activeHostKind: meta.activeHostKind || null,
       hostKind,
@@ -367,6 +426,7 @@ class WhatsAppManager {
       return this.getState();
     }
 
+    this.manualDisconnect = false;
     const mode: WhatsAppEngineMode = requestedMode || 'baileys_qr';
     store.updateWhatsAppMeta({ mode });
     store.updateSettings({ whatsappMode: mode });
@@ -375,6 +435,10 @@ class WhatsAppManager {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.conflictRecoveryTimer) {
+      clearTimeout(this.conflictRecoveryTimer);
+      this.conflictRecoveryTimer = null;
     }
 
     if (this.isInitializing) {
@@ -421,7 +485,7 @@ class WhatsAppManager {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       }
       // Never pull stale cloud auth back in when the user explicitly asked for a fresh QR login
-      if (!options?.fresh && !this.isAuthRegistered() && store.isCloudSyncEnabled()) {
+      if (!options?.fresh && !this.isAuthRegistered() && store.isPrivateAuthCloudSyncEnabled()) {
         await store.restoreAuthFiles(AUTH_DIR);
       }
 
@@ -556,8 +620,11 @@ class WhatsAppManager {
         if (connection === 'open') {
           const now = new Date().toISOString();
           this.status = 'connected';
+          this.hasEverConnectedThisBoot = true;
+          this.retriedCloudAuthAfter401 = false;
           this.reconnectCount = 0;
           this.consecutiveBadSessions = 0;
+          this.conflictRecoveryAttempts = 0;
           this.qrDataUrl = null;
           this.qrRaw = null;
           this.pairingCode = null;
@@ -598,6 +665,33 @@ class WhatsAppManager {
 
           if (action === 'logout_clear_auth') {
             this.consecutiveBadSessions = 0;
+            this.cachedWaVersion = undefined;
+            // If a cold boot hit 401 before ever connecting, check once if cloud holds newer valid auth keys before wiping
+            if (
+              !this.hasEverConnectedThisBoot &&
+              !this.retriedCloudAuthAfter401 &&
+              store.isPrivateAuthCloudSyncEnabled()
+            ) {
+              this.retriedCloudAuthAfter401 = true;
+              const prevCreds = fs.existsSync(path.join(AUTH_DIR, 'creds.json'))
+                ? fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf8')
+                : '';
+              const restored = await store.restoreAuthFiles(AUTH_DIR);
+              const nextCreds = fs.existsSync(path.join(AUTH_DIR, 'creds.json'))
+                ? fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf8')
+                : '';
+              if (restored && nextCreds && nextCreds !== prevCreds && this.isAuthRegistered()) {
+                this.status = 'connecting';
+                this.lastError = null;
+                if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = setTimeout(() => {
+                  void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
+                }, 2_000);
+                this.notifyWaiters();
+                return;
+              }
+            }
+
             const currentHost = detectHostRuntimeKind();
             const meta = store.getWhatsAppMeta();
             const isActiveOwnerHost =
@@ -625,13 +719,50 @@ class WhatsAppManager {
             }
             this.notifyWaiters();
           } else if (action === 'pause_keep_auth') {
-            // Another persistent host (e.g. Railway / preview tab) took over this WhatsApp session; pause without wiping auth
+            // Another persistent host (or old Railway rolling-deploy container) briefly held the socket — never wipe auth
+            const currentHost = detectHostRuntimeKind();
+            const conflictAtMs = Date.now();
             this.status = 'disconnected';
             this.qrDataUrl = null;
             this.qrRaw = null;
             this.pairingCode = null;
             this.lastError =
-              'WhatsApp session was replaced by another server instance. Keep only one 24/7 server active at a time, or click Restore Saved Session when ready.';
+              'WhatsApp session was briefly replaced by another server instance. Verifying if old instance exited...';
+
+            if (
+              (currentHost === 'railway' || currentHost === 'cloud') &&
+              !this.manualDisconnect &&
+              this.conflictRecoveryAttempts < 3 &&
+              this.isAuthRegistered()
+            ) {
+              this.conflictRecoveryAttempts += 1;
+              const waitMs = 25_000 * this.conflictRecoveryAttempts;
+              if (this.conflictRecoveryTimer) clearTimeout(this.conflictRecoveryTimer);
+              this.conflictRecoveryTimer = setTimeout(() => {
+                this.conflictRecoveryTimer = null;
+                if (this.manualDisconnect || this.status === 'connected') return;
+                void (async () => {
+                  await store.ensureHydrated(true);
+                  const latestMeta = store.getWhatsAppMeta();
+                  const latestHbMs = latestMeta.lastHeartbeatAt
+                    ? Date.parse(latestMeta.lastHeartbeatAt)
+                    : 0;
+                  // If no other active host updated heartbeat after our 440 conflict, the previous container exited during deploy — safely reclaim 24/7 socket
+                  const anotherHostActivelyTicking =
+                    Number.isFinite(latestHbMs) && latestHbMs > conflictAtMs + 5_000;
+                  if (!anotherHostActivelyTicking && this.isAuthRegistered()) {
+                    this.cachedWaVersion = undefined;
+                    await this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
+                  } else {
+                    this.lastError =
+                      'WhatsApp session is currently active on another server instance. Keep only one 24/7 server active, or click Restore Saved Session when ready.';
+                  }
+                })();
+              }, waitMs);
+            } else {
+              this.lastError =
+                'WhatsApp session was replaced by another server instance. Keep only one 24/7 server active at a time, or click Restore Saved Session when ready.';
+            }
             this.notifyWaiters();
           } else if (action === 'restart_immediate') {
             // Normal post-QR-scan handshake (515): flush creds.json and reconnect immediately without error flash
@@ -646,15 +777,19 @@ class WhatsAppManager {
               }, 250);
             }
           } else if (action === 'reconnect_bad_session') {
-            // Transient 500 badSession: retry up to 3 times without wiping saved credentials
+            // Transient 500 badSession (e.g. overnight WA Web version roll): refresh WA Web version and retry with backoff — NEVER wipe auth!
             this.consecutiveBadSessions += 1;
             this.reconnectCount += 1;
+            this.cachedWaVersion = undefined;
             this.status = 'connecting';
             this.lastError = null;
             await this.credsSaveQueue;
             this.writeAtomicCredsBackup();
             if (!process.env.VERCEL) {
-              const delayMs = this.consecutiveBadSessions === 1 ? 3_000 : this.consecutiveBadSessions === 2 ? 7_000 : 15_000;
+              const delayMs = Math.min(
+                60_000,
+                3_000 * Math.pow(2, Math.min(this.consecutiveBadSessions - 1, 4))
+              );
               if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
               this.reconnectTimer = setTimeout(() => {
                 void this.connect('baileys_qr', { waitForQr: false, fromReconnect: true });
@@ -673,6 +808,9 @@ class WhatsAppManager {
           } else if (!process.env.VERCEL) {
             // Auto-reconnect 24/7 for transient drops without logging out
             this.reconnectCount += 1;
+            if (this.reconnectCount >= 2) {
+              this.cachedWaVersion = undefined;
+            }
             this.status = 'connecting';
             this.lastError = errMessage;
             await this.credsSaveQueue;
@@ -862,9 +1000,18 @@ class WhatsAppManager {
   }
 
   async shutdownGracefully(): Promise<void> {
+    this.manualDisconnect = true;
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.conflictRecoveryTimer) {
+      clearTimeout(this.conflictRecoveryTimer);
+      this.conflictRecoveryTimer = null;
     }
     if (this.authBackupTimer) {
       clearTimeout(this.authBackupTimer);
@@ -910,9 +1057,14 @@ class WhatsAppManager {
         'WhatsApp is hosted on your 24/7 Railway server. Disconnect from Railway if you want to unlink the device.';
       return this.getState();
     }
+    this.manualDisconnect = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.conflictRecoveryTimer) {
+      clearTimeout(this.conflictRecoveryTimer);
+      this.conflictRecoveryTimer = null;
     }
     if (clearAuth && this.sock) {
       try {

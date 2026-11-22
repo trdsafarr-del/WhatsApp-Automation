@@ -434,17 +434,17 @@ export function SetupGuideView({
 
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-300">
               <p className="font-semibold text-white">
-                Railway 24/7 Setup Steps (Takes ~3 Minutes):
+                Railway 24/7 Zero-Logout Setup (3 Required Steps):
               </p>
-              <ol className="mt-2 list-decimal space-y-1.5 pl-4">
+              <ol className="mt-2 list-decimal space-y-2 pl-4">
                 <li>
-                  Open <span className="font-mono text-emerald-300">railway.app</span> → <span className="font-medium text-white">New Project → Deploy from GitHub Repo</span> → select this repository.
+                  <span className="font-semibold text-white">Attach a Persistent Volume (Zero-Logout Disk):</span> In your Railway Service &rarr; <span className="font-medium text-white">Volumes</span> &rarr; click <span className="font-medium text-emerald-300">Add Volume</span> &rarr; set Mount Path to <span className="font-mono text-emerald-300">/data</span>. OrderPulse automatically detects <span className="font-mono text-slate-200">RAILWAY_VOLUME_MOUNT_PATH</span> so WhatsApp stays logged in permanently across restarts and redeploys.
                 </li>
                 <li>
-                  In your Railway Service → <span className="font-medium text-white">Variables</span> tab, add: <span className="font-mono text-emerald-300">NODE_ENV=production</span>, <span className="font-mono text-emerald-300">UPSTASH_REDIS_REST_URL</span>, and <span className="font-mono text-emerald-300">UPSTASH_REDIS_REST_TOKEN</span>.
+                  <span className="font-semibold text-white">Keep Railway Awake 24/7 (Disable Sleep Mode):</span> In Railway Service &rarr; <span className="font-medium text-white">Settings &rarr; Deploy</span>, verify <span className="font-semibold text-emerald-300">Serverless / App Sleeping is OFF</span> (also enforced by <span className="font-mono text-slate-200">railway.json</span>). Optionally add a free 5-min ping to <span className="font-mono text-emerald-300">https://your-railway-domain/api/health</span> on UptimeRobot.
                 </li>
                 <li>
-                  In Railway → <span className="font-medium text-white">Settings → Deploy</span>, ensure <span className="font-semibold text-white">Serverless / Sleep Mode is OFF</span> so WhatsApp stays active 24/7 even when no browser tab is open.
+                  <span className="font-semibold text-white">Add Cloud Variables:</span> In Railway Service &rarr; <span className="font-medium text-white">Variables</span>, set <span className="font-mono text-emerald-300">NODE_ENV=production</span>, your <span className="font-mono text-emerald-300">SHOPIFY_*</span> keys, and optionally <span className="font-mono text-emerald-300">FIREBASE_RTDB_URL</span> + <span className="font-mono text-emerald-300">FIREBASE_RTDB_SECRET</span> (secondary encrypted cloud auth backup).
                 </li>
                 <li>
                   Update your Shopify Store Admin webhooks (<span className="font-mono text-emerald-300">orders/create</span> &amp; <span className="font-mono text-emerald-300">orders/updated</span>) to your Railway URL so new orders and tracking links trigger 24/7.

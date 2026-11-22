@@ -56,6 +56,7 @@ import {
   parseDelhiveryBillingCsv,
   readCleanEnvVar,
   resolveDailyMetaAdsRateForDate,
+  resolvePersistentDataDir,
   resolvePollVoteAction,
   selectPriorityAuthFiles,
   shiftMonthKey,
@@ -2017,7 +2018,7 @@ test('classifyWhatsAppDisconnect prevents spurious logouts on 500 badSession, 51
     'restart_immediate'
   );
 
-  // 500 badSession -> retry up to 3 times WITHOUT wiping auth; only clear on 4th consecutive failure
+  // 500 badSession -> NEVER wipes registered credentials (even after 3+ overnight retries)
   assert.equal(
     classifyWhatsAppDisconnect({ statusCode: 500, isAuthRegistered: true, consecutiveBadSessions: 0 }),
     'reconnect_bad_session'
@@ -2027,8 +2028,12 @@ test('classifyWhatsAppDisconnect prevents spurious logouts on 500 badSession, 51
     'reconnect_bad_session'
   );
   assert.equal(
-    classifyWhatsAppDisconnect({ statusCode: 500, isAuthRegistered: true, consecutiveBadSessions: 3 }),
-    'logout_clear_auth'
+    classifyWhatsAppDisconnect({ statusCode: 500, isAuthRegistered: true, consecutiveBadSessions: 10 }),
+    'reconnect_bad_session'
+  );
+  assert.equal(
+    classifyWhatsAppDisconnect({ statusCode: 500, isAuthRegistered: false, consecutiveBadSessions: 0 }),
+    'qr_timeout_clear_unregistered'
   );
 
   // 440 or conflict message -> pause without wiping credentials
@@ -2070,6 +2075,25 @@ test('classifyWhatsAppDisconnect prevents spurious logouts on 500 badSession, 51
     classifyWhatsAppDisconnect({ statusCode: 503, isAuthRegistered: true, consecutiveBadSessions: 0 }),
     'reconnect'
   );
+});
+
+test('resolvePersistentDataDir honors RAILWAY_VOLUME_MOUNT_PATH and DATA_DIR automatically', () => {
+  assert.deepEqual(resolvePersistentDataDir({ VERCEL: '1' }), {
+    dir: '/tmp/orderpulse-data',
+    volumeMounted: false,
+  });
+  assert.deepEqual(resolvePersistentDataDir({ DATA_DIR: '/custom/data' }), {
+    dir: '/custom/data',
+    volumeMounted: true,
+  });
+  assert.deepEqual(resolvePersistentDataDir({ RAILWAY_VOLUME_MOUNT_PATH: '/data' }), {
+    dir: '/data',
+    volumeMounted: true,
+  });
+  assert.deepEqual(resolvePersistentDataDir({}, '/app/data'), {
+    dir: '/app/data',
+    volumeMounted: false,
+  });
 });
 
 test('getWhatsAppDisplayState mirrors live Railway session on AI Studio Dev Preview and Shared App (cloud)', () => {

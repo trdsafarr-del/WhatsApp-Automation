@@ -629,6 +629,7 @@ export interface FestivalThemeRuntimePayload {
   particlesHtml: string;
   roamerHtml: string;
   css: string;
+  authoritative?: boolean;
 }
 
 export function normalizeShopPreviewOrigin(rawDomain?: string | null): string {

@@ -1049,6 +1049,10 @@ ${buildWinterCardSnowRuntimeJs()}
       return;
     }
     if (!ft.enabled || !ft.css) {
+      // Never wipe a baked Shopify theme or cached festival theme if a cold serverless container failed to hydrate from cloud
+      if (ft.authoritative === false) {
+        return;
+      }
       if (!fromCache) saveFestivalCache(null);
       removeFestivalTheme();
       return;
@@ -1287,8 +1291,12 @@ ${buildWinterCardSnowRuntimeJs()}
   }
 
   function bootstrapStorefront() {
-    // 1) If server pre-embedded the active festival theme directly in widget.js, apply SYNCHRONOUSLY at 0ms (zero extra round-trip!)
-    if (PRELOADED_FESTIVAL_THEME && typeof PRELOADED_FESTIVAL_THEME === 'object') {
+    // 1) If server pre-embedded an authoritative festival theme directly in widget.js, apply SYNCHRONOUSLY at 0ms (zero extra round-trip!)
+    if (
+      PRELOADED_FESTIVAL_THEME &&
+      typeof PRELOADED_FESTIVAL_THEME === 'object' &&
+      (PRELOADED_FESTIVAL_THEME.enabled || PRELOADED_FESTIVAL_THEME.authoritative !== false)
+    ) {
       applyFestivalTheme(PRELOADED_FESTIVAL_THEME, false);
     } else {
       var cachedTheme = loadFestivalCache();
@@ -1444,6 +1452,7 @@ export function registerStorefrontRoutes(app: Express) {
   app.get('/api/storefront/theme.css', async (_req: Request, res: Response) => {
     setPublicCors(res);
     await store.refreshStorefrontConfigFast();
+    const authoritative = store.isStorefrontConfigAuthoritative();
     const storefrontConfig = store.getStorefrontConfig();
     const festivalTheme = normalizeFestivalThemeConfig(storefrontConfig.festivalTheme);
     const css = festivalTheme.enabled
@@ -1453,7 +1462,12 @@ export function registerStorefrontRoutes(app: Express) {
         }).css || buildFestivalStorefrontCss(festivalTheme)
       : '';
     res.setHeader('Content-Type', 'text/css; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=120');
+    res.setHeader(
+      'Cache-Control',
+      authoritative
+        ? 'public, max-age=15, s-maxage=30, stale-while-revalidate=120'
+        : 'no-store, max-age=0'
+    );
     res.send(css);
   });
 
@@ -1462,6 +1476,7 @@ export function registerStorefrontRoutes(app: Express) {
     setPublicCors(res);
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     await store.refreshStorefrontConfigFast();
+    const authoritative = store.isStorefrontConfigAuthoritative();
     const settings = store.getSettings();
     const storefrontConfig = store.getStorefrontConfig();
     const products = store.getProducts();
@@ -1469,12 +1484,16 @@ export function registerStorefrontRoutes(app: Express) {
     const liveCatalog = festivalTheme.enabled
       ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, products)
       : [];
-    const festivalThemePayload = buildFestivalThemePayload(festivalTheme, {
-      catalogProducts: liveCatalog,
-      shopName: settings.shopName,
-    });
+    const festivalThemePayload = {
+      ...buildFestivalThemePayload(festivalTheme, {
+        catalogProducts: liveCatalog,
+        shopName: settings.shopName,
+      }),
+      authoritative,
+    };
     res.json({
       ok: true,
+      authoritative,
       updatedAt: festivalTheme.updatedAt || null,
       festivalThemePayload,
     });
@@ -1484,7 +1503,8 @@ export function registerStorefrontRoutes(app: Express) {
   app.get('/api/storefront/pincode-check', async (req: Request, res: Response) => {
     setPublicCors(res);
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    await store.ensureHydrated();
+    await Promise.all([store.refreshStorefrontConfigFast(), store.ensureHydrated()]);
+    const authoritative = store.isStorefrontConfigAuthoritative();
     const rawPin = String(req.query.pincode || '');
     const pincode = normalizeIndianPincode(rawPin);
     const settings = store.getSettings();
@@ -1538,10 +1558,13 @@ export function registerStorefrontRoutes(app: Express) {
     const liveCatalog = festivalTheme.enabled
       ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, products)
       : [];
-    const festivalThemePayload = buildFestivalThemePayload(festivalTheme, {
-      catalogProducts: liveCatalog,
-      shopName: settings.shopName,
-    });
+    const festivalThemePayload = {
+      ...buildFestivalThemePayload(festivalTheme, {
+        catalogProducts: liveCatalog,
+        shopName: settings.shopName,
+      }),
+      authoritative,
+    };
 
     res.json({
       ok: true,
@@ -1699,6 +1722,7 @@ export function registerStorefrontRoutes(app: Express) {
   app.get('/api/storefront/widget.js', async (req: Request, res: Response) => {
     setPublicCors(res);
     await store.refreshStorefrontConfigFast();
+    const authoritative = store.isStorefrontConfigAuthoritative();
     const settings = store.getSettings();
     const config = store.getStorefrontConfig();
     const origin = normalizeStorefrontOrigin(
@@ -1711,12 +1735,20 @@ export function registerStorefrontRoutes(app: Express) {
     const liveCatalog = festivalTheme.enabled
       ? await fetchLiveStorefrontCatalogForBanner(settings.shopifyStoreDomain, store.getProducts())
       : [];
-    const preloadedTheme = buildFestivalThemePayload(festivalTheme, {
-      catalogProducts: liveCatalog,
-      shopName: settings.shopName,
-    });
+    const preloadedTheme = {
+      ...buildFestivalThemePayload(festivalTheme, {
+        catalogProducts: liveCatalog,
+        shopName: settings.shopName,
+      }),
+      authoritative,
+    };
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=10, s-maxage=20, stale-while-revalidate=60');
+    res.setHeader(
+      'Cache-Control',
+      authoritative
+        ? 'public, max-age=10, s-maxage=20, stale-while-revalidate=60'
+        : 'no-store, max-age=0'
+    );
     res.send(buildStorefrontWidgetScript(origin, preloadedTheme));
   });
 

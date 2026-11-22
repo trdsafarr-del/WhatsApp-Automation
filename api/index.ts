@@ -49,11 +49,19 @@ app.use(
 registerDashboardAuth(app);
 
 app.get('/api/health', async (_req: Request, res: Response) => {
-  await store.ensureHydrated();
+  await Promise.all([
+    store.refreshStorefrontConfigFast().catch(() => {}),
+    store.ensureHydrated().catch(() => {}),
+  ]);
+  const sfConfig = store.getStorefrontConfig();
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     ok: true,
+    hostKind: 'serverless',
     whatsappStatus: whatsappManager.getState().status,
     cloudSyncEnabled: store.isCloudSyncEnabled(),
+    themeAuthoritative: store.isStorefrontConfigAuthoritative(),
+    themeEnabled: Boolean(sfConfig.festivalTheme?.enabled),
     timestamp: new Date().toISOString(),
   });
 });

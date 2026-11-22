@@ -1321,43 +1321,42 @@ export function GeoSeoMatrixPanel({
         <div className="grid gap-5 lg:grid-cols-2">
           <div className="space-y-4 rounded-xl border border-slate-800/90 bg-slate-900/75 p-5">
             <h4 className="font-display text-sm font-semibold text-white">
-              XML Sitemaps &amp; Crawl Endpoints
+              XML Sitemaps &amp; Search Console Submission
             </h4>
             <p className="text-xs leading-relaxed text-slate-400">
-              Submit <span className="font-mono text-emerald-300">{proxyPrefix}/sitemap.xml</span> on{' '}
+              Submit <strong className="text-white">ONLY</strong>{' '}
+              <span className="font-mono text-emerald-300">{proxyPrefix}/sitemap.xml</span> on{' '}
               <span className="font-mono text-slate-200">{cleanSiteUrl.replace(/^https?:\/\//, '')}</span> inside Google
-              Search Console so Google discovers &amp; indexes all{' '}
+              Search Console. Google automatically discovers all{' '}
+              <span className="font-mono text-white tabular-nums">{liveStats.sitemapShardCount}</span> shards (all{' '}
               <span className="font-mono text-white tabular-nums">
                 {liveStats.totalPages.toLocaleString()}
               </span>{' '}
-              Faridabad landing pages directly on your own Shopify domain.
+              Faridabad landing pages) from that single index file.
             </p>
 
             <div className="space-y-2.5 text-xs">
               {[
                 {
                   key: 'proxy-sitemap',
-                  label: 'Shopify Domain Sitemap Index (Submit in Search Console)',
+                  label: '1. Master XML Sitemap Index (Submit ONLY This in Search Console)',
                   displayUrl: `${cleanSiteUrl}${proxyPrefix}/sitemap.xml`,
                   openHref: '/api/shopify-proxy/sitemap.xml',
+                  badge: 'Submit in GSC',
                 },
                 {
                   key: 'proxy-shard1',
-                  label: 'Shopify Domain Shard #1 (First 5,000 Pages)',
+                  label: 'Auto-Discovered Shard #1 (First 5,000 Pages · Optional)',
                   displayUrl: `${cleanSiteUrl}${proxyPrefix}/sitemap-geo/1.xml`,
                   openHref: '/api/shopify-proxy/sitemap-geo/1.xml',
-                },
-                {
-                  key: 'proxy-dir',
-                  label: 'Shopify Domain Unified Zone Directory',
-                  displayUrl: `${cleanSiteUrl}${proxyPrefix}`,
-                  openHref: '/api/shopify-proxy',
+                  badge: 'XML Shard',
                 },
                 {
                   key: 'sitemap',
                   label: 'Direct App Sitemap Index (Backup Mirror)',
                   displayUrl: `${resolvedOrigin}/sitemap.xml`,
                   openHref: '/sitemap.xml',
+                  badge: 'XML Backup',
                 },
               ].map((entry) => (
                 <div
@@ -1389,6 +1388,32 @@ export function GeoSeoMatrixPanel({
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3.5 text-xs leading-relaxed text-amber-100">
+              <p className="font-semibold text-amber-200">
+                HTML Storefront Directory Page (Do NOT Submit as Sitemap)
+              </p>
+              <div className="mt-1.5 flex items-center justify-between gap-2">
+                <p className="truncate font-mono text-[11px] text-amber-300">
+                  {cleanSiteUrl}
+                  {proxyPrefix}
+                </p>
+                <a
+                  href="/api/shopify-proxy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 rounded-md border border-amber-500/40 bg-amber-950/50 px-2.5 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-900/50"
+                >
+                  Preview Page
+                </a>
+              </div>
+              <p className="mt-2 text-[11.5px] text-amber-200/85">
+                <span className="font-mono text-white">{proxyPrefix}</span> is an HTML webpage for shoppers, not an XML sitemap. If you submitted{' '}
+                <span className="font-mono text-white">{proxyPrefix}</span> in Search Console and see <span className="font-semibold text-rose-300">1 error (Type: Unknown)</span>, open Search Console &rarr; Sitemaps &rarr; click the 3-dots menu next to{' '}
+                <span className="font-mono text-white">{proxyPrefix}</span> &rarr; <strong className="text-white">Remove sitemap</strong>. Your{' '}
+                <span className="font-mono text-emerald-300">{proxyPrefix}/sitemap.xml</span> already indexes all {liveStats.totalPages.toLocaleString()} pages.
+              </p>
             </div>
           </div>
 

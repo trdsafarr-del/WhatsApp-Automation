@@ -1596,6 +1596,28 @@ export function detectHostRuntimeKind(
 }
 
 /**
+ * Resolves the server data directory, automatically honoring a mounted Railway Volume
+ * (RAILWAY_VOLUME_MOUNT_PATH) or explicit DATA_DIR so WhatsApp auth survives restarts/redeploys.
+ */
+export function resolvePersistentDataDir(
+  env: Record<string, string | undefined> = process.env,
+  fallbackCwdDataDir = 'data'
+): { dir: string; volumeMounted: boolean } {
+  if (env.VERCEL) {
+    return { dir: '/tmp/orderpulse-data', volumeMounted: false };
+  }
+  const explicitDataDir = (env.DATA_DIR || '').trim();
+  if (explicitDataDir) {
+    return { dir: explicitDataDir, volumeMounted: true };
+  }
+  const railwayVolume = (env.RAILWAY_VOLUME_MOUNT_PATH || '').trim();
+  if (railwayVolume) {
+    return { dir: railwayVolume, volumeMounted: true };
+  }
+  return { dir: fallbackCwdDataDir, volumeMounted: false };
+}
+
+/**
  * Prevents a temporary dev preview server from auto-connecting Baileys and stealing
  * the single active WhatsApp Web socket away from a live 24/7 Railway/cloud host.
  */
@@ -3462,9 +3484,10 @@ export function classifyWhatsAppDisconnect(params: {
     return 'pause_keep_auth';
   }
 
-  // 500 (badSession): frequently transient in Baileys v6/v7 — retry up to 3 times before clearing auth
+  // 500 (badSession): frequently transient in Baileys v6/v7 (e.g. overnight WA Web version roll or brief drop)
+  // Never auto-wipe registered credentials on 500; retry with backoff and fresh WA Web version instead.
   if (code === 500) {
-    return params.consecutiveBadSessions < 3 ? 'reconnect_bad_session' : 'logout_clear_auth';
+    return params.isAuthRegistered ? 'reconnect_bad_session' : 'qr_timeout_clear_unregistered';
   }
 
   // 401 (loggedOut) or 411 (multideviceMismatch): true phone-side unlink / invalid session

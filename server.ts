@@ -41,8 +41,25 @@ interface RawBodyRequest extends Request {
   rawBody?: Buffer;
 }
 
+const SERVER_BOOT_MS = Date.now();
+
+// Guard against stray Baileys/WebSocket exceptions crashing the 24/7 Railway container
+process.on('uncaughtException', (err) => {
+  console.error('[OrderPulse] Uncaught exception (process kept alive):', err?.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(
+    '[OrderPulse] Unhandled promise rejection (process kept alive):',
+    reason instanceof Error ? reason.message : reason
+  );
+});
+
 async function startServer() {
-  await store.ensureHydrated(true);
+  // Bound initial cloud hydration to 3.5s so Railway healthcheck never times out on boot
+  await Promise.race([
+    store.ensureHydrated(true).catch(() => {}),
+    new Promise<void>((resolve) => setTimeout(resolve, 3_500)),
+  ]);
 
   const app = express();
   app.set('trust proxy', 1);
@@ -59,13 +76,25 @@ async function startServer() {
   // Protect all admin / dashboard / mutation /api/* routes with password lock (storefront & proxy remain public)
   registerDashboardAuth(app);
 
-  // Healthcheck for uptime monitors (UptimeRobot / Cron-Job.org 24/7 keep-alive)
+  // Healthcheck for Railway & uptime monitors (UptimeRobot / Cron-Job.org 24/7 keep-alive)
   app.get('/api/health', async (_req: Request, res: Response) => {
-    await store.ensureHydrated();
+    await Promise.race([
+      store.ensureHydrated().catch(() => {}),
+      new Promise<void>((resolve) => setTimeout(resolve, 2_500)),
+    ]);
+    const waState = whatsappManager.getState();
+    const sfConfig = store.getStorefrontConfig();
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
-      whatsappStatus: whatsappManager.getState().status,
+      hostKind: detectHostRuntimeKind(),
+      uptimeSeconds: Math.floor((Date.now() - SERVER_BOOT_MS) / 1000),
+      whatsappStatus: waState.status,
+      lastHeartbeatAt: waState.lastHeartbeatAt,
+      volumeMounted: store.isVolumeMounted(),
       cloudSyncEnabled: store.isCloudSyncEnabled(),
+      privateAuthCloudBackup: store.isPrivateAuthCloudSyncEnabled(),
+      themeEnabled: Boolean(sfConfig.festivalTheme?.enabled),
       timestamp: new Date().toISOString(),
     });
   });
@@ -806,6 +835,17 @@ async function startServer() {
         void whatsappManager.flushQueuedOrders();
       }
     }, 30_000);
+
+    // 4-minute self-keepalive on Railway public domain so inbound HTTP activity stays continuous 24/7
+    const railwayPublicDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (railwayPublicDomain) {
+      const keepAliveUrl = `https://${railwayPublicDomain}/api/health`;
+      setInterval(() => {
+        fetch(keepAliveUrl, { signal: AbortSignal.timeout(4_500) }).catch(() => {
+          // Non-fatal keepalive ping error
+        });
+      }, 4 * 60 * 1000).unref?.();
+    }
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
@@ -813,12 +853,18 @@ async function startServer() {
   });
 
   const handleShutdown = async () => {
-    await whatsappManager.shutdownGracefully();
-    await store.flushRemote();
+    // Allow up to 8s (Railway sends SIGKILL at 10s) so WhatsApp auth backup & cloud sync flush cleanly
+    const forceExitTimer = setTimeout(() => process.exit(0), 8_000);
+    forceExitTimer.unref();
+    try {
+      await whatsappManager.shutdownGracefully();
+      await store.flushRemote();
+    } catch {
+      // Ignore shutdown flush errors
+    }
     server.close(() => {
       process.exit(0);
     });
-    setTimeout(() => process.exit(0), 2000).unref();
   };
 
   process.once('SIGTERM', () => {

@@ -7,6 +7,7 @@ import {
   isOrderOnOrAfterStartDate,
   mergeProgressedOrderRecords,
   readCleanEnvVar,
+  resolvePersistentDataDir,
   selectPriorityAuthFiles,
   shouldBackupWhatsAppAuth,
   shouldFetchFullRemoteDb,
@@ -31,15 +32,18 @@ import type {
   WhatsAppState,
 } from '../src/lib/types.js';
 
-const DATA_DIR = process.env.VERCEL
-  ? '/tmp/orderpulse-data'
-  : process.env.DATA_DIR
-    ? path.resolve(process.env.DATA_DIR)
-    : path.resolve(process.cwd(), 'data');
+const RESOLVED_DATA = resolvePersistentDataDir(
+  process.env,
+  path.resolve(process.cwd(), 'data')
+);
+const DATA_DIR = path.resolve(RESOLVED_DATA.dir);
+const VOLUME_MOUNTED = RESOLVED_DATA.volumeMounted;
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const DB_BACKUP_PATH = path.join(DATA_DIR, 'db.backup.json');
 const POLL_CACHE_PATH = path.join(DATA_DIR, 'poll-messages.json');
 const POLL_BACKUP_PATH = path.join(DATA_DIR, 'poll-messages.backup.json');
+const DEFAULT_RTDB_DATABASE_URL =
+  'https://shopify-9351f-default-rtdb.asia-southeast1.firebasedatabase.app';
 
 const LEGACY_SEED_ORDER_IDS = new Set(['ord-1049', 'ord-1050', 'ord-1051', 'ord-1052']);
 const REDIS_DB_KEY = 'orderpulse:v1:db';
@@ -114,17 +118,47 @@ function hydrateEnvDefaults(settings: AppSettings): AppSettings {
   };
 }
 
-function getRtdbServerConfig(): { url: string; secret: string } | null {
-  const url = readCleanEnvVar(process.env, [
-    'FIREBASE_RTDB_URL',
-    'FIREBASE_DATABASE_URL',
-  ]).replace(/\/+$/, '');
-  const secret = readCleanEnvVar(process.env, [
-    'FIREBASE_RTDB_SECRET',
-    'FIREBASE_DATABASE_SECRET',
-  ]);
-  if (!url || !secret) return null;
+function getRtdbPublicConfig(): { url: string; secret: string | null } | null {
+  if (process.env.DISABLE_DEFAULT_RTDB === '1') {
+    const explicitUrl = readCleanEnvVar(process.env, [
+      'FIREBASE_RTDB_URL',
+      'FIREBASE_DATABASE_URL',
+    ]).replace(/\/+$/, '');
+    if (!explicitUrl) return null;
+    const secret =
+      readCleanEnvVar(process.env, ['FIREBASE_RTDB_SECRET', 'FIREBASE_DATABASE_SECRET']) || null;
+    return { url: explicitUrl, secret };
+  }
+  const url = (
+    readCleanEnvVar(process.env, ['FIREBASE_RTDB_URL', 'FIREBASE_DATABASE_URL']) ||
+    DEFAULT_RTDB_DATABASE_URL
+  ).replace(/\/+$/, '');
+  const secret =
+    readCleanEnvVar(process.env, ['FIREBASE_RTDB_SECRET', 'FIREBASE_DATABASE_SECRET']) || null;
+  if (!url) return null;
   return { url, secret };
+}
+
+function getRtdbServerConfig(): { url: string; secret: string } | null {
+  const pub = getRtdbPublicConfig();
+  if (!pub || !pub.secret) return null;
+  return { url: pub.url, secret: pub.secret };
+}
+
+function buildRtdbRestUrl(nodePath: string): string | null {
+  const cleanPath = nodePath.replace(/^\/+/, '');
+  const isPrivateServerNode =
+    cleanPath === 'orderpulse_server' || cleanPath.startsWith('orderpulse_server/');
+  if (isPrivateServerNode) {
+    const priv = getRtdbServerConfig();
+    if (!priv) return null;
+    return `${priv.url}/${cleanPath}.json?auth=${encodeURIComponent(priv.secret)}`;
+  }
+  const pub = getRtdbPublicConfig();
+  if (!pub) return null;
+  return pub.secret
+    ? `${pub.url}/${cleanPath}.json?auth=${encodeURIComponent(pub.secret)}`
+    : `${pub.url}/${cleanPath}.json`;
 }
 
 function getUpstashConfig(): { url: string; token: string } | null {
@@ -141,14 +175,10 @@ function getUpstashConfig(): { url: string; token: string } | null {
 }
 
 async function rtdbRestGet<T = unknown>(nodePath: string): Promise<T | null> {
-  const cfg = getRtdbServerConfig();
-  if (!cfg) return null;
-  const cleanPath = nodePath.replace(/^\/+/, '');
+  const endpoint = buildRtdbRestUrl(nodePath);
+  if (!endpoint) return null;
   try {
-    const res = await fetch(
-      `${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`,
-      { signal: AbortSignal.timeout(5000) }
-    );
+    const res = await fetch(endpoint, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
     const data = (await res.json()) as T | null;
     return data ?? null;
@@ -158,19 +188,15 @@ async function rtdbRestGet<T = unknown>(nodePath: string): Promise<T | null> {
 }
 
 async function rtdbRestPatch(nodePath: string, body: Record<string, unknown>): Promise<boolean> {
-  const cfg = getRtdbServerConfig();
-  if (!cfg) return false;
-  const cleanPath = nodePath.replace(/^\/+/, '');
+  const endpoint = buildRtdbRestUrl(nodePath);
+  if (!endpoint) return false;
   try {
-    const res = await fetch(
-      `${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(6000),
-      }
-    );
+    const res = await fetch(endpoint, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(6000),
+    });
     return res.ok;
   } catch {
     return false;
@@ -178,19 +204,15 @@ async function rtdbRestPatch(nodePath: string, body: Record<string, unknown>): P
 }
 
 async function rtdbRestPut(nodePath: string, body: unknown): Promise<boolean> {
-  const cfg = getRtdbServerConfig();
-  if (!cfg) return false;
-  const cleanPath = nodePath.replace(/^\/+/, '');
+  const endpoint = buildRtdbRestUrl(nodePath);
+  if (!endpoint) return false;
   try {
-    const res = await fetch(
-      `${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`,
-      {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(6000),
-      }
-    );
+    const res = await fetch(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(6000),
+    });
     return res.ok;
   } catch {
     return false;
@@ -198,11 +220,10 @@ async function rtdbRestPut(nodePath: string, body: unknown): Promise<boolean> {
 }
 
 async function rtdbRestDelete(nodePath: string): Promise<void> {
-  const cfg = getRtdbServerConfig();
-  if (!cfg) return;
-  const cleanPath = nodePath.replace(/^\/+/, '');
+  const endpoint = buildRtdbRestUrl(nodePath);
+  if (!endpoint) return;
   try {
-    await fetch(`${cfg.url}/${cleanPath}.json?auth=${encodeURIComponent(cfg.secret)}`, {
+    await fetch(endpoint, {
       method: 'DELETE',
       signal: AbortSignal.timeout(4000),
     });
@@ -386,6 +407,8 @@ class PersistentStore {
   private rtdbConfigSig: string | null = null;
   private rtdbOrderSigs = new Map<string, string>();
   private rtdbProductSigs = new Map<string, string>();
+  private storefrontHydratedFromPersistence = false;
+  private lastStorefrontFastRefreshAtMs = 0;
 
   constructor() {
     try {
@@ -398,7 +421,22 @@ class PersistentStore {
   }
 
   isCloudSyncEnabled(): boolean {
-    return getRtdbServerConfig() !== null || getUpstashConfig() !== null;
+    return getRtdbPublicConfig() !== null || getUpstashConfig() !== null;
+  }
+
+  isPrivateAuthCloudSyncEnabled(): boolean {
+    return (
+      getRtdbServerConfig() !== null ||
+      (getUpstashConfig() !== null && !isUpstashCircuitOpen())
+    );
+  }
+
+  isVolumeMounted(): boolean {
+    return VOLUME_MOUNTED;
+  }
+
+  isStorefrontConfigAuthoritative(): boolean {
+    return this.storefrontHydratedFromPersistence;
   }
 
   private buildRtdbDeltaPatch(rev: string): Record<string, unknown> {
@@ -466,7 +504,7 @@ class PersistentStore {
     const rev = nextDbRevision();
     this.lastSyncedRev = rev;
 
-    if (getRtdbServerConfig() !== null) {
+    if (getRtdbPublicConfig() !== null) {
       const patch = this.buildRtdbDeltaPatch(rev);
       if (Object.keys(patch).length === 0) return;
       this.remoteSyncQueue = this.remoteSyncQueue
@@ -547,12 +585,15 @@ class PersistentStore {
       try {
         await this.flushRemote();
 
-        if (getRtdbServerConfig() !== null) {
+        if (getRtdbPublicConfig() !== null) {
+          const hasPrivateRtdb = getRtdbServerConfig() !== null;
           const [metaNode, heartbeatNode, waLiveNode] = await Promise.all([
             rtdbRestGet<{ rev?: string; updatedAt?: string }>('orderpulse/meta'),
-            rtdbRestGet<{ lastHeartbeatAt?: string | null; activeHostKind?: string | null }>(
-              'orderpulse_server/heartbeat'
-            ),
+            hasPrivateRtdb
+              ? rtdbRestGet<{ lastHeartbeatAt?: string | null; activeHostKind?: string | null }>(
+                  'orderpulse_server/heartbeat'
+                )
+              : Promise.resolve(null),
             rtdbRestGet<Partial<DatabaseState['whatsappMeta']>>('orderpulse/whatsappLive'),
           ]);
 
@@ -697,7 +738,7 @@ class PersistentStore {
             }
           }
 
-          if (needPollsFetch) {
+          if (needPollsFetch && hasPrivateRtdb) {
             this.pollsHydrated = true;
             const remotePolls = await rtdbRestGet<Record<string, unknown>>(
               'orderpulse_server/polls'
@@ -851,6 +892,7 @@ class PersistentStore {
                 pushName: parsed.whatsappMeta?.pushName || null,
               },
             };
+            this.storefrontHydratedFromPersistence = true;
             this.writeLocalState(this.state);
 
             if (!remoteRev) {
@@ -957,12 +999,18 @@ class PersistentStore {
       if (primary.needsRewrite) {
         this.writeLocalState(primary.state);
       }
+      if (!process.env.VERCEL || Boolean(primary.state.storefrontConfig?.festivalTheme?.updatedAt)) {
+        this.storefrontHydratedFromPersistence = true;
+      }
       return primary.state;
     }
 
     const backup = this.tryParseStateFile(DB_BACKUP_PATH);
     if (backup) {
       this.writeLocalState(backup.state);
+      if (!process.env.VERCEL || Boolean(backup.state.storefrontConfig?.festivalTheme?.updatedAt)) {
+        this.storefrontHydratedFromPersistence = true;
+      }
       return backup.state;
     }
 
@@ -1072,7 +1120,8 @@ class PersistentStore {
       activeHostKind: meta.activeHostKind,
     };
     if (this.isCloudSyncEnabled()) {
-      if (getRtdbServerConfig() !== null) {
+      if (getRtdbPublicConfig() !== null) {
+        const hasPrivateRtdb = getRtdbServerConfig() !== null;
         const liveSnapshot = stripUndefinedDeep({
           mode: this.state.whatsappMeta.mode || 'baileys_qr',
           phoneNumber: this.state.whatsappMeta.phoneNumber || null,
@@ -1083,10 +1132,13 @@ class PersistentStore {
         });
         this.remoteSyncQueue = this.remoteSyncQueue
           .then(async () => {
-            await Promise.all([
-              rtdbRestPut('orderpulse_server/heartbeat', meta),
+            const ops: Array<Promise<unknown>> = [
               rtdbRestPut('orderpulse/whatsappLive', liveSnapshot),
-            ]);
+            ];
+            if (hasPrivateRtdb) {
+              ops.push(rtdbRestPut('orderpulse_server/heartbeat', meta));
+            }
+            await Promise.all(ops);
           })
           .catch(() => {
             // Ignore transient heartbeat write errors
@@ -1103,12 +1155,13 @@ class PersistentStore {
   }
 
   /**
-   * Backs up Baileys multi-file auth credentials (data/wa-auth/*) to Upstash Redis
-   * using a 15-minute steady-state throttle and SHA-256 content dedupe so creds.update
-   * bursts do not consume gigabytes of Redis bandwidth.
+   * Backs up Baileys multi-file auth credentials (data/wa-auth/*) to private Firebase RTDB
+   * (`orderpulse_server/*` when FIREBASE_RTDB_SECRET is set) or Upstash Redis.
    */
   async backupAuthFiles(authDir: string, options?: { force?: boolean }): Promise<void> {
-    if (process.env.VERCEL || !this.isCloudSyncEnabled() || !fs.existsSync(authDir)) return;
+    if (process.env.VERCEL || !this.isPrivateAuthCloudSyncEnabled() || !fs.existsSync(authDir)) {
+      return;
+    }
     const runBackup = async () => {
       const isRtdb = getRtdbServerConfig() !== null;
       const allowFullBundle =
@@ -1203,7 +1256,7 @@ class PersistentStore {
   }
 
   async restoreAuthFiles(authDir: string): Promise<boolean> {
-    if (process.env.VERCEL || !this.isCloudSyncEnabled()) return false;
+    if (process.env.VERCEL || !this.isPrivateAuthCloudSyncEnabled()) return false;
     try {
       const [rawBundle, rawCreds] =
         getRtdbServerConfig() !== null
@@ -1343,7 +1396,7 @@ class PersistentStore {
       ...partial,
     };
     this.persistState(this.state);
-    if (getRtdbServerConfig() !== null) {
+    if (getRtdbPublicConfig() !== null) {
       const liveSnapshot = stripUndefinedDeep({
         mode: this.state.whatsappMeta.mode || 'baileys_qr',
         phoneNumber: this.state.whatsappMeta.phoneNumber || null,
@@ -1423,11 +1476,22 @@ class PersistentStore {
 
   /**
    * Ultra-fast (~1 KB) cloud refresh of ONLY storefrontConfig + shop identity from RTDB
-   * so public Shopify endpoints (/widget.js, /theme, /theme.css) respond in ~100ms
-   * without downloading hundreds of orders and products.
+   * (works with or without FIREBASE_RTDB_SECRET via public `/orderpulse/config` REST)
+   * so cold Vercel instances and public Shopify endpoints (/widget.js, /theme, /theme.css)
+   * ALWAYS serve the true live festival theme 24/7 even when the dashboard tab & PC are closed.
    */
-  async refreshStorefrontConfigFast(): Promise<void> {
-    if (getRtdbServerConfig() !== null) {
+  async refreshStorefrontConfigFast(force = false): Promise<void> {
+    const now = Date.now();
+    if (
+      !force &&
+      this.storefrontHydratedFromPersistence &&
+      this.lastStorefrontFastRefreshAtMs > 0 &&
+      now - this.lastStorefrontFastRefreshAtMs < 8_000
+    ) {
+      return;
+    }
+
+    if (getRtdbPublicConfig() !== null) {
       try {
         const [sfNode, shopName, shopDomain] = await Promise.all([
           rtdbRestGet<Partial<StorefrontConfig>>('orderpulse/config/storefrontConfig'),
@@ -1444,6 +1508,8 @@ class PersistentStore {
                 ? normalizeFestivalThemeConfig(sfNode.festivalTheme)
                 : currentSf.festivalTheme,
           };
+          this.storefrontHydratedFromPersistence = true;
+          this.lastStorefrontFastRefreshAtMs = Date.now();
         }
         if (typeof shopName === 'string' && shopName.trim()) {
           this.state.settings.shopName = shopName.trim();
@@ -1451,12 +1517,15 @@ class PersistentStore {
         if (typeof shopDomain === 'string' && shopDomain.trim()) {
           this.state.settings.shopifyStoreDomain = shopDomain.trim();
         }
-        return;
+        if (this.storefrontHydratedFromPersistence) {
+          this.writeLocalState(this.state);
+          return;
+        }
       } catch {
         // Fall through to cached state or standard hydration
       }
     }
-    await this.ensureHydrated();
+    await this.ensureHydrated(force);
   }
 
   getStorefrontConfig(): StorefrontConfig {
@@ -1484,6 +1553,8 @@ class PersistentStore {
             })
           : normalizeFestivalThemeConfig(current.festivalTheme),
     };
+    this.storefrontHydratedFromPersistence = true;
+    this.lastStorefrontFastRefreshAtMs = Date.now();
     this.persistState(this.state);
     return this.state.storefrontConfig;
   }
@@ -1506,7 +1577,7 @@ class PersistentStore {
   }
 
   isUpstashQuotaExceeded(): boolean {
-    if (getRtdbServerConfig() !== null) return false;
+    if (getRtdbPublicConfig() !== null) return false;
     return isUpstashCircuitOpen();
   }
 
@@ -1563,6 +1634,8 @@ class PersistentStore {
             ? normalizeFestivalThemeConfig(payload.storefrontConfig.festivalTheme)
             : currentSf.festivalTheme,
       };
+      this.storefrontHydratedFromPersistence = true;
+      this.lastStorefrontFastRefreshAtMs = Date.now();
     }
 
     if (payload.geoSeoConfig && typeof payload.geoSeoConfig === 'object') {

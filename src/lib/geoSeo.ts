@@ -2246,6 +2246,7 @@ export function renderGeoSeoDirectoryLiquidFragment(
   const seoDesc = `Order fresh 100% eggless custom cakes & ready to eat cakes from ${config.brandName} across Sector 31, 88, 35 & 42 in Faridabad.`;
 
   return `${buildShopifyProxyScopedStyles()}
+<link rel="sitemap" type="application/xml" title="Sitemap" href="${escapeHtmlText(`${siteUrl}${proxyPrefix}/sitemap.xml`)}" />
 <script type="application/ld+json">${JSON.stringify(buildBakeryStorefrontSchema(config, siteUrl))}</script>
 <script>
   try {

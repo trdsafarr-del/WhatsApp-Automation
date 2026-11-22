@@ -140,6 +140,8 @@ export interface WhatsAppState {
   reconnectCount: number;
   sessionPersisted: boolean;
   cloudAuthBackupEnabled?: boolean;
+  volumeMounted?: boolean;
+  uptimeSeconds?: number;
   remoteSessionActive?: boolean;
   activeHostKind?: string | null;
   hostKind?: string | null;
