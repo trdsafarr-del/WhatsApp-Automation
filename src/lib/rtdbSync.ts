@@ -212,9 +212,32 @@ function sanitizeProductForRtdb(product: ProductCatalogItem): ProductCatalogItem
   return stripUndefinedDeep({
     ...product,
     id: safeId,
+    title: product.title || 'Untitled Product',
+    handle: product.handle || '',
+    productType: product.productType || '',
+    pincodeMode: product.pincodeMode || 'all_india',
+    allowCod: product.allowCod !== false,
+    estimatedDeliveryDays:
+      typeof product.estimatedDeliveryDays === 'number' ? product.estimatedDeliveryDays : null,
     allowedPincodes: Array.isArray(product.allowedPincodes) ? product.allowedPincodes : [],
     blockedPincodes: Array.isArray(product.blockedPincodes) ? product.blockedPincodes : [],
   });
+}
+
+function sanitizeGeoSeoFromRtdb(geoSeo?: GeoSeoConfig): GeoSeoConfig | undefined {
+  if (!geoSeo || typeof geoSeo !== 'object') return undefined;
+  return {
+    ...geoSeo,
+    hubs: Array.isArray(geoSeo.hubs) ? geoSeo.hubs : [],
+    localities: Array.isArray(geoSeo.localities) ? geoSeo.localities : [],
+    modifiers: Array.isArray(geoSeo.modifiers) ? geoSeo.modifiers : [],
+    categories: Array.isArray(geoSeo.categories)
+      ? geoSeo.categories.map((cat) => ({
+          ...cat,
+          keywords: Array.isArray(cat.keywords) ? cat.keywords : [],
+        }))
+      : [],
+  };
 }
 
 export function isRtdbPermissionDenied(err: unknown): boolean {
@@ -323,7 +346,7 @@ export function subscribeToRtdbCloudData(
       onSnapshotUpdate({
         settings: configNode?.settings,
         storefrontConfig: configNode?.storefrontConfig,
-        geoSeoConfig: configNode?.geoSeoConfig,
+        geoSeoConfig: sanitizeGeoSeoFromRtdb(configNode?.geoSeoConfig),
         whatsappMeta: mergedWhatsappMeta,
         orders: ordersList,
         products: productsList,

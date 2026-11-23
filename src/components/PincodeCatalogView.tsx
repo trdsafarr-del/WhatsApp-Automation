@@ -118,12 +118,21 @@ export function PincodeCatalogView({
 
   useEffect(() => {
     if (!selectedProduct) return;
-    setEditMode(selectedProduct.pincodeMode);
-    setEditAllowedText(selectedProduct.allowedPincodes.join(', '));
-    setEditBlockedText(selectedProduct.blockedPincodes.join(', '));
-    setEditAllowCod(selectedProduct.allowCod);
+    setEditMode(selectedProduct.pincodeMode || 'all_india');
+    setEditAllowedText(
+      Array.isArray(selectedProduct.allowedPincodes)
+        ? selectedProduct.allowedPincodes.join(', ')
+        : ''
+    );
+    setEditBlockedText(
+      Array.isArray(selectedProduct.blockedPincodes)
+        ? selectedProduct.blockedPincodes.join(', ')
+        : ''
+    );
+    setEditAllowCod(selectedProduct.allowCod !== false);
     setEditEstDays(
-      selectedProduct.estimatedDeliveryDays !== null
+      selectedProduct.estimatedDeliveryDays !== null &&
+        selectedProduct.estimatedDeliveryDays !== undefined
         ? String(selectedProduct.estimatedDeliveryDays)
         : String(storefrontConfig.defaultDeliveryDays || 4)
     );
@@ -135,9 +144,9 @@ export function PincodeCatalogView({
       if (modeFilter !== 'all' && p.pincodeMode !== modeFilter) return false;
       if (!q) return true;
       return (
-        p.title.toLowerCase().includes(q) ||
-        p.handle.toLowerCase().includes(q) ||
-        p.productType.toLowerCase().includes(q)
+        String(p.title || '').toLowerCase().includes(q) ||
+        String(p.handle || '').toLowerCase().includes(q) ||
+        String(p.productType || '').toLowerCase().includes(q)
       );
     });
   }, [products, searchQuery, modeFilter]);
@@ -868,11 +877,13 @@ export function PincodeCatalogView({
               {filteredProducts.map((p) => {
                 const isSelected = p.id === selectedId;
                 const evalInfo = activeEvaluationMap.get(p.id);
+                const allowedCount = Array.isArray(p.allowedPincodes) ? p.allowedPincodes.length : 0;
+                const blockedCount = Array.isArray(p.blockedPincodes) ? p.blockedPincodes.length : 0;
                 const ruleBadge =
                   p.pincodeMode === 'allow_list'
-                    ? `${p.allowedPincodes.length} Allowed PINs`
+                    ? `${allowedCount} Allowed PINs`
                     : p.pincodeMode === 'block_list'
-                      ? `${p.blockedPincodes.length} Blocked PINs`
+                      ? `${blockedCount} Blocked PINs`
                       : 'All India';
 
                 return (

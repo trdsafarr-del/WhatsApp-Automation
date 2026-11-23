@@ -189,3 +189,26 @@ test('auto-pincode helpers extract public client IP, GPS reverse geocode, and IP
     'http://localhost:3000'
   );
 });
+
+test('evaluateProductForPincode handles undefined allowedPincodes/blockedPincodes stripped by Firebase RTDB', () => {
+  const sample = createSampleCatalogProducts('Broomies Bakery')[0];
+  const rtdbStrippedAllow = {
+    ...sample,
+    pincodeMode: 'allow_list' as const,
+    allowedPincodes: undefined as unknown as string[],
+    blockedPincodes: undefined as unknown as string[],
+  };
+  const allowEval = evaluateProductForPincode(rtdbStrippedAllow, '121001');
+  assert.equal(allowEval.available, false);
+  assert.ok(allowEval.reason.includes('0 allowed pincode'));
+
+  const rtdbStrippedBlock = {
+    ...sample,
+    pincodeMode: 'block_list' as const,
+    allowedPincodes: undefined as unknown as string[],
+    blockedPincodes: undefined as unknown as string[],
+  };
+  const blockEval = evaluateProductForPincode(rtdbStrippedBlock, '121001');
+  assert.equal(blockEval.available, true);
+});
+

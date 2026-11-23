@@ -280,8 +280,11 @@ export function evaluateProductForPincode(
     };
   }
 
+  const allowedList = Array.isArray(product.allowedPincodes) ? product.allowedPincodes : [];
+  const blockedList = Array.isArray(product.blockedPincodes) ? product.blockedPincodes : [];
+
   if (product.pincodeMode === 'allow_list') {
-    const allowedSet = new Set(product.allowedPincodes);
+    const allowedSet = new Set(allowedList);
     if (!allowedSet.has(pincode)) {
       return {
         productId: product.id,
@@ -291,11 +294,11 @@ export function evaluateProductForPincode(
         available: false,
         codAvailable: false,
         estimatedDays: null,
-        reason: `Restricted item — not in the ${product.allowedPincodes.length} allowed pincode(s).`,
+        reason: `Restricted item — not in the ${allowedList.length} allowed pincode(s).`,
       };
     }
   } else if (product.pincodeMode === 'block_list') {
-    const blockedSet = new Set(product.blockedPincodes);
+    const blockedSet = new Set(blockedList);
     if (blockedSet.has(pincode)) {
       return {
         productId: product.id,

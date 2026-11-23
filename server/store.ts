@@ -1434,8 +1434,25 @@ class PersistentStore {
     return this.pollMessages[messageId];
   }
 
+  private normalizeProductRecord(product: ProductCatalogItem): ProductCatalogItem {
+    return {
+      ...product,
+      title: product.title || 'Untitled Product',
+      handle: product.handle || '',
+      productType: product.productType || '',
+      pincodeMode: product.pincodeMode || 'all_india',
+      allowCod: product.allowCod !== false,
+      estimatedDeliveryDays:
+        typeof product.estimatedDeliveryDays === 'number' ? product.estimatedDeliveryDays : null,
+      allowedPincodes: Array.isArray(product.allowedPincodes) ? product.allowedPincodes : [],
+      blockedPincodes: Array.isArray(product.blockedPincodes) ? product.blockedPincodes : [],
+    };
+  }
+
   getProducts(): ProductCatalogItem[] {
-    return Array.isArray(this.state.products) ? this.state.products : [];
+    return Array.isArray(this.state.products)
+      ? this.state.products.map((p) => this.normalizeProductRecord(p))
+      : [];
   }
 
   getProductById(id: string): ProductCatalogItem | undefined {
@@ -1443,23 +1460,26 @@ class PersistentStore {
   }
 
   upsertProduct(product: ProductCatalogItem): ProductCatalogItem {
+    const normalized = this.normalizeProductRecord(product);
     if (!Array.isArray(this.state.products)) {
       this.state.products = [];
     }
     const idx = this.state.products.findIndex(
-      (p) => p.id === product.id || p.shopifyProductId === product.shopifyProductId
+      (p) => p.id === normalized.id || p.shopifyProductId === normalized.shopifyProductId
     );
     if (idx >= 0) {
-      this.state.products[idx] = product;
+      this.state.products[idx] = normalized;
     } else {
-      this.state.products.unshift(product);
+      this.state.products.unshift(normalized);
     }
     this.persistState(this.state);
-    return product;
+    return normalized;
   }
 
   setProducts(products: ProductCatalogItem[]): ProductCatalogItem[] {
-    this.state.products = products;
+    this.state.products = (Array.isArray(products) ? products : []).map((p) =>
+      this.normalizeProductRecord(p)
+    );
     this.persistState(this.state);
     return this.state.products;
   }
@@ -1560,9 +1580,26 @@ class PersistentStore {
   }
 
   getGeoSeoConfig(): GeoSeoConfig {
-    return {
+    const merged: GeoSeoConfig = {
       ...DEFAULT_GEO_SEO_CONFIG,
       ...(this.state.geoSeoConfig || {}),
+    };
+    return {
+      ...merged,
+      hubs: Array.isArray(merged.hubs) ? merged.hubs : DEFAULT_GEO_SEO_CONFIG.hubs,
+      localities: Array.isArray(merged.localities)
+        ? merged.localities
+        : DEFAULT_GEO_SEO_CONFIG.localities,
+      modifiers: Array.isArray(merged.modifiers)
+        ? merged.modifiers
+        : DEFAULT_GEO_SEO_CONFIG.modifiers,
+      categories: (Array.isArray(merged.categories)
+        ? merged.categories
+        : DEFAULT_GEO_SEO_CONFIG.categories
+      ).map((cat) => ({
+        ...cat,
+        keywords: Array.isArray(cat.keywords) ? cat.keywords : [],
+      })),
     };
   }
 
@@ -1573,7 +1610,7 @@ class PersistentStore {
       updatedAt: new Date().toISOString(),
     };
     this.persistState(this.state);
-    return this.state.geoSeoConfig;
+    return this.getGeoSeoConfig();
   }
 
   isUpstashQuotaExceeded(): boolean {
@@ -1693,9 +1730,16 @@ class PersistentStore {
         ) {
           continue;
         }
-        const key = incomingOrder.shopifyOrderId || incomingOrder.id;
+        const normalizedOrder: OrderRecord = {
+          ...incomingOrder,
+          events: Array.isArray(incomingOrder.events) ? incomingOrder.events : [],
+        };
+        const key = normalizedOrder.shopifyOrderId || normalizedOrder.id;
         const prev = mergedMap.get(key);
-        mergedMap.set(key, prev ? mergeProgressedOrderRecords(prev, incomingOrder) : incomingOrder);
+        mergedMap.set(
+          key,
+          prev ? mergeProgressedOrderRecords(prev, normalizedOrder) : normalizedOrder
+        );
         if (!prev) restoredOrders += 1;
       }
       this.state.orders = Array.from(mergedMap.values()).sort(
@@ -1711,9 +1755,10 @@ class PersistentStore {
       }
       for (const incomingProd of payload.products) {
         if (!incomingProd || typeof incomingProd !== 'object') continue;
-        const key = incomingProd.shopifyProductId || incomingProd.id;
+        const normalizedProd = this.normalizeProductRecord(incomingProd);
+        const key = normalizedProd.shopifyProductId || normalizedProd.id;
         if (!prodMap.has(key)) {
-          prodMap.set(key, incomingProd);
+          prodMap.set(key, normalizedProd);
           restoredProducts += 1;
         }
       }

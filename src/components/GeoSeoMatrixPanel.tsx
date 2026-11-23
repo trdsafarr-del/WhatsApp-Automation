@@ -1221,7 +1221,7 @@ export function GeoSeoMatrixPanel({
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-white">{cat.name}</p>
                     <p className="truncate text-[11px] text-slate-400">
-                      {cat.keywords.join(' · ')}
+                      {(Array.isArray(cat.keywords) ? cat.keywords : []).join(' · ')}
                     </p>
                   </div>
                   <label className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-slate-300">
@@ -1531,7 +1531,9 @@ export function GeoSeoMatrixPanel({
 
               <div>
                 <p className="font-semibold text-white">Target Local Keywords</p>
-                <p className="mt-1 text-slate-400">{inspectedPage.targetKeywords.join(' · ')}</p>
+                <p className="mt-1 text-slate-400">
+                  {(Array.isArray(inspectedPage.targetKeywords) ? inspectedPage.targetKeywords : []).join(' · ')}
+                </p>
               </div>
 
               <div>
